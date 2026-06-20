@@ -1,0 +1,202 @@
+###############################################################################
+# Kafka KRaft — Supply Chain Intelligence Platform
+# Single-node broker + controller in KRaft mode (no ZooKeeper).
+# Confluent Platform 7.6.1 = Kafka 3.6.x
+#
+# Services:
+#   broker       — Kafka KRaft broker/controller, reachable at kafka:29092
+#                  (internal) and localhost:9092 (host)
+#   kafka-init   — One-shot container that creates all topics then exits
+#   producer     — Continuous warehouse event simulator
+#
+# Network:
+#   kafka_scip-net — named so Spark containers can join it as an external network.
+#                    Compose creates this as: compose-project=kafka, network=scip-net
+#                    → Docker name = kafka_scip-net
+#
+# Start everything:   docker compose up -d
+# Start broker only:  docker compose up -d broker
+# View producer logs: docker compose logs producer -f
+###############################################################################
+
+version: "3.8"
+
+services:
+
+  # ── Kafka KRaft broker ───────────────────────────────────────────────────────
+  broker:
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: kafka          # Spark containers reach this as kafka:29092
+    container_name: kafka
+    ports:
+      - "9092:9092"          # External access from host (e.g. cbt-verify scripts)
+    environment:
+      # KRaft identity
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+
+      # Listeners
+      # PLAINTEXT      — internal Docker-to-Docker (kafka:29092)
+      # CONTROLLER     — KRaft controller election (kafka:29093)
+      # PLAINTEXT_HOST — host access (localhost:9092)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_LISTENERS: "PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Replication / durability (single-node dev settings)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+
+      # Disable auto-creation — topics are created explicitly by kafka-init
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+      # Log retention — keep 7 days of data for Silver replay
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 104857600    # 100 MB segments
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+
+      # Fixed cluster ID for reproducibility across container restarts.
+      # Generated with: kafka-storage.sh random-uuid
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qg"
+
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+    networks:
+      - scip-net
+
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+    restart: unless-stopped
+
+
+  # ── Topic initialisation (runs once, then exits) ─────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka-init
+    depends_on:
+      broker:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "=== Creating source topics ==="
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic inventory.events \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic shipments.events \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic purchase.orders.events \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic demand.signals \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=86400000
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic suppliers.events \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        echo "=== Creating DLQ topics ==="
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic inventory.events.dlq \
+          --partitions 1 \
+          --replication-factor 1
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic orders.events.dlq \
+          --partitions 1 \
+          --replication-factor 1
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic shipments.events.dlq \
+          --partitions 1 \
+          --replication-factor 1
+
+        kafka-topics --bootstrap-server kafka:29092 \
+          --create --if-not-exists \
+          --topic suppliers.events.dlq \
+          --partitions 1 \
+          --replication-factor 1
+
+        echo "=== Verifying topics ==="
+        kafka-topics --bootstrap-server kafka:29092 --list
+
+        echo "=== kafka-init complete ==="
+
+    networks:
+      - scip-net
+
+
+  # ── Event producer (warehouse simulator) ─────────────────────────────────────
+  producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    container_name: scip-producer
+    depends_on:
+      broker:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EVENTS_PER_BATCH: 17      # events produced per 2-second cycle
+      BATCH_SLEEP_SECONDS: 2    # pause between production cycles
+      LOG_LEVEL: INFO
+    networks:
+      - scip-net
+    restart: on-failure:5
+
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+
+volumes:
+  kafka-data:
+    name: kafka_kafka-data
+
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+# Network name must be kafka_scip-net for Spark containers to find it
+# as an external network.
+
+networks:
+  scip-net:
+    name: kafka_scip-net
