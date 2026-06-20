@@ -1,0 +1,24 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit real project IDs.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+# ── Required ──────────────────────────────────────────────────────────────────
+project_id = "your-gcp-project-id"
+
+# ── Optional overrides (defaults shown) ───────────────────────────────────────
+# region      = "us-central1"
+# zone        = "us-central1-a"
+# environment = "dev"
+
+# GCS
+# gcs_bucket_name      = ""    # empty = "{project_id}-scip-lake"
+# bronze_retention_days = 90
+
+# Bigtable
+# bigtable_instance_type = "DEVELOPMENT"   # DEVELOPMENT | PRODUCTION
+# bigtable_storage_type  = "SSD"           # SSD | HDD
+# bigtable_num_nodes     = 1               # PRODUCTION only
+
+# IAM
+# service_account_id = "scip-spark-sa"

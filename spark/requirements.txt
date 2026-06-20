@@ -1,0 +1,13 @@
+# Kafka / Avro
+confluent-kafka==2.3.0
+fastavro==1.9.4
+
+# GCP
+google-cloud-bigtable==2.23.0
+google-cloud-storage==2.17.0
+
+# Config
+starlette==0.37.2    # provides starlette.config.Config (lightweight, no web deps)
+
+# Utilities
+python-dateutil==2.9.0

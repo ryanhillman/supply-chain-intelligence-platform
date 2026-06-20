@@ -1,0 +1,148 @@
+# =============================================================================
+# Supply Chain Intelligence Platform — root .gitignore
+# =============================================================================
+# Rule: if in doubt, exclude. Secrets and binaries are unrecoverable once
+# pushed to a public repo. Data and generated artifacts can be reproduced.
+# =============================================================================
+
+
+# ── Service account keys ──────────────────────────────────────────────────────
+# Created via: gcloud iam service-accounts keys create keys/<name>.json
+# Mounted read-only into containers. Never managed by Terraform (see ADR-003
+# Decision 7). Both key locations are excluded — the spark/keys/ path is a
+# Docker mount target and must remain blocked even when the file is empty.
+**/keys/*.json
+**/keys/*.p12
+**/keys/*.pem
+
+
+# ── Environment files ─────────────────────────────────────────────────────────
+# spark/.env holds GCP_PROJECT_ID, GCS_BUCKET_NAME, BIGTABLE_INSTANCE_ID,
+# Kafka bootstrap servers, and Spark tuning knobs. Use spark/.env.example
+# as the committed template.
+.env
+.env.*
+!.env.example
+!.env.*.example
+spark/.env
+
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+# .terraform/          — provider binaries (101 MB), local backend state cache
+# *.tfstate / *.tfvars — contain real infrastructure values; state lives in GCS
+# tfplan               — binary plan file; may contain expanded secret values
+# crash logs           — generated on provider panics
+#
+# NOT excluded: .terraform.lock.hcl — pin provider versions for reproducibility
+#               *.tfvars.example    — committed as setup templates
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+tfplan
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+wheels/
+.installed.cfg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+
+# ── Spark (local) ─────────────────────────────────────────────────────────────
+# Production checkpoints, Bronze, Silver, and DLQ data live in GCS.
+# These patterns guard against accidental local syncs or test runs that
+# write to local paths instead of gs:// paths.
+spark/data/
+spark/checkpoints/
+spark-warehouse/
+derby.log
+metastore_db/
+# Ivy JAR cache — rebuilt automatically on first spark-submit
+.ivy2/
+ivy2/
+# Spark event logs written by local runs
+spark/logs/
+
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# Named volumes are managed by Docker, not git. If any volume data is ever
+# exported locally, exclude it.
+docker-volumes/
+# PowerShell on Windows creates directories with semicolons in the name
+# when a PATH-style string is accidentally used as a directory argument.
+# These are always empty artifacts and must never be committed.
+*;C
+
+
+# ── GCP / Cloud artifacts ─────────────────────────────────────────────────────
+# Application Default Credentials written by `gcloud auth application-default login`
+application_default_credentials.json
+# gsutil resumable upload state
+.gsutil/
+
+
+# ── IDE and editor ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+
+# ── OS artifacts ─────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini

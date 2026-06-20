@@ -1,0 +1,108 @@
+version: "3.8"
+
+services:
+  spark-bronze:
+    image: scip-spark:latest
+    env_file: .env
+    command:
+      - "--master"
+      - "${SPARK_MASTER:-local[*]}"
+      - "--packages"
+      - "${KAFKA_PACKAGE}"
+      - "--conf"
+      - "spark.jars.ivy=${IVY_CACHE:-/opt/ivy2}"
+      - "--conf"
+      - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
+      - "--conf"
+      - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
+      - "--conf"
+      - "spark.kafka.consumer.cache.enabled=false"
+      # ── GCS connector configuration ─────────────────────────────────────────
+      # GoogleHadoopFileSystem implements the gs:// scheme.
+      - "--conf"
+      - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
+      - "--conf"
+      - "spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
+      # Service account key auth (key file mounted as read-only volume below).
+      - "--conf"
+      - "spark.hadoop.google.cloud.auth.service.account.enable=true"
+      - "--conf"
+      - "spark.hadoop.google.cloud.auth.service.account.json.keyfile=${GOOGLE_APPLICATION_CREDENTIALS:-/opt/spark-app/keys/scip-spark-sa.json}"
+      # ── GCS performance tuning ──────────────────────────────────────────────
+      # batch.writes avoids per-row rename overhead on object storage.
+      - "--conf"
+      - "spark.hadoop.fs.gs.outputstream.type=FLUSHABLE_COMPOSITE"
+      - "--conf"
+      - "spark.hadoop.fs.gs.implicit.dir.infer.enable=true"
+      # ── Job entrypoint ──────────────────────────────────────────────────────
+      - "jobs/bronze_ingestion.py"
+
+    volumes:
+      # Source mount — live-reload job code without rebuild (dev only).
+      - .:/opt/spark-app
+      # SA key — read-only. File must exist at this host path before `docker compose up`.
+      # Create via: gcloud iam service-accounts keys create ...
+      - ../infrastructure/gcp/keys/scip-spark-sa.json:/opt/spark-app/keys/scip-spark-sa.json:ro
+      # Ivy JAR cache — persists Kafka connector JARs across container restarts.
+      - spark-ivy-cache:/opt/ivy2
+
+    networks:
+      - kafka_scip-net
+
+    restart: on-failure:3
+    mem_limit: 1536m
+
+  # ── Silver Feature Engineering ───────────────────────────────────────────────
+  # Reads from Bronze GCS Parquet (triggered by new inventory.events files).
+  # Writes Silver Parquet to GCS and feature vectors to Bigtable.
+  # Does NOT need --packages (no Kafka reads; GCS connector is in the image JAR dir).
+  spark-silver:
+    image: scip-spark:latest
+    env_file: .env
+    command:
+      - "--master"
+      - "${SPARK_MASTER:-local[*]}"
+      - "--conf"
+      - "spark.jars.ivy=${IVY_CACHE:-/opt/ivy2}"
+      - "--conf"
+      - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
+      - "--conf"
+      - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
+      # ── GCS connector configuration ─────────────────────────────────────────
+      - "--conf"
+      - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
+      - "--conf"
+      - "spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
+      - "--conf"
+      - "spark.hadoop.google.cloud.auth.service.account.enable=true"
+      - "--conf"
+      - "spark.hadoop.google.cloud.auth.service.account.json.keyfile=${GOOGLE_APPLICATION_CREDENTIALS:-/opt/spark-app/keys/scip-spark-sa.json}"
+      - "--conf"
+      - "spark.hadoop.fs.gs.outputstream.type=FLUSHABLE_COMPOSITE"
+      - "--conf"
+      - "spark.hadoop.fs.gs.implicit.dir.infer.enable=true"
+      # ── Job entrypoint ──────────────────────────────────────────────────────
+      - "jobs/silver_feature_engineering.py"
+
+    volumes:
+      - .:/opt/spark-app
+      - ../infrastructure/gcp/keys/scip-spark-sa.json:/opt/spark-app/keys/scip-spark-sa.json:ro
+      - spark-ivy-cache:/opt/ivy2
+
+    networks:
+      - kafka_scip-net
+
+    # Silver depends on Bronze having written at least one file.
+    # Start Bronze first; Silver will wait for GCS files on its first trigger.
+    depends_on:
+      - spark-bronze
+
+    restart: on-failure:3
+    mem_limit: 1536m
+
+volumes:
+  spark-ivy-cache:
+
+networks:
+  kafka_scip-net:
+    external: true
