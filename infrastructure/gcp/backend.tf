@@ -11,6 +11,13 @@
 # The bucket name cannot reference variables — Terraform limitation.
 
 terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+
   backend "gcs" {
     bucket = "supply-chain-platform-499920-scip-tf-state"
     prefix = "supply-chain-platform/terraform/state"

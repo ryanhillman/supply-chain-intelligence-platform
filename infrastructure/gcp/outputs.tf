@@ -72,3 +72,68 @@ output "next_steps" {
        cbt -project ${var.project_id} -instance ${google_bigtable_instance.feature_store.name} ls
   EOT
 }
+
+###############################################################################
+# Phase 5 Outputs
+###############################################################################
+
+output "artifact_registry_url" {
+  description = "Docker repository URL. Tag and push serving images here: {url}/{image}:{tag}"
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.serving.name}"
+}
+
+output "vertex_ai_endpoint_resource_name" {
+  description = "Full Vertex AI endpoint resource name. Pass to aiplatform.Endpoint() in Python."
+  value       = google_vertex_ai_endpoint.shortage_predictor.id
+}
+
+output "prediction_results_topic" {
+  description = "Pub/Sub topic name for prediction results. batch_scorer.py publishes here."
+  value       = google_pubsub_topic.prediction_results.name
+}
+
+output "prediction_results_dlq_topic" {
+  description = "Dead-letter topic name. Messages failing 5 deliveries land here."
+  value       = google_pubsub_topic.prediction_results_dlq.name
+}
+
+output "vertex_sa_email" {
+  description = "Service account email for the batch scorer and Vertex AI serving container."
+  value       = google_service_account.vertex_sa.email
+}
+
+output "prediction_writer_sa_email" {
+  description = "Service account email for the prediction writer Cloud Run job."
+  value       = google_service_account.prediction_writer_sa.email
+}
+
+output "phase5_next_steps" {
+  description = "Manual steps required after Phase 5 terraform apply"
+  value       = <<-EOT
+    Phase 5 infrastructure provisioned. Next steps (do not run terraform apply yet):
+
+    1. Create SA keys for Phase 5 service accounts:
+       gcloud iam service-accounts keys create infrastructure/gcp/keys/scip-vertex-sa.json \
+         --iam-account=${google_service_account.vertex_sa.email}
+       gcloud iam service-accounts keys create infrastructure/gcp/keys/scip-prediction-writer-sa.json \
+         --iam-account=${google_service_account.prediction_writer_sa.email}
+
+    2. Configure Docker for Artifact Registry:
+       gcloud auth configure-docker ${var.region}-docker.pkg.dev
+
+    3. Build and push the serving container (Phase 5.2):
+       docker build -t ${var.region}-docker.pkg.dev/${var.project_id}/scip-serving/shortage-predictor-serving:latest \
+         phase5/serving/container/
+       docker push ${var.region}-docker.pkg.dev/${var.project_id}/scip-serving/shortage-predictor-serving:latest
+
+    4. Register the model (Phase 5.3):
+       python phase5/scripts/register.py --bucket $GCS_BUCKET_NAME --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
+
+    5. Deploy the endpoint (Phase 5.3):
+       python phase5/scripts/deploy.py --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
+
+    6. Verify Bigtable predictions column family:
+       cbt -project ${var.project_id} -instance ${google_bigtable_instance.feature_store.name} \
+         ls inventory_features
+  EOT
+}

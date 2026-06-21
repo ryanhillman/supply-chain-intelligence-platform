@@ -1,6 +1,7 @@
 ###############################################################################
 # Supply Chain Intelligence Platform — GCP Infrastructure
 # Phase 3: GCS Data Lake + Bigtable Feature Store
+# Phase 5: predictions column family (added to existing inventory_features table)
 ###############################################################################
 
 locals {
@@ -158,6 +159,14 @@ resource "google_bigtable_table" "inventory_features" {
     family = "lineage"
   }
 
+  # Phase 5 — ML prediction outputs, kept separate from feature families.
+  # Columns: shortage_prob_7d, stockout_risk_score, model_version,
+  #          prediction_timestamp.
+  # GC policy: max 3 versions (current + 2 prior rounds for rollback inspection).
+  column_family {
+    family = "predictions"
+  }
+
   depends_on = [google_bigtable_instance.feature_store]
 }
 
@@ -244,6 +253,21 @@ resource "google_bigtable_gc_policy" "lineage" {
 
   max_age {
     duration = "168h" # 7 days
+  }
+}
+
+# Phase 5 — Keep 3 versions: current prediction + 2 prior rounds.
+# Allows champion/challenger rollback inspection without unbounded growth.
+# See ADR-005, Decision 2.
+resource "google_bigtable_gc_policy" "predictions" {
+  project         = var.project_id
+  instance_name   = google_bigtable_instance.feature_store.name
+  table           = google_bigtable_table.inventory_features.name
+  column_family   = "predictions"
+  deletion_policy = "ABANDON"
+
+  max_version {
+    number = 3
   }
 }
 
