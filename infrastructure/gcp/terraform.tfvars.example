@@ -21,4 +21,5 @@ project_id = "your-gcp-project-id"
 # bigtable_num_nodes     = 1               # PRODUCTION only
 
 # IAM
-# service_account_id = "scip-spark-sa"
+# service_account_id    = "scip-spark-sa"
+# vertex_deployer_email = "you@example.com"   # grants serviceAccountUser on scip-vertex-sa

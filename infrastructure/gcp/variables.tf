@@ -88,3 +88,9 @@ variable "service_account_id" {
   type        = string
   default     = "scip-spark-sa"
 }
+
+variable "vertex_deployer_email" {
+  description = "Google account email of the human or CI identity that runs deploy.py (e.g. user@example.com). Granted roles/iam.serviceAccountUser on scip-vertex-sa. Leave empty to skip."
+  type        = string
+  default     = ""
+}

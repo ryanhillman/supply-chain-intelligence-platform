@@ -91,10 +91,10 @@ resource "google_service_account" "vertex_sa" {
   depends_on = [google_project_service.iam]
 }
 
-resource "google_project_iam_member" "vertex_gcs_reader" {
-  project = var.project_id
-  role    = "roles/storage.objectViewer"
-  member  = "serviceAccount:${google_service_account.vertex_sa.email}"
+resource "google_storage_bucket_iam_member" "vertex_gcs_lake" {
+  bucket = google_storage_bucket.data_lake.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.vertex_sa.email}"
 }
 
 resource "google_project_iam_member" "vertex_bigtable" {
@@ -125,4 +125,25 @@ resource "google_project_iam_member" "vertex_logging" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.vertex_sa.email}"
+}
+
+# scip-vertex-sa must be able to act as itself when passed as the serving
+# container SA in Vertex AI deploy calls (google.api_core INVALID_ARGUMENT
+# otherwise). This is a self-referential actAs binding — the caller (SA key)
+# and the specified service_account are the same identity.
+resource "google_service_account_iam_member" "vertex_sa_self_act_as" {
+  service_account_id = google_service_account.vertex_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.vertex_sa.email}"
+}
+
+# Optional: grant a human deployer (e.g. the CI runner or dev user who runs
+# deploy.py locally) permission to act as scip-vertex-sa. Set
+# vertex_deployer_email in terraform.tfvars; leave empty to skip.
+resource "google_service_account_iam_member" "vertex_sa_deployer" {
+  count = var.vertex_deployer_email != "" ? 1 : 0
+
+  service_account_id = google_service_account.vertex_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "user:${var.vertex_deployer_email}"
 }
