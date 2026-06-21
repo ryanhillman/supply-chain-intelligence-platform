@@ -91,6 +91,25 @@ ENV/
 .python-version
 
 
+# ── Phase 4 ML artifacts ─────────────────────────────────────────────────────
+# Generated datasets, trained model binaries, and ONNX exports.
+# .gitkeep files inside artifacts/ ARE tracked (to preserve the directory).
+phase4/artifacts/*.parquet
+phase4/artifacts/*.pt
+phase4/artifacts/*.pkl
+phase4/artifacts/*.onnx
+phase4/artifacts/*.onnx.data
+phase4/artifacts/*.json
+phase4/artifacts/dataset/
+
+# ── Phase 5 runtime artifacts ─────────────────────────────────────────────────
+# registration_info.json, deployment_info.json, and drift_report.json are
+# generated at runtime (register.py, deploy.py, monitor.py). They contain
+# GCS paths and Vertex AI resource names that change per environment and
+# must not be committed. Excluded here to prevent accidental git add.
+phase5/artifacts/
+
+
 # ── Spark (local) ─────────────────────────────────────────────────────────────
 # Production checkpoints, Bronze, Silver, and DLQ data live in GCS.
 # These patterns guard against accidental local syncs or test runs that

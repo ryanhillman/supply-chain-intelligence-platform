@@ -1,0 +1,121 @@
+"""
+ONNX export — prepares the trained ShortagePredictor for Vertex AI serving.
+
+Exports to ONNX opset 17 with dynamic batch axis.
+Validates the exported graph with onnxruntime before reporting success.
+
+Phase 5 will consume model.onnx from GCS to register with Vertex AI
+Model Registry and deploy to a Vertex AI Endpoint.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+import numpy as np
+import onnx
+import onnxruntime as ort
+import torch
+
+from phase4.datasets.feature_engineer import NUMERIC_FEATURE_COLS
+from phase4.training.config import TrainingConfig
+from phase4.training.model import ShortagePredictor
+
+logger = logging.getLogger(__name__)
+
+N_NUMERIC = len(NUMERIC_FEATURE_COLS)
+
+
+def export_to_onnx(
+    artifacts_dir: str | Path,
+    output_path:   str | Path | None = None,
+) -> Path:
+    """
+    Load model.pt from artifacts_dir, export to ONNX, validate with onnxruntime.
+
+    Parameters
+    ----------
+    artifacts_dir:
+        Directory containing model.pt and feature_metadata.json.
+    output_path:
+        Destination .onnx file. Defaults to artifacts_dir/model.onnx.
+
+    Returns
+    -------
+    Path to the written .onnx file.
+    """
+    artifacts_dir = Path(artifacts_dir)
+    output_path   = Path(output_path) if output_path else artifacts_dir / "model.onnx"
+
+    metadata = _load_json(artifacts_dir / "feature_metadata.json")
+    config   = TrainingConfig()
+
+    model = ShortagePredictor(
+        n_numeric    = metadata["n_numeric_features"],
+        n_warehouses = metadata["n_warehouses"],
+        n_skus       = metadata["n_skus"],
+        config       = config,
+    )
+    ckpt = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+
+    # Dummy input for tracing (batch_size=2 to exercise batch dimension)
+    batch_size = 2
+    dummy_numeric = torch.zeros(batch_size, metadata["n_numeric_features"])
+    dummy_wh      = torch.zeros(batch_size, dtype=torch.long)
+    dummy_sku     = torch.zeros(batch_size, dtype=torch.long)
+
+    torch.onnx.export(
+        model,
+        (dummy_numeric, dummy_wh, dummy_sku),
+        str(output_path),
+        opset_version    = 17,
+        input_names      = ["numeric_features", "warehouse_ids", "sku_ids"],
+        output_names     = ["logit_prob", "risk_score"],
+        dynamic_axes     = {
+            "numeric_features": {0: "batch"},
+            "warehouse_ids":    {0: "batch"},
+            "sku_ids":          {0: "batch"},
+            "logit_prob":       {0: "batch"},
+            "risk_score":       {0: "batch"},
+        },
+        do_constant_folding = True,
+    )
+    logger.info("ONNX model written to %s", output_path)
+
+    # ── Validate with onnxruntime ─────────────────────────────────────────────
+    onnx_model = onnx.load(str(output_path))
+    onnx.checker.check_model(onnx_model)
+
+    sess = ort.InferenceSession(str(output_path), providers=["CPUExecutionProvider"])
+    inputs = {
+        "numeric_features": dummy_numeric.numpy(),
+        "warehouse_ids":    dummy_wh.numpy(),
+        "sku_ids":          dummy_sku.numpy(),
+    }
+    outputs = sess.run(None, inputs)
+    logit_out, score_out = outputs
+
+    assert logit_out.shape == (batch_size, 1), f"Unexpected logit shape: {logit_out.shape}"
+    assert score_out.shape == (batch_size, 1), f"Unexpected score shape: {score_out.shape}"
+
+    # Cross-check: onnxruntime logit → sigmoid should match PyTorch predict()
+    with torch.no_grad():
+        pt_prob, pt_score = model.predict(dummy_numeric, dummy_wh, dummy_sku)
+
+    np.testing.assert_allclose(
+        1.0 / (1.0 + np.exp(-logit_out)),   # sigmoid of ONNX logit output
+        pt_prob.numpy(),
+        atol=1e-5,
+        err_msg="ONNX probability output diverges from PyTorch",
+    )
+    logger.info("ONNX validation passed — outputs match PyTorch within 1e-5")
+
+    return output_path
+
+
+def _load_json(path: Path) -> dict:
+    with open(path) as f:
+        return json.load(f)
