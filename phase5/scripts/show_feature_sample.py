@@ -77,6 +77,11 @@ def parse_args() -> argparse.Namespace:
         help="Number of entities to display (default: 7)",
     )
     p.add_argument(
+        "--features-only",
+        action="store_true",
+        help="Show input feature data only — omit risk labels and model output",
+    )
+    p.add_argument(
         "--sort",
         choices=["risk", "warehouse", "all"],
         default="risk",
@@ -250,24 +255,27 @@ def _risk_tag(rec: dict) -> str:
     return "  [LOW RISK]"
 
 
-def render(records: list[dict], n_total: int) -> None:
+def render(records: list[dict], n_total: int, features_only: bool = False) -> None:
     has_preds = _has_predictions(records)
 
     print()
     print("  " + "=" * 62)
     print("  SUPPLY CHAIN INTELLIGENCE PLATFORM")
-    print(f"  Feature Sample  ({len(records)} of {n_total} entities)")
-    if has_preds:
-        sort_note = "sorted by shortage_prob_7d desc"
+    if features_only:
+        print(f"  Feature Sample -- Input Data Only  ({len(records)} of {n_total} entities)")
     else:
-        sort_note = "no predictions yet -- run score.py first"
-    print(f"  [{sort_note}]")
+        print(f"  Feature Sample  ({len(records)} of {n_total} entities)")
+        if has_preds:
+            sort_note = "sorted by shortage_prob_7d desc"
+        else:
+            sort_note = "no predictions yet -- run score.py first"
+        print(f"  [{sort_note}]")
     print("  " + "=" * 62)
 
     for i, rec in enumerate(records):
         wh  = rec["warehouse_id"]
         sku = rec["sku_id"]
-        tag = _risk_tag(rec)
+        tag = "" if features_only else _risk_tag(rec)
 
         print()
         print(f"  {wh} / {sku}{tag}")
@@ -299,14 +307,15 @@ def render(records: list[dict], n_total: int) -> None:
         print(f"    Reliability        : {rel:>8}    Active PO Qty : {po_qty:>8}")
         print(f"    In-Transit Qty     : {transit:>8}")
 
-        # -- Predictions (if scored)
-        prob  = rec.get("shortage_prob_7d")
-        score = rec.get("stockout_risk_score")
-        if prob is not None:
-            print(f"  Model Output")
-            print(f"    Shortage Prob 7d   : {prob:>8.3f}    Risk Score    : {score:>8.3f}")
-        else:
-            print(f"  Model Output       : (not yet scored)")
+        # -- Predictions (if scored and not suppressed)
+        if not features_only:
+            prob  = rec.get("shortage_prob_7d")
+            score = rec.get("stockout_risk_score")
+            if prob is not None:
+                print(f"  Model Output")
+                print(f"    Shortage Prob 7d   : {prob:>8.3f}    Risk Score    : {score:>8.3f}")
+            else:
+                print(f"  Model Output       : (not yet scored)")
 
         if i < len(records) - 1:
             print()
@@ -314,8 +323,12 @@ def render(records: list[dict], n_total: int) -> None:
 
     print()
     print("  " + "=" * 62)
-    print("  -> run score.py to update model predictions")
-    print("  -> run show_predictions.py for the full risk dashboard")
+    if features_only:
+        print("  -> run score.py to generate updated predictions")
+        print("  -> run show_predictions.py to view risk results")
+    else:
+        print("  -> run score.py to update model predictions")
+        print("  -> run show_predictions.py for the full risk dashboard")
     print("  " + "=" * 62)
     print()
 
@@ -339,7 +352,7 @@ def main() -> None:
         sys.exit(1)
 
     sample = select_sample(records, args.n, args.sort)
-    render(sample, n_total=len(records))
+    render(sample, n_total=len(records), features_only=args.features_only)
 
 
 if __name__ == "__main__":
