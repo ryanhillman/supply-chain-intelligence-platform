@@ -67,41 +67,55 @@ This platform explores how learned shortage-risk scoring can augment traditional
 
 ```mermaid
 flowchart TD
-    A[Kafka Producer]
-    B[Kafka Topic]
-    C[Spark Structured Streaming]
-    D[GCS Bronze]
-    E[Silver Batch Processing]
-    F[GCS Silver Feature Snapshots]
-    G[Bigtable Feature Store]
-    H[PyTorch Training]
-    I[ONNX Export]
-    J[Vertex AI Model Registry]
-    K[Vertex AI Endpoint]
-    L[Batch Scorer]
-    M[Pub/Sub]
-    N[Prediction Writer]
-    O[Bigtable Predictions]
-    P[Drift Monitor]
 
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-    E --> G
-    F --> H
-    H --> I
-    I --> J
-    J --> K
-    G --> L
-    L --> K
-    K --> L
-    L --> M
-    M --> N
-    N --> O
-    G --> P
-    O --> P
+    K[Apache Kafka]
+
+    S[Spark Structured Streaming]
+
+    B[GCS Bronze<br/>Raw Event Lake]
+
+    F[Silver Feature Engineering + Feature Creation]
+
+    BT[(Bigtable Feature Store)]
+
+    PT[PyTorch Training]
+
+    ONNX[ONNX Export]
+
+    REG[Vertex AI Model Registry]
+
+    EP[Vertex AI Endpoint]
+
+    BS[Batch Scoring]
+
+    PS[Pub/Sub]
+
+    PW[Prediction Writer]
+
+    PR[(Bigtable Predictions)]
+
+    DM[Drift Monitoring<br/>PSI + Prediction Variance]
+
+    K --> S
+    S --> B
+    B --> F
+    F --> BT
+
+    BT --> PT
+    PT --> ONNX
+    ONNX --> REG
+    REG --> EP
+
+    BT --> BS
+    BS --> EP
+    EP --> BS
+
+    BS --> PS
+    PS --> PW
+    PW --> PR
+
+    BT --> DM
+    PR --> DM
 ```
 ---
 
