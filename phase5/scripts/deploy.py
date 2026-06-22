@@ -143,7 +143,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Service account email for the serving container "
             "(e.g. scip-vertex-sa@{project}.iam.gserviceaccount.com). "
-            "Use the 'vertex_sa_email' Terraform output."
+            "Required: the default Vertex AI compute SA lacks GCS bucket read access. "
+            "Use the 'vertex_sa_email' Terraform output or set VERTEX_SA_EMAIL."
         ),
     )
 
@@ -200,6 +201,13 @@ def main() -> None:
     _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     if args.command == "deploy":
+        if not getattr(args, "service_account", None):
+            logger.warning(
+                "No --service-account specified. The default Vertex AI compute SA "
+                "lacks GCS bucket read access and the container will fail to start. "
+                "Set VERTEX_SA_EMAIL or pass --service-account "
+                "scip-vertex-sa@{project}.iam.gserviceaccount.com"
+            )
         deployer = EndpointDeployer(
             project_id             = args.project,
             region                 = args.region,

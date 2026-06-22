@@ -83,10 +83,14 @@ def export_to_onnx(
         },
         do_constant_folding = True,
     )
+
+    # Merge any external-data sidecar into the ONNX file so the serving
+    # container receives a single self-contained artifact.
+    _consolidate_external_data(output_path)
     logger.info("ONNX model written to %s", output_path)
 
     # ── Validate with onnxruntime ─────────────────────────────────────────────
-    onnx_model = onnx.load(str(output_path))
+    onnx_model = onnx.load(str(output_path), load_external_data=False)
     onnx.checker.check_model(onnx_model)
 
     sess = ort.InferenceSession(str(output_path), providers=["CPUExecutionProvider"])
@@ -114,6 +118,21 @@ def export_to_onnx(
     logger.info("ONNX validation passed — outputs match PyTorch within 1e-5")
 
     return output_path
+
+
+def _consolidate_external_data(onnx_path: Path) -> None:
+    """Merge any .onnx.data sidecar into the ONNX file as inline tensors."""
+    from onnx.external_data_helper import load_external_data_for_model
+
+    sidecar = onnx_path.parent / (onnx_path.name + ".data")
+    if not sidecar.exists():
+        return
+
+    proto = onnx.load(str(onnx_path), load_external_data=False)
+    load_external_data_for_model(proto, str(onnx_path.parent))
+    onnx.save(proto, str(onnx_path), save_as_external_data=False)
+    sidecar.unlink()
+    logger.info("Merged external data sidecar into %s", onnx_path)
 
 
 def _load_json(path: Path) -> dict:

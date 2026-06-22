@@ -14,8 +14,15 @@ An end-to-end supply chain intelligence platform built on GCP. The system ingest
 
 ---
 
+## Project Scope
+
+This project demonstrates an end-to-end machine learning platform for supply-chain shortage-risk scoring. The historical training data is generated from a domain-grounded synthetic simulation designed to create realistic warehouse, inventory, supplier, and demand behavior. The focus of the project is the platform architecture, deployment workflow, feature engineering, model serving, monitoring, and MLOps lifecycle rather than validation on real enterprise supply-chain data.
+
+---
+
 ## Table of Contents
 
+- [Project Scope](#project-scope)
 - [Business Problem](#business-problem)
 - [Key Features](#key-features)
 - [Architecture Diagram](#architecture-diagram)
@@ -38,7 +45,7 @@ An end-to-end supply chain intelligence platform built on GCP. The system ingest
 
 Inventory stockouts and excess safety stock are two of the most operationally expensive failure modes in distribution-scale supply chains. Stockouts cause lost revenue and deferred demand; excess stock increases carrying cost, spoilage risk, and working capital drag. Neither can be managed effectively with threshold-based reorder rules alone, because reorder points are static and cannot adapt to shifting demand velocity, supplier reliability variance, or seasonal patterns.
 
-This platform addresses that gap by replacing static reorder logic with a learned shortage prediction model that scores every warehouse-SKU pair on a 7-day stockout probability horizon. Predictions are served from a low-latency online endpoint and written back to the feature store so downstream systems — replenishment automation, buying dashboards, alerting pipelines — can consume them without building their own inference infrastructure.
+This platform explores how learned shortage-risk scoring can augment traditional inventory planning approaches, scoring every warehouse-SKU pair on a 7-day stockout probability horizon. Predictions are served from a low-latency online endpoint and written back to the feature store so downstream systems — replenishment automation, buying dashboards, alerting pipelines — can consume them without building their own inference infrastructure.
 
 ---
 
@@ -47,7 +54,7 @@ This platform addresses that gap by replacing static reorder logic with a learne
 - **Real-time ingestion** via Apache Kafka with Spark Structured Streaming consumer writing to GCS Bronze in exactly-once semantics
 - **Two-layer data lake** (Bronze / Silver) with automated feature engineering across 31 columns per entity
 - **Online feature store** on Google Cloud Bigtable — 6 column families, single-digit millisecond read latency, row key designed for warehouse-SKU access patterns
-- **PyTorch shortage predictor** trained on temporal feature snapshots with focal loss for class imbalance, exported to ONNX for portable deployment
+- **PyTorch shortage predictor** with warehouse/SKU embeddings and dual output heads, trained on domain-grounded synthetic supply-chain history (365 days × 6 warehouses × 20 SKUs), exported to self-contained ONNX opset 17 for portable deployment
 - **Vertex AI Model Registry** with versioned artifact tracking, evaluation metrics, and champion/challenger deployment pattern
 - **FastAPI serving container** loading ONNX Runtime at startup, containerized and hosted on Vertex AI with autoscaling configuration
 - **Pub/Sub prediction pipeline** — batch scorer publishes scored entities as messages; prediction writer drains the subscription and mutates Bigtable
@@ -60,6 +67,14 @@ This platform addresses that gap by replacing static reorder logic with a learne
 
 ```mermaid
 flowchart TD
+<<<<<<< HEAD
+    subgraph Ingestion["Ingestion Layer"]
+        K["Apache Kafka\nEvent Stream"]
+        SP["Spark Structured\nStreaming"]
+        BR["GCS Bronze\nRaw Events"]
+    end
+=======
+>>>>>>> 3840c036ab7186dd7a729e5c8d3145cb28f86acd
 
     A[Kafka Producer]
     B[Spark Streaming]
@@ -78,10 +93,30 @@ flowchart TD
     D --> E
     D --> F
 
+<<<<<<< HEAD
+    subgraph Serving["Serving & Monitoring"]
+        EP["Vertex AI Endpoint\nFastAPI · ONNX Runtime"]
+        BS["Batch Scorer"]
+        PS["Cloud Pub/Sub"]
+        PW["Prediction Writer"]
+        PR[("Bigtable\nPredictions")]
+        DM["Drift Monitor\nPSI · Variance"]
+    end
+
+    K -->|streaming| SP -->|micro-batch| BR
+    BR -->|batch| SJ --> SL -->|write| BT
+    BT -->|snapshot| TR --> OX --> VR
+    VR -->|deploy| EP
+    BT -->|scan| BS -->|predict| EP
+    EP -->|scores| BS -->|publish| PS -->|subscribe| PW -->|mutate| PR
+    BT -->|features| DM
+    PR -->|predictions| DM
+=======
     E --> G
     G --> H
     H --> I
     I --> J
+>>>>>>> 3840c036ab7186dd7a729e5c8d3145cb28f86acd
 ```
 
 ---
@@ -98,7 +133,9 @@ A scheduled Silver batch job reads from Bronze, applies aggregation logic across
 
 ### ML Pipeline
 
-The training pipeline reads Silver snapshots across a temporal window to construct a labeled dataset. Labels are derived from future inventory state: an entity is labeled a shortage if `days_of_supply ≤ 7` at the forecast horizon. A **PyTorch MLP** is trained with focal loss (γ=2, α=0.25) to address the natural class imbalance in shortage events. After training, the model is exported to **ONNX opset 18** via `torch.onnx.export`, enabling deployment without a PyTorch dependency at inference time.
+The training pipeline reads Silver snapshots across a temporal window to construct a labeled dataset. Labels are derived from future inventory state: an entity is labeled a shortage if `days_of_supply ≤ 7` at the forecast horizon. A **PyTorch MLP** is trained with dual-head loss (BCEWithLogitsLoss for shortage probability, MSELoss for risk score) with class-imbalance weighting to address the natural scarcity of shortage events. After training, the model is exported to **ONNX opset 17** via `torch.onnx.export`, enabling deployment without a PyTorch dependency at inference time.
+
+The training dataset is produced by a **synthetic supply-chain simulation engine** (`phase4/datasets/synthetic_generator.py`) that generates 365 days of realistic per-entity history across 6 warehouse profiles and 20 SKU archetypes, matching the exact column contract of the Bronze/Silver pipeline. The generator models demand seasonality, supplier reliability variation, lead-time noise, demand spikes, and inventory replenishment — producing a diverse 43,800-row training dataset with a ~20% positive label rate. In production, this generator is an additive bootstrap path; it does not replace the Bronze → Spark → Silver pipeline, which remains the primary data path once sufficient real inventory history accumulates.
 
 ### Serving Layer
 
@@ -115,7 +152,7 @@ The trained ONNX model is registered in **Vertex AI Model Registry** with versio
 | Object storage | Google Cloud Storage | — |
 | Online feature store | Google Cloud Bigtable | — |
 | ML framework | PyTorch | 2.x |
-| Model serialization | ONNX | opset 18 |
+| Model serialization | ONNX | opset 17 |
 | Model inference | ONNX Runtime | 1.19.2 |
 | Model serving API | FastAPI + Uvicorn | 0.115 / 0.32 |
 | Model registry | Vertex AI Model Registry | — |
@@ -147,19 +184,25 @@ Silver features are grouped across 6 semantic families:
 | `risk` | `shortage_prob_7d`, `stockout_risk_score` | Model output targets |
 | `lineage` | `ingest_timestamp`, `source_topic` | Audit and replay metadata |
 
-The feature engineering step (`feature_engineer.py`) applies interaction terms, ratio features, and log transforms before scaling with a fitted `StandardScaler`. The preprocessor is serialized alongside the ONNX model and applied identically at training and inference time.
+The Silver layer stores 31 columns total across the six families above. Of these, the model consumes 21 numeric features (15 raw Silver columns plus 6 engineered interaction features) plus warehouse and SKU embeddings. The feature engineering step (`feature_engineer.py`) applies interaction terms, ratio features, and log transforms before scaling with a fitted `StandardScaler`. The preprocessor is serialized alongside the ONNX model and applied identically at training and inference time.
 
 ### Model Architecture
 
-A 3-layer MLP with batch normalization and dropout:
+A 3-layer MLP with warehouse/SKU embeddings and dual output heads:
 
 ```
-Input (31 features) → Linear(31→64) → BN → ReLU → Dropout(0.3)
-                    → Linear(64→32) → BN → ReLU → Dropout(0.2)
-                    → Linear(32→1)  → Sigmoid
+Input: 21 numeric features (StandardScaler-transformed)
+       + warehouse_id embedding (6 warehouses, dim=3)
+       + sku_id embedding       (20 SKUs, dim=5)
+  → Linear(29 → 64) → BN → ReLU → Dropout(0.3)
+  → Linear(64 → 32) → BN → ReLU → Dropout(0.2)
+  → Linear(32 → 16) → BN → ReLU
+
+  Head 1: Linear(16→1) → logit  (BCEWithLogitsLoss, shortage_prob_7d)
+  Head 2: Linear(16→1) → Sigmoid (MSELoss against days_of_supply proxy, stockout_risk_score)
 ```
 
-Focal loss (γ=2, α=0.25) penalizes easy negatives and focuses training on the minority shortage class.
+The 21 numeric features consist of 15 raw Bronze/Silver columns plus 6 engineered interaction features (days_of_supply, effective_supply, buffer_ratio, demand_cv, supply_coverage_days, replenishment_gap). Class imbalance is addressed with `pos_weight = n_negative / n_positive` passed to BCEWithLogitsLoss.
 
 ### Training Configuration
 
@@ -170,7 +213,7 @@ Focal loss (γ=2, α=0.25) penalizes easy negatives and focuses training on the 
 
 ### ONNX Export
 
-Post-training, the model is exported to ONNX opset 18 with dynamic batch axis. The ONNX graph is validated with ONNX Runtime before registration to catch shape mismatches at export time rather than at inference time.
+Post-training, the model is exported to ONNX opset 17 with dynamic batch axis. External weight data is explicitly consolidated into a single self-contained `.onnx` file (no sidecar) before upload, ensuring the serving container can load the model from a single GCS object. The ONNX graph is validated with ONNX Runtime before registration to catch shape mismatches at export time rather than at inference time.
 
 ---
 
@@ -259,11 +302,16 @@ supply-chain-platform/
 │   └── docker-compose.spark.yml
 │
 ├── phase4/                         # ML training and ONNX export
-│   ├── datasets/                   # Temporal sampler, Silver loader, feature engineer
-│   ├── training/                   # PyTorch model, focal loss, trainer
-│   ├── inference/                  # ONNX export, local predictor
-│   ├── evaluation/                 # AUC-ROC, AUPRC, Brier, calibration
-│   └── scripts/                    # CLI entry points: train, evaluate, export
+│   ├── datasets/
+│   │   ├── bronze_temporal_sampler.py  # GCS Bronze → (feature_rows, inv_events)
+│   │   ├── synthetic_generator.py      # Simulation engine — bootstrap data path
+│   │   ├── label_generator.py          # 7-day stockout labels from inv_events
+│   │   ├── feature_engineer.py         # 6 derived features + leakage controls
+│   │   └── dataset_builder.py          # Orchestrates both data paths
+│   ├── training/                   # PyTorch model, dual-head loss, trainer
+│   ├── inference/                  # ONNX export (self-contained), local predictor
+│   ├── evaluation/                 # AUC-ROC, AUPRC, Brier, per-warehouse breakdown
+│   └── scripts/                    # generate_data, build_dataset, train, evaluate
 │
 ├── phase5/                         # Model registry, serving, and prediction pipeline
 │   ├── registry/                   # Vertex AI model registration and promotion
@@ -301,7 +349,7 @@ Pre-declared split keys (`W-2`, `W-4`, `W-6`) distribute the key space across ta
 
 PyTorch was selected over XGBoost/LightGBM for its native `torch.onnx.export` path, which produces a validated ONNX graph without third-party conversion tooling. The MLP architecture was chosen over tree ensembles to support future extension to sequence models (LSTM/Transformer) on time-series inventory trajectories without pipeline re-architecture.
 
-Focal loss addresses the inherent class imbalance in shortage prediction: in a well-managed supply chain, shortage events are rare. Standard binary cross-entropy would converge to predicting non-shortage for all inputs. Focal loss down-weights easy negatives and concentrates gradient signal on ambiguous and minority-class examples.
+Class imbalance is addressed with BCEWithLogitsLoss and a `pos_weight` parameter set to `n_negative / n_positive` (clamped to [0.1, 10.0]). In a well-managed supply chain, shortage events are rare — positive-label rate is approximately 15–20%. Standard binary cross-entropy applied naively would pressure the model to predict non-shortage for all inputs; `pos_weight` rescales the loss contribution of positive examples to keep gradient signal balanced across both classes.
 
 [Full decision record →](docs/adr/ADR-004-pytorch-shortage-predictor.md)
 
@@ -346,27 +394,26 @@ Vertex AI endpoint traffic is served from a single `n1-standard-2` CPU instance.
 | Prediction messages published | 120 |
 | Publish failures | 0 |
 | Bigtable prediction writes | 120 / 120 (0 failed) |
-| Mean endpoint latency (batch) | 268.5 ms |
+| Mean endpoint latency (batch) | 248.0 ms |
 | Smoke test | PASSED — all predictions finite ∈ [0, 1] |
+| shortage_prob_7d mean / std | 0.053 / 0.102 |
+| stockout_risk_score mean / std | 0.496 / 0.225 |
+| variance_collapsed | False |
 
 ### Model Performance (Held-Out Test Set)
 
 | Metric | Value |
 |---|---|
-| AUC-ROC | 0.9985 |
-| AUPRC | 0.9933 |
-| Brier Score | 0.0124 |
+| Dataset (train / val / test) | 30,600 / 6,600 / 6,600 rows |
+| Positive label rate (test) | 15.6% |
+| AUC-ROC | 0.9429 (baseline 0.8606, +0.0823) |
+| AUPRC | 0.7457 (baseline 0.4332, +0.3125) |
+| Brier Score | 0.0935 (baseline 0.1838, +0.0903) |
+| Phase 4 evaluation | PASSED (model beats baseline on all three metrics) |
 
-### Drift Monitor Results (Production Run)
+### Initial Drift Investigation (Pre-Retrain Baseline)
 
-| Feature | Training Mean | Live Mean | PSI | Status |
-|---|---|---|---|---|
-| `inventory__days_of_supply` | 0.15 | 3.44 | 7.79 | TRIGGER |
-| `velocity__sales_7d` | 19,500 | 1,447 | 8.28 | TRIGGER |
-| `velocity__avg_daily_sales_7d` | 2,786 | 207 | 8.28 | TRIGGER |
-| `supplier__supplier_reliability` | 0.85 | 0.85 | 3.39 | TRIGGER |
-
-All four monitored features exceed the PSI ≥ 0.20 retraining threshold. This is the expected result given that the training dataset was generated from a single-day temporal simulation while the production Silver layer reflects real feature distributions. Retraining on accumulated Silver data will resolve the distribution mismatch. The drift monitor successfully detected and reported this condition, validating the monitoring pipeline end-to-end.
+Before the synthetic training pipeline was introduced, a baseline drift run detected a severe training-vs-live distribution mismatch (PSI 7.79–8.28 across all monitored features), triggering the retraining gate. The synthetic generator was then designed to match the live Bigtable feature distribution. After retraining on 365-day simulated history, all monitored features returned to stable PSI (< 0.10). This exercise validated that the drift monitor correctly identifies and reports distribution shift, and that the retraining gate functions as designed.
 
 ### Feature Statistics
 

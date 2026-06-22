@@ -96,7 +96,7 @@ class DatasetBuilder:
         self.simulate_days    = simulate_days
 
     def build(self) -> DatasetManifest:
-        """Run the full pipeline and return a DatasetManifest."""
+        """Run the full pipeline from GCS Bronze and return a DatasetManifest."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # ── Step 1: Sample Bronze temporal features ───────────────────────────
@@ -106,7 +106,38 @@ class DatasetBuilder:
             simulate_days=self.simulate_days,
         )
         feature_rows, inv_events = sampler.build()
+        return self._build_from_raw(feature_rows, inv_events)
 
+    def build_from_synthetic(self, generator: object) -> DatasetManifest:
+        """
+        Build the dataset from a SyntheticDataGenerator instead of GCS Bronze.
+
+        The generator must implement .build() returning (feature_rows, inv_events)
+        with the same column contract as BronzeTemporalSampler.build().
+        All downstream steps (label generation, feature engineering, split,
+        StandardScaler, parquet output) are reused unchanged.
+
+        Parameters
+        ----------
+        generator:
+            SyntheticDataGenerator instance (or any object with a compatible
+            .build() -> tuple[pd.DataFrame, pd.DataFrame] method).
+        """
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        feature_rows, inv_events = generator.build()
+        return self._build_from_raw(feature_rows, inv_events)
+
+    def _build_from_raw(
+        self,
+        feature_rows: "pd.DataFrame",
+        inv_events:   "pd.DataFrame",
+    ) -> DatasetManifest:
+        """
+        Steps 2–11 of the original build() pipeline, shared by both data paths.
+
+        Accepts (feature_rows, inv_events) in BronzeTemporalSampler format and
+        produces the full set of dataset artifacts in self.output_dir.
+        """
         # ── Step 2: Generate labels ────────────────────────────────────────────
         labeled = generate_labels(feature_rows, inv_events, self.horizon_days)
 

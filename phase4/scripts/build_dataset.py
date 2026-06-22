@@ -37,17 +37,65 @@ logger = logging.getLogger("build_dataset")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Build Phase 4 training dataset from Bronze GCS")
+    p = argparse.ArgumentParser(
+        description="Build Phase 4 training dataset from Bronze GCS or synthetic generator"
+    )
+
+    # ── Data source ───────────────────────────────────────────────────────────
+    p.add_argument(
+        "--synthetic",
+        action="store_true",
+        help=(
+            "Use the SyntheticDataGenerator instead of GCS Bronze. "
+            "When set, --bucket is not required. "
+            "The existing Bronze pipeline is unchanged and remains the "
+            "production data path."
+        ),
+    )
+    p.add_argument(
+        "--total-days",
+        type=int,
+        default=402,
+        help=(
+            "Total simulation days for --synthetic mode "
+            "(default: 402 = 30 warmup + 365 sample + 7 lookahead)"
+        ),
+    )
+    p.add_argument(
+        "--start-date",
+        default="2025-04-01",
+        help="Simulation start date for --synthetic mode (default: 2025-04-01)",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="RNG seed for --synthetic mode (default: 42)",
+    )
+
+    # ── GCS Bronze path (unchanged) ───────────────────────────────────────────
     p.add_argument(
         "--bucket",
         default=os.environ.get("GCS_BUCKET_NAME", ""),
-        help="GCS bucket name (e.g. my-project-scip-lake)",
+        help="GCS bucket name (e.g. my-project-scip-lake). Required unless --synthetic.",
     )
     p.add_argument(
         "--sa-key",
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
         help="Path to service account JSON key (default: Application Default Credentials)",
     )
+    p.add_argument(
+        "--simulate-days",
+        type=int,
+        default=60,
+        help=(
+            "Tile Bronze events across N simulated days when data spans < 38 days "
+            "(default: 60; set 0 to disable and raise an error instead). "
+            "Ignored when --synthetic is set."
+        ),
+    )
+
+    # ── Shared options ────────────────────────────────────────────────────────
     p.add_argument(
         "--output",
         default="phase4/artifacts/dataset",
@@ -59,39 +107,11 @@ def parse_args() -> argparse.Namespace:
         default=7,
         help="Stockout prediction horizon in days (default: 7)",
     )
-    p.add_argument(
-        "--simulate-days",
-        type=int,
-        default=60,
-        help=(
-            "Tile Bronze events across N simulated days when data spans < 38 days "
-            "(default: 60; set 0 to disable and raise an error instead)"
-        ),
-    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-
-    if not args.bucket:
-        logger.error(
-            "GCS bucket name is required. Pass --bucket or set GCS_BUCKET_NAME."
-        )
-        sys.exit(1)
-
-    logger.info("Starting dataset build")
-    logger.info("  Bucket        : %s", args.bucket)
-    logger.info("  SA key        : %s", args.sa_key or "Application Default Credentials")
-    logger.info("  Output        : %s", args.output)
-    logger.info("  Horizon       : %d days", args.horizon)
-    logger.info("  Simulate days : %d", args.simulate_days)
-    if args.simulate_days > 0:
-        logger.warning(
-            "Temporal simulation enabled (%d days). Bronze data will be tiled "
-            "with ±10%% quantity noise. Disable with --simulate-days 0 once "
-            "real multi-day Bronze data is available.", args.simulate_days
-        )
 
     builder = DatasetBuilder(
         bucket           = args.bucket,
@@ -100,7 +120,48 @@ def main() -> None:
         horizon_days     = args.horizon,
         simulate_days    = args.simulate_days,
     )
-    manifest = builder.build()
+
+    if args.synthetic:
+        # ── Synthetic data path (additive — does not affect existing pipeline) ─
+        from phase4.datasets.synthetic_generator import SyntheticConfig, SyntheticDataGenerator
+
+        logger.info("Dataset build mode : SYNTHETIC (GCS Bronze pipeline unchanged)")
+        logger.info("  start_date   : %s", args.start_date)
+        logger.info("  total_days   : %d", args.total_days)
+        logger.info("  seed         : %d", args.seed)
+        logger.info("  output       : %s", args.output)
+        logger.info("  horizon      : %d days", args.horizon)
+
+        config    = SyntheticConfig(
+            start_date = args.start_date,
+            total_days = args.total_days,
+            seed       = args.seed,
+        )
+        generator = SyntheticDataGenerator(config=config)
+        manifest  = builder.build_from_synthetic(generator)
+
+    else:
+        # ── Existing GCS Bronze path (unchanged) ──────────────────────────────
+        if not args.bucket:
+            logger.error(
+                "GCS bucket name is required. Pass --bucket or set GCS_BUCKET_NAME. "
+                "To use synthetic data instead, pass --synthetic."
+            )
+            sys.exit(1)
+
+        logger.info("Dataset build mode : GCS BRONZE")
+        logger.info("  Bucket        : %s", args.bucket)
+        logger.info("  SA key        : %s", args.sa_key or "Application Default Credentials")
+        logger.info("  Output        : %s", args.output)
+        logger.info("  Horizon       : %d days", args.horizon)
+        logger.info("  Simulate days : %d", args.simulate_days)
+        if args.simulate_days > 0:
+            logger.warning(
+                "Temporal simulation enabled (%d days). Bronze data will be tiled "
+                "with ±10%% quantity noise. Disable with --simulate-days 0 once "
+                "real multi-day Bronze data is available.", args.simulate_days
+            )
+        manifest = builder.build()
 
     print("\n" + "=" * 60)
     print("  Dataset Build Complete")
