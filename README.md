@@ -67,58 +67,42 @@ This platform explores how learned shortage-risk scoring can augment traditional
 
 ```mermaid
 flowchart TD
-<<<<<<< HEAD
-    subgraph Ingestion["Ingestion Layer"]
-        K["Apache Kafka\nEvent Stream"]
-        SP["Spark Structured\nStreaming"]
-        BR["GCS Bronze\nRaw Events"]
-    end
-=======
->>>>>>> 3840c036ab7186dd7a729e5c8d3145cb28f86acd
-
     A[Kafka Producer]
-    B[Spark Streaming]
-    C[GCS Bronze]
-    D[Silver Processing]
-    E[GCS Silver]
-    F[Bigtable]
-    G[PyTorch Training]
-    H[ONNX Export]
-    I[Vertex AI Registry]
-    J[Vertex AI Endpoint]
+    B[Kafka Topic]
+    C[Spark Structured Streaming]
+    D[GCS Bronze]
+    E[Silver Batch Processing]
+    F[GCS Silver Feature Snapshots]
+    G[Bigtable Feature Store]
+    H[PyTorch Training]
+    I[ONNX Export]
+    J[Vertex AI Model Registry]
+    K[Vertex AI Endpoint]
+    L[Batch Scorer]
+    M[Pub/Sub]
+    N[Prediction Writer]
+    O[Bigtable Predictions]
+    P[Drift Monitor]
 
     A --> B
     B --> C
     C --> D
     D --> E
-    D --> F
-
-<<<<<<< HEAD
-    subgraph Serving["Serving & Monitoring"]
-        EP["Vertex AI Endpoint\nFastAPI · ONNX Runtime"]
-        BS["Batch Scorer"]
-        PS["Cloud Pub/Sub"]
-        PW["Prediction Writer"]
-        PR[("Bigtable\nPredictions")]
-        DM["Drift Monitor\nPSI · Variance"]
-    end
-
-    K -->|streaming| SP -->|micro-batch| BR
-    BR -->|batch| SJ --> SL -->|write| BT
-    BT -->|snapshot| TR --> OX --> VR
-    VR -->|deploy| EP
-    BT -->|scan| BS -->|predict| EP
-    EP -->|scores| BS -->|publish| PS -->|subscribe| PW -->|mutate| PR
-    BT -->|features| DM
-    PR -->|predictions| DM
-=======
+    E --> F
     E --> G
-    G --> H
+    F --> H
     H --> I
     I --> J
->>>>>>> 3840c036ab7186dd7a729e5c8d3145cb28f86acd
+    J --> K
+    G --> L
+    L --> K
+    K --> L
+    L --> M
+    M --> N
+    N --> O
+    G --> P
+    O --> P
 ```
-
 ---
 
 ## Architecture Walkthrough
