@@ -51,7 +51,7 @@ expected_cols = [
     "warehouse_id", "sku_id", "row_key", "window_end",
     # inventory
     "inventory__current_qty", "inventory__reorder_point",
-    "inventory__safety_stock", "inventory__days_of_supply",  # computed in _derive_risk_features
+    "inventory__safety_stock", "inventory__days_of_supply",
     "inventory__last_event_type", "inventory__last_updated",
     # velocity
     "velocity__sales_7d", "velocity__sales_30d",
@@ -63,7 +63,7 @@ expected_cols = [
     "supplier__lead_time_days", "supplier__supplier_reliability",
     "supplier__active_po_qty", "supplier__in_transit_qty",
     # risk
-    "risk__days_until_stockout", "risk__reorder_urgency",
+    "risk__reorder_urgency",
     # lineage
     "lineage__last_bronze_epoch", "lineage__last_silver_write",
     "lineage__source_event_count", "lineage__pipeline_version",

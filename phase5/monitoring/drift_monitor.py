@@ -70,11 +70,12 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_N_BINS                    = 10
-_PSI_EPSILON               = 1e-4   # replace zero bin counts before log()
-_PSI_STABLE_THRESHOLD      = 0.10
-_PSI_WARNING_THRESHOLD     = 0.20   # >= this → retraining trigger
-_VARIANCE_COLLAPSE_THRESHOLD = 0.01  # prob_std or score_std below this → collapsed
+from phase5.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
+
+_N_BINS                = 10
+_PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
+_PSI_STABLE_THRESHOLD  = 0.10
+_PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
 
 # Monitored features: (display_name, flat_feature_name)
 # The flat name must appear in NUMERIC_FEATURE_COLS from feature_engineer.py.

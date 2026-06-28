@@ -2,7 +2,7 @@
 Silver Batch — one-shot batch validation for Phase 3.
 
 Reads existing Bronze GCS Parquet in batch mode (spark.read, not readStream),
-computes the full 31-feature vector for every active (warehouse_id, sku_id)
+computes the full 30-feature vector for every active (warehouse_id, sku_id)
 pair, writes Silver Parquet to GCS, and dual-writes to Bigtable.
 
 This is NOT the production job. Production uses streaming mode via
@@ -133,7 +133,9 @@ def main() -> None:
     # ── Step 6: Risk features ─────────────────────────────────────────────────
     feature_df = _derive_risk_features(feature_df)
 
-    # ── Step 7: Phase 4 placeholders (populated by PyTorch inference job) ────
+    # ── Step 7: Reserved demand forecast columns ─────────────────────────────
+    # These columns are reserved for future demand forecasting integration.
+    # No current pipeline stage populates them.
     feature_df = (
         feature_df
         .withColumn("demand__demand_forecast_7d",  F.lit(None).cast("double"))

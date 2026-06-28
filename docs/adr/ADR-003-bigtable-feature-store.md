@@ -36,9 +36,9 @@ The Bronze → Silver pipeline already produces the feature computation. What re
 
 ### Why Bigtable
 
-**Latency.** Bigtable SSD instances deliver single-digit millisecond reads at the 99th percentile. The inference path requires reading ~31 features for a `(warehouse_id, sku_id)` pair — a single row read, achievable in < 10 ms including network round-trip.
+**Latency.** Bigtable SSD instances deliver single-digit millisecond reads at the 99th percentile. The inference path requires reading ~30 features for a `(warehouse_id, sku_id)` pair — a single row read, achievable in < 10 ms including network round-trip.
 
-**Throughput.** Bigtable scales to millions of reads/writes per second by adding nodes. The Silver job writes one row per `(warehouse_id, sku_id)` per micro-batch (~36 rows for 6 warehouses × 6 SKUs in the seed). At production scale (thousands of SKUs), `mutate_rows` batch API handles the write volume without throttling.
+**Throughput.** Bigtable scales to millions of reads/writes per second by adding nodes. The Silver job writes one row per `(warehouse_id, sku_id)` per micro-batch (~120 rows for 6 warehouses × 20 SKUs in the seed). At production scale (thousands of SKUs), `mutate_rows` batch API handles the write volume without throttling.
 
 **Wide-column model.** The feature vector maps naturally to Bigtable's column family model. Six column families (`inventory`, `velocity`, `demand`, `supplier`, `risk`, `lineage`) match the six feature groups, and GC policies can be set independently per family without schema migrations.
 
@@ -99,7 +99,7 @@ A single column family would require a single GC policy. `inventory` and `risk` 
 
 ### Why not one family per feature
 
-31 families for 31 features would complicate the GC policy management and exceed Bigtable's recommended maximum of ~100 column families per table. Six families match the logical feature groups already established in the data model.
+30 families for 30 features would complicate the GC policy management and exceed Bigtable's recommended maximum of ~100 column families per table. Six families match the logical feature groups already established in the data model.
 
 ---
 
@@ -183,7 +183,7 @@ Three approaches were considered for writing a Spark DataFrame to a non-Spark si
 - The Bigtable client is closed in a `finally` block even if the partition fails
 - Partition-level parallelism matches Spark's natural execution model
 
-For the SCIP seed data (6 warehouses × 6 SKUs = 36 rows), the difference is negligible. The `foreachPartition` pattern is used because it is correct at production scale.
+For the SCIP seed data (6 warehouses × 20 SKUs = 120 rows), the difference is negligible. The `foreachPartition` pattern is used because it is correct at production scale.
 
 ---
 
@@ -229,6 +229,3 @@ The manual approach (`gcloud iam service-accounts keys create keys/scip-spark-sa
 - `spark/jobs/silver_feature_engineering.py` — dual-write in `process_silver_batch()`
 - `spark/config/feature_config.py` — `FEATURE_REGISTRY`, `BIGTABLE_BATCH_SIZE`, GC thresholds
 - `spark/jobs/schemas/feature_schema.py` — `SILVER_FEATURE_SCHEMA`, row key convention
-- `docs/architecture/phase3-architecture.md` — full system architecture diagram
-- ADR-001: Kafka Design
-- ADR-002: Spark Bronze Layer

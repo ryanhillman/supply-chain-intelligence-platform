@@ -2,32 +2,11 @@
 Feature engineering configuration for the Silver layer and Bigtable feature store.
 
 Defines:
-  - Aggregation windows and watermarks
-  - Bigtable column family → qualifier mappings (31 features across 6 families)
+  - Bigtable column family → qualifier mappings (30 features across 6 families)
   - Write tuning parameters
   - Feature derivation constants
-
-All window/watermark values are intentionally named constants — changing a window
-size here automatically propagates to both the Silver GCS write and Bigtable write.
 """
 from __future__ import annotations
-
-# ── Streaming windows ─────────────────────────────────────────────────────────
-
-# How long to wait for late-arriving events before closing a window.
-# 2 hours covers typical network/producer lag in the simulated environment.
-WATERMARK_DELAY: str = "2 hours"
-
-# Rolling aggregation windows for sales velocity features.
-VELOCITY_WINDOW_7D: str = "7 days"
-VELOCITY_WINDOW_30D: str = "30 days"
-
-# Short window for demand signal burst detection.
-DEMAND_SIGNAL_WINDOW_24H: str = "24 hours"
-
-# Slide interval for sliding windows. 1 hour gives sub-hourly freshness
-# while keeping the number of open windows manageable (168 windows for 7d).
-WINDOW_SLIDE_INTERVAL: str = "1 hour"
 
 # ── Bigtable write tuning ─────────────────────────────────────────────────────
 
@@ -56,7 +35,7 @@ STOCKOUT_CRITICAL_DAYS: int = 1
 PIPELINE_VERSION: str = "1.0.0"
 
 # ── Bigtable column family → qualifier registry ───────────────────────────────
-# Single source of truth for all 31 features.
+# Single source of truth for all 30 features.
 # Structure: {family: {python_attr: bigtable_qualifier}}
 #
 # python_attr  — name used in PySpark DataFrame / Silver Parquet
@@ -98,7 +77,6 @@ FEATURE_REGISTRY: dict[str, dict[str, str]] = {
     },
     "risk": {
         "stockout_risk_score":      "risk_score",   # 0.0–1.0, ML output (Phase 4)
-        "days_until_stockout":      "dus",
         "shortage_prob_7d":         "short_p7d",    # 0.0–1.0
         "reorder_urgency":          "urgency",      # 0|1|2|3
     },

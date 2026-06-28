@@ -14,7 +14,7 @@ Design:
   - Batch size controlled by BIGTABLE_BATCH_SIZE (default 500)
 
 Row key format: {warehouse_id}#{sku_id}
-  Matches the key design in docs/architecture/phase3-architecture.md.
+  Key design documented in docs/adr/ADR-003-bigtable-feature-store.md.
   Split points W-2/W-4/W-6 distribute load across tablet servers.
 """
 from __future__ import annotations

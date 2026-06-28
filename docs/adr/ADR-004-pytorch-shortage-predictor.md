@@ -9,7 +9,7 @@
 
 ## Context
 
-Phase 3 completed the Silver feature store: 31 features across 6 column families
+Phase 3 completed the Silver feature store: 30 features across 6 column families
 per (warehouse_id, sku_id) entity, written to GCS Parquet and Bigtable.
 
 Two Silver columns currently contain null placeholders:
@@ -71,8 +71,8 @@ It provides a smooth training signal and handles demand uncertainty explicitly.
 ## Decision 3 — Label Generation Strategy: Bronze Temporal Sampling
 
 **Problem with Silver-only labels:**
-`risk__days_until_stockout = current_qty / avg_daily_sales_7d` already exists
-as a Silver feature. Labeling each Silver row by `(days_until_stockout < 7)`
+`inventory__days_of_supply = current_qty / avg_daily_sales_7d` already exists
+as a Silver feature. Labeling each Silver row by `(days_of_supply < 7)`
 produces a label that is a deterministic threshold on a feature the model
 already sees. The model would trivially recover the baseline rule with near-zero
 training error but learn nothing generalizable about demand uncertainty.
@@ -109,11 +109,10 @@ available sample dates after applying 30-day lookback and 7-day lookahead buffer
 
 | Column | Reason |
 |---|---|
-| `risk__days_until_stockout` | Deterministic label proxy: identical to `days_of_supply` |
 | `risk__reorder_urgency` | Derived from the same threshold logic as the label |
 | `risk__stockout_risk_score` | Target output |
 | `risk__shortage_prob_7d` | Target output |
-| `demand__demand_forecast_{7d,30d,multiplier}` | Null placeholders in Phase 4 |
+| `demand__demand_forecast_{7d,30d,multiplier}` | Reserved null columns |
 | All `lineage__*` | Pipeline metadata, no predictive value |
 
 **Time-based split (no random leakage):**
