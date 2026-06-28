@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Phase 3 validation — batch mode.
+    Pipeline validation — batch mode.
 
 .DESCRIPTION
-    Proves all Phase 3 outputs without requiring continuous streaming:
+    Proves all pipeline outputs without requiring continuous streaming:
 
       1. GCS Bronze — verify all 5 topic prefixes and total file count
       2. GCS Silver — verify all 6 warehouse partitions and Parquet files
@@ -36,14 +36,14 @@
 
 .EXAMPLE
     # Pass values explicitly:
-    .\run_phase3_validation.ps1 -ProjectId my-gcp-project -BucketName my-gcp-project-scip-lake
+    .\validate_pipeline.ps1 -ProjectId my-gcp-project -BucketName my-gcp-project-scip-lake
 
 .EXAMPLE
     # Or export env vars first (e.g. after sourcing spark/.env), then run:
-    .\run_phase3_validation.ps1
+    .\validate_pipeline.ps1
 
 .EXAMPLE
-    .\run_phase3_validation.ps1 -ProjectId my-gcp-project -BucketName my-gcp-project-scip-lake -SkipBatchRun
+    .\validate_pipeline.ps1 -ProjectId my-gcp-project -BucketName my-gcp-project-scip-lake -SkipBatchRun
 #>
 
 param(
@@ -99,7 +99,7 @@ $SilverPath = "gs://$BucketName/silver"
 
 # ── Pre-flight ────────────────────────────────────────────────────────────────
 
-Write-Header "Phase 3 Validation — Batch Mode"
+Write-Header "Pipeline Validation — Batch Mode"
 Write-Info "Project  : $ProjectId"
 Write-Info "Bucket   : $BucketName"
 Write-Info "Bronze   : $BronzePath"
@@ -262,7 +262,7 @@ foreach ($fam in $families) {
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
-Write-Header "Phase 3 Validation Summary"
+Write-Header "Validation Summary"
 
 Write-Info "Bronze   : $BronzePath"
 Write-Info "Silver   : $SilverPath"
@@ -270,8 +270,8 @@ Write-Info "Bigtable : $Instance/$Table — $rowCount rows"
 
 if ($failures -eq 0) {
     Write-Host ""
-    Write-Host "  ALL PHASE 3 CHECKS PASSED" -ForegroundColor Green
-    Write-Host "  Phase 3 is complete. Ready for Phase 4 (PyTorch inference)." -ForegroundColor Green
+    Write-Host "  ALL CHECKS PASSED" -ForegroundColor Green
+    Write-Host "  Pipeline is healthy. Ready for Phase 4 (PyTorch inference)." -ForegroundColor Green
     Write-Host ""
     exit 0
 } else {

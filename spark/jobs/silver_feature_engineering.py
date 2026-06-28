@@ -2,7 +2,7 @@
 Silver Feature Engineering — Spark Structured Streaming job.
 
 Reads from Bronze GCS (inventory events as trigger stream) and computes
-a complete 31-feature vector per (warehouse_id, sku_id) snapshot.
+a complete 30-feature vector per (warehouse_id, sku_id) snapshot.
 
 Architecture:
   Bronze GCS (inventory.events) → readStream trigger
@@ -296,39 +296,33 @@ def _derive_risk_features(df: DataFrame) -> DataFrame:
     """
     Compute risk tier features from inventory snapshot and velocity.
 
-    days_until_stockout  = current_qty / avg_daily_sales_7d
-    reorder_urgency      = 0 (OK) | 1 (WATCH) | 2 (REORDER) | 3 (CRITICAL)
+    reorder_urgency = 0 (OK) | 1 (WATCH) | 2 (REORDER) | 3 (CRITICAL)
 
-    stockout_risk_score and shortage_prob_7d are null here — populated by the
-    PyTorch inference job in Phase 4.
+    stockout_risk_score and shortage_prob_7d are reserved null columns;
+    they are not populated by any current pipeline stage.
     """
-    # days_of_supply = current_qty / avg_daily_sales_7d.
-    # Written to both the inventory family (operational metric for analysts)
-    # and the risk family (input to ML urgency scoring in Phase 4).
     days_of_supply_expr = F.when(
         F.col("velocity__avg_daily_sales_7d") > 0,
         F.col("inventory__current_qty") / F.col("velocity__avg_daily_sales_7d"),
     ).otherwise(F.lit(999.0))  # 999 = effectively infinite supply
 
     df = df.withColumn("inventory__days_of_supply", days_of_supply_expr)
-    df = df.withColumn("risk__days_until_stockout", F.col("inventory__days_of_supply"))
 
     df = df.withColumn(
         "risk__reorder_urgency",
         F.when(
             (F.col("inventory__current_qty") == 0) |
-            (F.col("risk__days_until_stockout") <= STOCKOUT_CRITICAL_DAYS),
+            (F.col("inventory__days_of_supply") <= STOCKOUT_CRITICAL_DAYS),
             F.lit(3),
         ).when(
-            F.col("risk__days_until_stockout") <= REORDER_CRITICAL_DAYS,
+            F.col("inventory__days_of_supply") <= REORDER_CRITICAL_DAYS,
             F.lit(2),
         ).when(
-            F.col("risk__days_until_stockout") <= REORDER_WATCH_DAYS,
+            F.col("inventory__days_of_supply") <= REORDER_WATCH_DAYS,
             F.lit(1),
         ).otherwise(F.lit(0)),
     )
 
-    # Phase 4 placeholders
     df = df.withColumn("risk__stockout_risk_score", F.lit(None).cast("double"))
     df = df.withColumn("risk__shortage_prob_7d", F.lit(None).cast("double"))
 
@@ -450,7 +444,10 @@ def make_silver_processor(spark: SparkSession):
         # ── Step 6: Derive risk features ──────────────────────────────────
         feature_df = _derive_risk_features(feature_df)
 
-        # ── Step 7: Demand multiplier (needs velocity + demand) ────────────
+        # ── Step 7: Reserved demand forecast columns ───────────────────────
+        # These columns are reserved for future demand forecasting integration.
+        # No current pipeline stage populates them; predictions are written to
+        # the Bigtable predictions family, not back to Silver or these columns.
         feature_df = feature_df.withColumn(
             "demand__demand_forecast_7d",   F.lit(None).cast("double"),
         ).withColumn(

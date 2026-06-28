@@ -64,7 +64,7 @@ _VELOCITY_FIELDS: list[StructField] = [
 # ── demand family ─────────────────────────────────────────────────────────────
 
 _DEMAND_FIELDS: list[StructField] = [
-    # Forecasts populated once PyTorch model is added (Phase 4); null until then
+    # Reserved demand forecast columns; not populated by any current pipeline stage
     StructField("demand__demand_forecast_7d",      DoubleType(),  nullable=True),
     StructField("demand__demand_forecast_30d",     DoubleType(),  nullable=True),
     StructField("demand__demand_signal_count_24h", DoubleType(),  nullable=True),
@@ -86,11 +86,10 @@ _SUPPLIER_FIELDS: list[StructField] = [
 # ── risk family ───────────────────────────────────────────────────────────────
 
 _RISK_FIELDS: list[StructField] = [
-    # stockout_risk_score and shortage_prob_7d are null until Phase 4 model
+    # stockout_risk_score and shortage_prob_7d are reserved null columns
     StructField("risk__stockout_risk_score", DoubleType(),  nullable=True),
-    StructField("risk__days_until_stockout", DoubleType(),  nullable=True),
     StructField("risk__shortage_prob_7d",    DoubleType(),  nullable=True),
-    # 0=OK, 1=WATCH, 2=REORDER, 3=CRITICAL (derived from days_until_stockout)
+    # 0=OK, 1=WATCH, 2=REORDER, 3=CRITICAL (derived from inventory__days_of_supply)
     StructField("risk__reorder_urgency",     IntegerType(), nullable=False),
 ]
 
@@ -125,7 +124,7 @@ SILVER_FEATURE_SCHEMA = StructType(
 )
 """
 Full schema for Silver Parquet output.
-31 feature columns + 4 identity/window columns + 3 partition columns = 38 total.
+30 feature columns + 4 identity/window columns + 3 partition columns = 37 total.
 """
 
 # Columns used as partition keys when writing Silver Parquet.

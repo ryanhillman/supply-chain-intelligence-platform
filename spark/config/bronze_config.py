@@ -5,44 +5,41 @@ All values read from environment variables; .env loaded by Docker Compose.
 from __future__ import annotations
 
 import os
-from starlette.config import Config
-
-config = Config(environ=os.environ)
 
 # ── Kafka ─────────────────────────────────────────────────────────────────────
-KAFKA_BOOTSTRAP_SERVERS: str = config("KAFKA_BOOTSTRAP_SERVERS", default="kafka:29092")
-KAFKA_GROUP_ID: str = config("KAFKA_GROUP_ID", default="scip-spark-bronze")
-STARTING_OFFSETS: str = config("STARTING_OFFSETS", default="latest")
+KAFKA_BOOTSTRAP_SERVERS: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+KAFKA_GROUP_ID: str = os.environ.get("KAFKA_GROUP_ID", "scip-spark-bronze")
+STARTING_OFFSETS: str = os.environ.get("STARTING_OFFSETS", "latest")
 
 # ── Spark ─────────────────────────────────────────────────────────────────────
-SPARK_MASTER: str = config("SPARK_MASTER", default="local[*]")
-TRIGGER_INTERVAL: str = config("TRIGGER_INTERVAL", default="30 seconds")
+SPARK_MASTER: str = os.environ.get("SPARK_MASTER", "local[*]")
+TRIGGER_INTERVAL: str = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
 
 # ── GCP ───────────────────────────────────────────────────────────────────────
-GCP_PROJECT_ID: str = config("GCP_PROJECT_ID", default="")
-GCS_BUCKET_NAME: str = config("GCS_BUCKET_NAME", default="")
-GOOGLE_APPLICATION_CREDENTIALS: str = config(
+GCP_PROJECT_ID: str = os.environ.get("GCP_PROJECT_ID", "")
+GCS_BUCKET_NAME: str = os.environ.get("GCS_BUCKET_NAME", "")
+GOOGLE_APPLICATION_CREDENTIALS: str = os.environ.get(
     "GOOGLE_APPLICATION_CREDENTIALS",
-    default="/opt/spark-app/keys/scip-spark-sa.json",
+    "/opt/spark-app/keys/scip-spark-sa.json",
 )
 
 # ── Storage paths ─────────────────────────────────────────────────────────────
 # Phase 2+: gs://... paths written to GCS.
 # Phase 1 fallback: local data/ paths (for unit tests / no-GCP dev).
-BRONZE_BASE_PATH: str = config("BRONZE_BASE_PATH", default="data/bronze")
-CHECKPOINT_BASE_PATH: str = config(
-    "CHECKPOINT_BASE_PATH", default="data/checkpoints/scip-spark-bronze"
+BRONZE_BASE_PATH: str = os.environ.get("BRONZE_BASE_PATH", "data/bronze")
+CHECKPOINT_BASE_PATH: str = os.environ.get(
+    "CHECKPOINT_BASE_PATH", "data/checkpoints/scip-spark-bronze"
 )
-DLQ_BASE_PATH: str = config("DLQ_BASE_PATH", default="data/dlq")
+DLQ_BASE_PATH: str = os.environ.get("DLQ_BASE_PATH", "data/dlq")
 
 # ── DLQ ───────────────────────────────────────────────────────────────────────
 # "file"  → FileDlqHandler  (Phase 2)
 # "kafka" → KafkaDlqHandler (Phase 3 Step 3)
-DLQ_SINK: str = config("DLQ_SINK", default="file")
+DLQ_SINK: str = os.environ.get("DLQ_SINK", "file")
 
-# ── Bigtable (Phase 3 Steps 5-7) ─────────────────────────────────────────────
-BIGTABLE_INSTANCE_ID: str = config("BIGTABLE_INSTANCE_ID", default="scip-feature-store")
-BIGTABLE_TABLE_ID: str = config("BIGTABLE_TABLE_ID", default="inventory_features")
+# ── Bigtable ──────────────────────────────────────────────────────────────────
+BIGTABLE_INSTANCE_ID: str = os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store")
+BIGTABLE_TABLE_ID: str = os.environ.get("BIGTABLE_TABLE_ID", "inventory_features")
 
 # ── Topic configuration ───────────────────────────────────────────────────────
 SOURCE_TOPICS: list[str] = [

@@ -6,12 +6,11 @@ Applies the same engineer_features() transformations so inference features are
 computed identically to training.
 
 Silver columns intentionally NOT mapped (leakage or target outputs):
-  risk__days_until_stockout  — identical to days_of_supply; would leak baseline
   risk__reorder_urgency      — derived from threshold logic correlated with target
   risk__stockout_risk_score  — target output (null placeholder)
   risk__shortage_prob_7d     — target output (null placeholder)
   lineage__*                 — pipeline metadata
-  demand__demand_forecast_*  — null placeholders in Phase 4
+  demand__demand_forecast_*  — reserved null columns
 """
 from __future__ import annotations
 

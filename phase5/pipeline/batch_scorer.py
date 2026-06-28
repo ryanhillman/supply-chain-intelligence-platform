@@ -47,14 +47,14 @@ from typing import Iterator
 
 import numpy as np
 
+from phase5.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
 from phase5.pipeline.feature_client import FeatureClient
 from phase5.pipeline.request_builder import RequestBuilder, ScoringRequest
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BATCH_SIZE   = 32
-_DEFAULT_TOPIC_ID     = "prediction-results"
-_VARIANCE_COLLAPSE_THRESHOLD = 0.01  # ADR-005 Decision 7: flag if std < 0.01
+_DEFAULT_BATCH_SIZE = 32
+_DEFAULT_TOPIC_ID   = "prediction-results"
 
 
 @dataclass

@@ -13,8 +13,6 @@ Derived features added (all deterministic formulas, no data-distribution fitting
   replenishment_gap    = lead_time_days - days_of_supply
 
 Leakage columns explicitly absent from NUMERIC_FEATURE_COLS:
-  risk__days_until_stockout  — identical to days_of_supply; using both would
-                               let the model trivially recover the heuristic
   risk__reorder_urgency      — derived from the same threshold logic as the label
   All lineage__* columns     — pipeline metadata with no predictive value
 """
