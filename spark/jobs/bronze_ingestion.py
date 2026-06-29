@@ -167,8 +167,8 @@ def make_batch_processor(topic: str, schema, dlq_handler):
         validated_df = parse_and_validate(raw_df, topic, schema).cache()
 
         try:
-            valid_df   = validated_df.filter(F.col("_is_valid") == True)   # noqa: E712
-            invalid_df = validated_df.filter(F.col("_is_valid") == False)  # noqa: E712
+            valid_df   = validated_df.filter(F.col("_is_valid"))
+            invalid_df = validated_df.filter(~F.col("_is_valid"))
 
             valid_count   = valid_df.count()
             invalid_count = invalid_df.count()

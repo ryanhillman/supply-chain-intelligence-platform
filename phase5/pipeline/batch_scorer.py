@@ -257,9 +257,9 @@ class BatchScorer:
             scores.append(float(pred.get("stockout_risk_score", 0.0)))
 
         if len(probs) != len(batch):
-            logger.error(
-                "Endpoint returned %d predictions for %d instances",
-                len(probs), len(batch),
+            raise RuntimeError(
+                f"Endpoint returned {len(probs)} predictions for {len(batch)} instances; "
+                "cannot safely align results"
             )
 
         return probs, scores, latency

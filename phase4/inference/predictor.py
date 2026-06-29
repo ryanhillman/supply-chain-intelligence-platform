@@ -62,18 +62,18 @@ class ShortagePredictor:
 
         self._wh_vocab  : dict[str, int] = self._metadata["warehouse_vocab"]
         self._sku_vocab : dict[str, int] = self._metadata["sku_vocab"]
-        self._config                     = TrainingConfig()
+        ckpt = torch.load(
+            self.artifacts_dir / "model.pt",
+            map_location="cpu",
+            weights_only=False,
+        )
+        self._config = ckpt.get("config", TrainingConfig())
 
         self._model = _ShortageModel(
             n_numeric    = self._metadata["n_numeric_features"],
             n_warehouses = self._metadata["n_warehouses"],
             n_skus       = self._metadata["n_skus"],
             config       = self._config,
-        )
-        ckpt = torch.load(
-            self.artifacts_dir / "model.pt",
-            map_location="cpu",
-            weights_only=False,
         )
         self._model.load_state_dict(ckpt["model_state"])
         self._model.eval()
@@ -120,13 +120,26 @@ class ShortagePredictor:
         else:
             x_num_scaled = x_num_raw
 
-        x_num   = torch.tensor(x_num_scaled, dtype=torch.float32)
-        wh_ids  = torch.tensor(
-            [self._wh_vocab.get(w, 0) for w in df["warehouse_id"]], dtype=torch.long
-        )
-        sku_ids = torch.tensor(
-            [self._sku_vocab.get(s, 0) for s in df["sku_id"]], dtype=torch.long
-        )
+        x_num = torch.tensor(x_num_scaled, dtype=torch.float32)
+
+        wh_indices = []
+        for w in df["warehouse_id"]:
+            idx = self._wh_vocab.get(w)
+            if idx is None:
+                logger.warning("Unknown warehouse_id %r — using embedding index 0", w)
+                idx = 0
+            wh_indices.append(idx)
+
+        sku_indices = []
+        for s in df["sku_id"]:
+            idx = self._sku_vocab.get(s)
+            if idx is None:
+                logger.warning("Unknown sku_id %r — using embedding index 0", s)
+                idx = 0
+            sku_indices.append(idx)
+
+        wh_ids  = torch.tensor(wh_indices,  dtype=torch.long)
+        sku_ids = torch.tensor(sku_indices, dtype=torch.long)
 
         with torch.no_grad():
             prob, score = self._model.predict(x_num, wh_ids, sku_ids)

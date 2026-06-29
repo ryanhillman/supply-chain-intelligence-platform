@@ -15,56 +15,71 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+class _WarehouseProfile(NamedTuple):
+    wh_id:        str
+    demand_mult:  float   # demand volume multiplier vs baseline
+    reorder_aggr: float   # reorder aggressiveness [0,1]: higher → order sooner
+    rel_modifier: float   # reliability modifier applied to SKU base_reliability
+
+
+class _SKUProfile(NamedTuple):
+    sku_id:      str
+    base_demand: float    # mean units/day at baseline warehouse
+    demand_cv:   float    # coefficient of variation for daily demand
+    base_lt:     int      # mean lead time in days
+    lt_cv:       float    # coefficient of variation for lead time
+    base_rel:    float    # supplier reliability (fill rate) ∈ [0, 1]
+    season_pat:  str      # seasonality pattern key
+    category:    str      # product category label
+
+
 # ── Warehouse profiles ────────────────────────────────────────────────────────
-# (wh_id, demand_multiplier, reorder_aggressiveness, reliability_modifier)
-# reorder_aggressiveness in [0, 1]: higher → order sooner → less stockout risk
-_WAREHOUSES: list[tuple] = [
-    ("W-001", 2.0, 0.85, 1.02),  # large DC, well-managed
-    ("W-002", 1.0, 0.65, 1.00),  # baseline regional
-    ("W-003", 0.5, 0.40, 0.98),  # small depot, passive reordering
-    ("W-004", 1.5, 0.90, 1.03),  # high-velocity, aggressive reorder
-    ("W-005", 0.3, 0.50, 0.99),  # slow specialty
-    ("W-006", 0.8, 0.30, 0.95),  # surge overflow, lowest discipline
+_WAREHOUSES: list[_WarehouseProfile] = [
+    _WarehouseProfile("W-001", 2.0, 0.85, 1.02),  # large DC, well-managed
+    _WarehouseProfile("W-002", 1.0, 0.65, 1.00),  # baseline regional
+    _WarehouseProfile("W-003", 0.5, 0.40, 0.98),  # small depot, passive reordering
+    _WarehouseProfile("W-004", 1.5, 0.90, 1.03),  # high-velocity, aggressive reorder
+    _WarehouseProfile("W-005", 0.3, 0.50, 0.99),  # slow specialty
+    _WarehouseProfile("W-006", 0.8, 0.30, 0.95),  # surge overflow, lowest discipline
 ]
 
 # ── SKU profiles ──────────────────────────────────────────────────────────────
-# (sku_id, base_demand/day, demand_cv, base_lead_time_days, lead_time_cv,
-#  base_reliability, seasonality_pattern, category)
-_SKUS: list[tuple] = [
+_SKUS: list[_SKUProfile] = [
     # FMCG — short lead times, high reliability, moderate demand CV
-    ("SKU-001", 150.0, 0.25,  5, 0.15, 0.95, "holiday",     "FMCG"),
-    ("SKU-002", 300.0, 0.20,  4, 0.12, 0.97, "flat",        "FMCG"),
-    ("SKU-003",  80.0, 0.30,  6, 0.18, 0.93, "summer",      "FMCG"),
-    ("SKU-004", 200.0, 0.22,  5, 0.14, 0.96, "flat",        "FMCG"),
-    ("SKU-005", 120.0, 0.28,  7, 0.20, 0.94, "holiday",     "FMCG"),
+    _SKUProfile("SKU-001", 150.0, 0.25,  5, 0.15, 0.95, "holiday",  "FMCG"),
+    _SKUProfile("SKU-002", 300.0, 0.20,  4, 0.12, 0.97, "flat",     "FMCG"),
+    _SKUProfile("SKU-003",  80.0, 0.30,  6, 0.18, 0.93, "summer",   "FMCG"),
+    _SKUProfile("SKU-004", 200.0, 0.22,  5, 0.14, 0.96, "flat",     "FMCG"),
+    _SKUProfile("SKU-005", 120.0, 0.28,  7, 0.20, 0.94, "holiday",  "FMCG"),
     # Electronics — medium lead times, lower reliability, higher demand CV
-    ("SKU-006",  25.0, 0.40, 18, 0.25, 0.79, "holiday",     "Electronics"),
-    ("SKU-007",  15.0, 0.35, 21, 0.22, 0.77, "flat",        "Electronics"),
-    ("SKU-008",  40.0, 0.32, 14, 0.20, 0.82, "holiday",     "Electronics"),
-    ("SKU-009",  10.0, 0.50, 21, 0.30, 0.75, "flat",        "Electronics"),
-    ("SKU-010",  30.0, 0.38, 18, 0.28, 0.80, "holiday",     "Electronics"),
+    _SKUProfile("SKU-006",  25.0, 0.40, 18, 0.25, 0.79, "holiday",  "Electronics"),
+    _SKUProfile("SKU-007",  15.0, 0.35, 21, 0.22, 0.77, "flat",     "Electronics"),
+    _SKUProfile("SKU-008",  40.0, 0.32, 14, 0.20, 0.82, "holiday",  "Electronics"),
+    _SKUProfile("SKU-009",  10.0, 0.50, 21, 0.30, 0.75, "flat",     "Electronics"),
+    _SKUProfile("SKU-010",  30.0, 0.38, 18, 0.28, 0.80, "holiday",  "Electronics"),
     # Industrial parts — long lead times, lowest reliability
-    ("SKU-011",   8.0, 0.20, 30, 0.18, 0.70, "q2",          "Industrial"),
-    ("SKU-012",   5.0, 0.25, 45, 0.22, 0.68, "flat",        "Industrial"),
-    ("SKU-013",  15.0, 0.18, 25, 0.15, 0.73, "q2",          "Industrial"),
-    ("SKU-014",   3.0, 0.30, 45, 0.25, 0.67, "flat",        "Industrial"),
-    ("SKU-015",  20.0, 0.22, 30, 0.20, 0.72, "q2",          "Industrial"),
+    _SKUProfile("SKU-011",   8.0, 0.20, 30, 0.18, 0.70, "q2",       "Industrial"),
+    _SKUProfile("SKU-012",   5.0, 0.25, 45, 0.22, 0.68, "flat",     "Industrial"),
+    _SKUProfile("SKU-013",  15.0, 0.18, 25, 0.15, 0.73, "q2",       "Industrial"),
+    _SKUProfile("SKU-014",   3.0, 0.30, 45, 0.25, 0.67, "flat",     "Industrial"),
+    _SKUProfile("SKU-015",  20.0, 0.22, 30, 0.20, 0.72, "q2",       "Industrial"),
     # Seasonal — high demand CV, medium lead times
-    ("SKU-016",  60.0, 0.60, 10, 0.28, 0.82, "summer",      "Seasonal"),
-    ("SKU-017",  90.0, 0.55, 12, 0.32, 0.84, "winter",      "Seasonal"),
-    ("SKU-018",  45.0, 0.65, 10, 0.30, 0.80, "holiday",     "Seasonal"),
-    ("SKU-019",  75.0, 0.50, 12, 0.28, 0.85, "summer",      "Seasonal"),
-    ("SKU-020",  55.0, 0.70, 14, 0.35, 0.81, "winter",      "Seasonal"),
+    _SKUProfile("SKU-016",  60.0, 0.60, 10, 0.28, 0.82, "summer",   "Seasonal"),
+    _SKUProfile("SKU-017",  90.0, 0.55, 12, 0.32, 0.84, "winter",   "Seasonal"),
+    _SKUProfile("SKU-018",  45.0, 0.65, 10, 0.30, 0.80, "holiday",  "Seasonal"),
+    _SKUProfile("SKU-019",  75.0, 0.50, 12, 0.28, 0.85, "summer",   "Seasonal"),
+    _SKUProfile("SKU-020",  55.0, 0.70, 14, 0.35, 0.81, "winter",   "Seasonal"),
 ]
 
 # Exported for use in generate_data.py and show_predictions.py
-SKU_CATEGORIES: dict[str, str] = {row[0]: row[7] for row in _SKUS}
+SKU_CATEGORIES: dict[str, str] = {sku.sku_id: sku.category for sku in _SKUS}
 
 
 @dataclass
@@ -124,15 +139,15 @@ class SyntheticDataGenerator:
             cfg.total_days, n_entities, cfg.total_days * n_entities,
         )
 
-        for wh_idx, (wh_id, wh_mult, wh_reorder, wh_rel_mod) in enumerate(_WAREHOUSES):
-            for sku_idx, sku_params in enumerate(_SKUS):
+        for wh_idx, wh in enumerate(_WAREHOUSES):
+            for sku_idx, sku in enumerate(_SKUS):
                 entity_seed = cfg.seed * 10_000 + wh_idx * 100 + sku_idx
                 sim = _EntitySimulator(
-                    wh_id      = wh_id,
-                    sku_params = sku_params,
-                    wh_mult    = wh_mult,
-                    wh_reorder = wh_reorder,
-                    wh_rel_mod = wh_rel_mod,
+                    wh_id      = wh.wh_id,
+                    sku_params = sku,
+                    wh_mult    = wh.demand_mult,
+                    wh_reorder = wh.reorder_aggr,
+                    wh_rel_mod = wh.rel_modifier,
                     start_date = self._start,
                     total_days = cfg.total_days,
                     lookback   = cfg.min_lookback,
@@ -164,7 +179,7 @@ class _EntitySimulator:
     def __init__(
         self,
         wh_id:      str,
-        sku_params: tuple,
+        sku_params: _SKUProfile,
         wh_mult:    float,
         wh_reorder: float,
         wh_rel_mod: float,

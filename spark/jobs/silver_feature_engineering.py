@@ -48,6 +48,7 @@ from config.bronze_config import (
     BRONZE_BASE_PATH,
     CHECKPOINT_BASE_PATH,
     GCP_PROJECT_ID,
+    SILVER_CHECKPOINT_BASE_PATH,
     TRIGGER_INTERVAL,
 )
 from utils.bigtable_writer import write_to_bigtable
@@ -73,7 +74,7 @@ logger = logging.getLogger("silver_feature_engineering")
 
 # Silver GCS path (sibling of bronze/ under the same bucket)
 SILVER_BASE_PATH = BRONZE_BASE_PATH.replace("/bronze", "/silver")
-SILVER_CHECKPOINT = f"{CHECKPOINT_BASE_PATH.replace('scip-spark-bronze', 'scip-spark-silver')}"
+SILVER_CHECKPOINT = SILVER_CHECKPOINT_BASE_PATH
 
 
 # ── Spark session ──────────────────────────────────────────────────────────────
@@ -329,6 +330,15 @@ def _derive_risk_features(df: DataFrame) -> DataFrame:
     return df
 
 
+def _add_reserved_forecast_columns(df: DataFrame) -> DataFrame:
+    """Add null placeholder columns for demand forecasts not yet populated."""
+    return (
+        df.withColumn("demand__demand_forecast_7d",  F.lit(None).cast("double"))
+          .withColumn("demand__demand_forecast_30d", F.lit(None).cast("double"))
+          .withColumn("demand__demand_multiplier",   F.lit(None).cast("double"))
+    )
+
+
 def _add_lineage(df: DataFrame, epoch_id: int, event_count: int) -> DataFrame:
     """
     Append lineage columns: pipeline provenance + audit trail.
@@ -445,16 +455,7 @@ def make_silver_processor(spark: SparkSession):
         feature_df = _derive_risk_features(feature_df)
 
         # ── Step 7: Reserved demand forecast columns ───────────────────────
-        # These columns are reserved for future demand forecasting integration.
-        # No current pipeline stage populates them; predictions are written to
-        # the Bigtable predictions family, not back to Silver or these columns.
-        feature_df = feature_df.withColumn(
-            "demand__demand_forecast_7d",   F.lit(None).cast("double"),
-        ).withColumn(
-            "demand__demand_forecast_30d",  F.lit(None).cast("double"),
-        ).withColumn(
-            "demand__demand_multiplier",    F.lit(None).cast("double"),
-        )
+        feature_df = _add_reserved_forecast_columns(feature_df)
 
         # ── Step 8: Lineage + partition + row key ─────────────────────────
         feature_df = _add_lineage(feature_df, epoch_id, event_count)
