@@ -12,16 +12,10 @@ KAFKA_GROUP_ID: str = os.environ.get("KAFKA_GROUP_ID", "scip-spark-bronze")
 STARTING_OFFSETS: str = os.environ.get("STARTING_OFFSETS", "latest")
 
 # ── Spark ─────────────────────────────────────────────────────────────────────
-SPARK_MASTER: str = os.environ.get("SPARK_MASTER", "local[*]")
 TRIGGER_INTERVAL: str = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
 
 # ── GCP ───────────────────────────────────────────────────────────────────────
 GCP_PROJECT_ID: str = os.environ.get("GCP_PROJECT_ID", "")
-GCS_BUCKET_NAME: str = os.environ.get("GCS_BUCKET_NAME", "")
-GOOGLE_APPLICATION_CREDENTIALS: str = os.environ.get(
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "/opt/spark-app/keys/scip-spark-sa.json",
-)
 
 # ── Storage paths ─────────────────────────────────────────────────────────────
 # Phase 2+: gs://... paths written to GCS.
@@ -59,5 +53,3 @@ TOPIC_REQUIRED_FIELDS: dict[str, list[str]] = {
     "suppliers.events":       ["event_id", "event_type", "supplier_id", "timestamp"],
 }
 
-# ── Partitioning ──────────────────────────────────────────────────────────────
-PARTITION_COLUMNS: list[str] = ["year", "month", "day", "hour"]
