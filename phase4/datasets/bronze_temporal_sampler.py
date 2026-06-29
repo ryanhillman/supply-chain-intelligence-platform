@@ -436,7 +436,6 @@ class BronzeTemporalSampler:
         Production Bronze data accumulates naturally over time and will not need this.
         """
         rng = np.random.default_rng(seed)
-        origin = inv["ts"].min()
         tiles: list[pd.DataFrame] = []
 
         for i in range(n_days):
@@ -465,7 +464,7 @@ class BronzeTemporalSampler:
     ) -> pd.DataFrame:
         """
         Demand signal count per (warehouse, sku, date) in the 24h window
-        [T-1d, T], matching the demand_signal_window_24h in feature_config.py.
+        [T-1d, T], matching the demand__demand_signal_count_24h Silver column.
         """
         dem_sorted = dem.sort_values("ts")
         rows: list[dict] = []

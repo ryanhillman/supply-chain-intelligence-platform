@@ -62,7 +62,7 @@ if str(_REPO_ROOT) not in sys.path:
 from phase4.datasets.feature_engineer import (
     NUMERIC_FEATURE_COLS,
     engineer_features,
-    _fill_defaults,
+    fill_defaults,
 )
 
 logger = logging.getLogger(__name__)
@@ -296,7 +296,7 @@ class SmokeTest:
         df  = pd.DataFrame([row])
 
         # Fill missing raw features with domain defaults
-        _fill_defaults(df)
+        fill_defaults(df)
 
         # Compute derived features (days_of_supply, effective_supply, etc.)
         df = engineer_features(df)

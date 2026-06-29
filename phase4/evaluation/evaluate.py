@@ -60,7 +60,8 @@ def run_evaluation(
 
     wh_vocab   = metadata["warehouse_vocab"]
     sku_vocab  = metadata["sku_vocab"]
-    config     = TrainingConfig()   # defaults match saved model
+    checkpoint = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
+    config     = checkpoint.get("config", TrainingConfig())
 
     model = ShortagePredictor(
         n_numeric    = metadata["n_numeric_features"],
@@ -68,7 +69,6 @@ def run_evaluation(
         n_skus       = metadata["n_skus"],
         config       = config,
     )
-    checkpoint = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
 

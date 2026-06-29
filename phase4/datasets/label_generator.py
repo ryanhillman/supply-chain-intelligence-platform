@@ -80,7 +80,6 @@ def generate_labels(
     result["continuous_risk_score"] = labels["continuous_risk_score"].values
 
     pos_rate  = result["stockout_label_7d"].mean()
-    base_auprc = result["stockout_label_7d"].mean()  # baseline AUPRC lower bound
     logger.info(
         "Labels generated: %d rows | positive rate=%.3f (stockout_label_7d=1)",
         len(result), pos_rate,

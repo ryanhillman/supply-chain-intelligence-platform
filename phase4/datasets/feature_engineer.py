@@ -81,7 +81,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     # ── NaN fill before derivation ────────────────────────────────────────────
-    _fill_defaults(df)
+    fill_defaults(df)
 
     # ── Derived features ──────────────────────────────────────────────────────
     avg_d7 = df["avg_daily_sales_7d"].clip(lower=EPS)
@@ -106,7 +106,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _fill_defaults(df: pd.DataFrame) -> None:
+def fill_defaults(df: pd.DataFrame) -> None:
     """Fill missing raw features with safe domain defaults (in-place)."""
     defaults: dict[str, float] = {
         "current_qty":            0.0,

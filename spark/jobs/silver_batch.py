@@ -28,7 +28,6 @@ import logging
 import sys
 
 from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 
 sys.path.insert(0, "/opt/spark-app")
 
@@ -43,6 +42,7 @@ from jobs.silver_feature_engineering import (
     SILVER_BASE_PATH,
     _add_lineage,
     _add_partition_and_row_key,
+    _add_reserved_forecast_columns,
     _compute_demand_features,
     _compute_inventory_snapshot,
     _compute_supplier_features,
@@ -134,14 +134,7 @@ def main() -> None:
     feature_df = _derive_risk_features(feature_df)
 
     # ── Step 7: Reserved demand forecast columns ─────────────────────────────
-    # These columns are reserved for future demand forecasting integration.
-    # No current pipeline stage populates them.
-    feature_df = (
-        feature_df
-        .withColumn("demand__demand_forecast_7d",  F.lit(None).cast("double"))
-        .withColumn("demand__demand_forecast_30d", F.lit(None).cast("double"))
-        .withColumn("demand__demand_multiplier",   F.lit(None).cast("double"))
-    )
+    feature_df = _add_reserved_forecast_columns(feature_df)
 
     # ── Step 8: Lineage + partition columns + Bigtable row key ───────────────
     feature_df = _add_lineage(feature_df, BATCH_EPOCH_ID, event_count)

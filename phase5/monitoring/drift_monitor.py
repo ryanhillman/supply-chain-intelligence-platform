@@ -18,7 +18,7 @@ Flow
    These encode the training distribution for all 21 NUMERIC_FEATURE_COLS.
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
-   - _fill_defaults() + engineer_features() derive all 21 features.
+   - fill_defaults() + engineer_features() derive all 21 features.
    - Extract the 4 monitored features.
 3. Read current predictions from Bigtable predictions column family
    (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -182,11 +183,11 @@ class DriftMonitor:
         from phase4.datasets.feature_engineer import (
             NUMERIC_FEATURE_COLS,
             engineer_features,
-            _fill_defaults,
+            fill_defaults,
         )
         self._NUMERIC_FEATURE_COLS = NUMERIC_FEATURE_COLS
         self._engineer_features    = engineer_features
-        self._fill_defaults        = _fill_defaults
+        self._fill_defaults        = fill_defaults
 
         # Build lookup: flat feature name → scaler index
         self._feature_to_idx: dict[str, int] = {
@@ -654,7 +655,7 @@ class DriftMonitor:
             print(sep2)
 
             def _var_line(name, mean, std, collapsed):
-                flag = "  [COLLAPSED < 0.01]" if collapsed else ""
+                flag = f"  [COLLAPSED < {_VARIANCE_COLLAPSE_THRESHOLD}]" if collapsed else ""
                 print(f"  {name:<28} mean={mean:>7.4f}  std={std:>7.4f}{flag}")
 
             _var_line("shortage_prob_7d",    pm.prob_mean,  pm.prob_std,  pm.prob_variance_collapsed)
@@ -901,6 +902,6 @@ def _classify_psi(psi: float) -> str:
 
 def _is_nan(value: float) -> bool:
     try:
-        return not (value == value)  # NaN != NaN
-    except TypeError:
+        return math.isnan(float(value))
+    except (TypeError, ValueError):
         return True

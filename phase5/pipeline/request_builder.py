@@ -4,7 +4,7 @@ request_builder.py — converts Bigtable FeatureRow objects into Vertex AI insta
 Pipeline per entity
 -------------------
 1. Ensure all 15 raw feature columns are present (add NaN for absent ones).
-2. Call _fill_defaults() to replace NaN with safe domain defaults.
+2. Call fill_defaults() to replace NaN with safe domain defaults.
 3. Call engineer_features() to compute 6 derived features, yielding all 21
    NUMERIC_FEATURE_COLS expected by the ONNX model.
 4. Apply StandardScaler.transform() — the container does NOT scale; client is responsible.
@@ -12,7 +12,7 @@ Pipeline per entity
 6. Return a ScoringRequest containing the endpoint instance dict and entity metadata.
 
 All 15 raw feature names and their defaults mirror
-phase4/datasets/feature_engineer._fill_defaults().
+phase4/datasets/feature_engineer.fill_defaults().
 
 Required packages:
     numpy>=1.26.0
@@ -35,7 +35,7 @@ from phase5.pipeline.feature_client import FeatureRow
 logger = logging.getLogger(__name__)
 
 # Raw features Bigtable provides (before derived engineering).
-# Mirrors phase4/datasets/feature_engineer._fill_defaults() keys.
+# Mirrors phase4/datasets/feature_engineer.fill_defaults() keys.
 _RAW_FEATURES: tuple[str, ...] = (
     "current_qty",
     "reorder_point",
@@ -111,11 +111,11 @@ class RequestBuilder:
         from phase4.datasets.feature_engineer import (
             NUMERIC_FEATURE_COLS,
             engineer_features,
-            _fill_defaults,
+            fill_defaults,
         )
         self._NUMERIC_FEATURE_COLS = NUMERIC_FEATURE_COLS
         self._engineer_features    = engineer_features
-        self._fill_defaults        = _fill_defaults
+        self._fill_defaults        = fill_defaults
 
         logger.info(
             "RequestBuilder ready: %d numeric features, %d warehouses, %d SKUs",

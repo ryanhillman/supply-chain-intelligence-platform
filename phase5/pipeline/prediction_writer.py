@@ -406,7 +406,7 @@ class PredictionWriter:
                     logger.error("Single mutate_rows failed: %s", exc)
                     return False
                 time.sleep(_BT_RETRY_BASE_SECONDS ** attempt)
-        return False
+        return False  # safety net: reached only if _BT_MAX_RETRIES == 0
 
     def _build_mutation(self, p: _ParsedMessage):
         """Build a Bigtable DirectRow mutation for the predictions column family."""

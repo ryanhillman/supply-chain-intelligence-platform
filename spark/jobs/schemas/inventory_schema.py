@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 PySpark schema for inventory.events Bronze topic.
 Mirrors inventory_event.avsc (Phase 1.5).
@@ -8,6 +6,8 @@ Mirrors inventory_event.avsc (Phase 1.5).
 The quantity_* fields are IntegerType (Avro int).
 reference_id is nullable — only present on TRANSFER events.
 """
+from __future__ import annotations
+
 from pyspark.sql.types import (
     FloatType,
     IntegerType,

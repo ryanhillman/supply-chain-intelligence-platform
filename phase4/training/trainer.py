@@ -283,7 +283,7 @@ def _load_metadata(path: Path) -> dict:
 def _build_scheduler(
     optimizer: torch.optim.Optimizer,
     config:    TrainingConfig,
-) -> torch.optim.lr_scheduler._LRScheduler:
+) -> torch.optim.lr_scheduler.LRScheduler:
     if config.scheduler == "plateau":
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="max", factor=config.lr_factor,

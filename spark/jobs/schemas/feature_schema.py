@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 PySpark schema for the Silver feature layer.
 
@@ -17,6 +15,8 @@ All numeric features are DoubleType for consistency.
 String features (event types, timestamps, version strings) are StringType.
 Partition columns (warehouse_id, sku_id, year, month, day) appended last.
 """
+from __future__ import annotations
+
 from pyspark.sql.types import (
     DoubleType,
     IntegerType,

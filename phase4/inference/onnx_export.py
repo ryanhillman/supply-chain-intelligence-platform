@@ -49,7 +49,8 @@ def export_to_onnx(
     output_path   = Path(output_path) if output_path else artifacts_dir / "model.onnx"
 
     metadata = _load_json(artifacts_dir / "feature_metadata.json")
-    config   = TrainingConfig()
+    ckpt   = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
+    config = ckpt.get("config", TrainingConfig())
 
     model = ShortagePredictor(
         n_numeric    = metadata["n_numeric_features"],
@@ -57,7 +58,6 @@ def export_to_onnx(
         n_skus       = metadata["n_skus"],
         config       = config,
     )
-    ckpt = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
@@ -102,8 +102,10 @@ def export_to_onnx(
     outputs = sess.run(None, inputs)
     logit_out, score_out = outputs
 
-    assert logit_out.shape == (batch_size, 1), f"Unexpected logit shape: {logit_out.shape}"
-    assert score_out.shape == (batch_size, 1), f"Unexpected score shape: {score_out.shape}"
+    if logit_out.shape != (batch_size, 1):
+        raise ValueError(f"Unexpected logit shape: {logit_out.shape}")
+    if score_out.shape != (batch_size, 1):
+        raise ValueError(f"Unexpected score shape: {score_out.shape}")
 
     # Cross-check: onnxruntime logit → sigmoid should match PyTorch predict()
     with torch.no_grad():
