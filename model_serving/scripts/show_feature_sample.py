@@ -59,8 +59,8 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
         help="GCP project ID (GCP_PROJECT_ID env var)",
     )
-    p.add_argument("--instance", default="scip-feature-store")
-    p.add_argument("--table",    default="inventory_features")
+    p.add_argument("--bigtable-instance", default="scip-feature-store")
+    p.add_argument("--bigtable-table",    default="inventory_features")
     p.add_argument(
         "--sa-key",
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
@@ -341,8 +341,8 @@ def main() -> None:
 
     records = read_all_rows(
         project     = args.project,
-        instance_id = args.instance,
-        table_id    = args.table,
+        instance_id = args.bigtable_instance,
+        table_id    = args.bigtable_table,
         sa_key      = args.sa_key,
     )
 

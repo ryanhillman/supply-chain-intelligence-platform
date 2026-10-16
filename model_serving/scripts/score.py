@@ -353,19 +353,19 @@ def main() -> None:
 
         print()
         print("  Prediction Writer Summary")
-        print(f"  bt_rows_written       : {writer_stats.bt_rows_written}")
-        print(f"  bt_rows_failed        : {writer_stats.bt_rows_failed}")
+        print(f"  bigtable_rows_written : {writer_stats.bigtable_rows_written}")
+        print(f"  bigtable_rows_failed  : {writer_stats.bigtable_rows_failed}")
         print(f"  messages_acknowledged : {writer_stats.messages_acknowledged}")
         print(f"  messages_nacked       : {writer_stats.messages_nacked}")
         print("=" * 68)
 
-        if writer_stats.bt_rows_failed > 0:
+        if writer_stats.bigtable_rows_failed > 0:
             logger.warning(
                 "%d Bigtable write failures — those messages remain on the subscription "
                 "and will be redelivered (up to 5 attempts before DLQ).",
-                writer_stats.bt_rows_failed,
+                writer_stats.bigtable_rows_failed,
             )
-        if writer_stats.bt_rows_written == 0:
+        if writer_stats.bigtable_rows_written == 0:
             logger.error("No Bigtable rows written — check Bigtable connectivity and IAM")
             sys.exit(1)
 
