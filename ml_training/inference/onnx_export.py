@@ -61,11 +61,20 @@ def export_to_onnx(
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    # Dummy input for tracing (batch_size=2 to exercise batch dimension)
+    # Dummy input for tracing (batch_size=2 to exercise batch dimension).
+    # Rows are deliberately distinct (not both zero) so validation below can
+    # assert the two rows produce different outputs — all-identical rows
+    # would pass shape checks even if a transpose/broadcast bug collapsed
+    # the batch dimension.
     batch_size = 2
-    dummy_numeric = torch.zeros(batch_size, metadata["n_numeric_features"])
-    dummy_wh      = torch.zeros(batch_size, dtype=torch.long)
-    dummy_sku     = torch.zeros(batch_size, dtype=torch.long)
+    torch.manual_seed(0)
+    dummy_numeric = torch.randn(batch_size, metadata["n_numeric_features"])
+    dummy_wh      = torch.tensor(
+        [0, 1 % max(metadata["n_warehouses"], 1)], dtype=torch.long
+    )
+    dummy_sku     = torch.tensor(
+        [0, 1 % max(metadata["n_skus"], 1)], dtype=torch.long
+    )
 
     torch.onnx.export(
         model,
@@ -106,6 +115,15 @@ def export_to_onnx(
         raise ValueError(f"Unexpected logit shape: {logit_out.shape}")
     if score_out.shape != (batch_size, 1):
         raise ValueError(f"Unexpected score shape: {score_out.shape}")
+
+    # With the two rows now distinct, outputs should differ across the
+    # batch — if they didn't, that would indicate a broadcast/transpose bug
+    # collapsing the batch dimension that identical dummy rows would hide.
+    if np.allclose(logit_out[0], logit_out[1]) and np.allclose(score_out[0], score_out[1]):
+        raise ValueError(
+            "ONNX outputs are identical across distinct batch rows — "
+            "possible batch-dimension handling bug in the exported graph."
+        )
 
     # Cross-check: onnxruntime logit → sigmoid should match PyTorch predict()
     with torch.no_grad():

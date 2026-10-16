@@ -56,9 +56,16 @@ class ShortagePredictor(nn.Module):
         self._init_weights()
 
     def _init_weights(self) -> None:
+        # prob_head and score_head are final linear outputs with no
+        # following ReLU (prob_head feeds BCEWithLogitsLoss on the raw
+        # logit; score_head's sigmoid is applied in forward(), not ReLU) —
+        # Kaiming's relu gain (sqrt(2)) doesn't apply to them, so they're
+        # initialized separately with the linear gain (1.0).
+        output_heads = {self.prob_head, self.score_head}
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+                nonlinearity = "linear" if m in output_heads else "relu"
+                nn.init.kaiming_normal_(m.weight, nonlinearity=nonlinearity)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Embedding):
