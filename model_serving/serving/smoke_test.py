@@ -136,8 +136,8 @@ class SmokeTest:
     def run(
         self,
         n_samples: int = 3,
-        bigtable_instance_id: str | None = None,
-        bigtable_table_id: str = "inventory_features",
+        instance_id: str | None = None,
+        table_id: str = "inventory_features",
     ) -> bool:
         """
         Run the smoke test.
@@ -146,10 +146,10 @@ class SmokeTest:
         ----------
         n_samples:
             Number of entities to score. Default 3.
-        bigtable_instance_id:
+        instance_id:
             Bigtable instance ID (e.g. "scip-feature-store").
             If None, synthetic instances are used.
-        bigtable_table_id:
+        table_id:
             Bigtable table ID. Default "inventory_features".
 
         Returns
@@ -165,7 +165,7 @@ class SmokeTest:
         from google.cloud import aiplatform
 
         instances, source = self._build_instances(
-            n_samples, bigtable_instance_id, bigtable_table_id
+            n_samples, instance_id, table_id
         )
 
         logger.info(
@@ -182,13 +182,13 @@ class SmokeTest:
     def _build_instances(
         self,
         n_samples: int,
-        bigtable_instance_id: str | None,
-        bigtable_table_id: str,
+        instance_id: str | None,
+        table_id: str,
     ) -> tuple[list[dict], str]:
-        if bigtable_instance_id is not None:
+        if instance_id is not None:
             try:
                 instances = self._instances_from_bigtable(
-                    bigtable_instance_id, bigtable_table_id, n_samples
+                    instance_id, table_id, n_samples
                 )
                 if instances:
                     return instances, "bigtable"
@@ -302,7 +302,7 @@ class SmokeTest:
         logger.warning(
             "Using synthetic zero-vector instances. "
             "Outputs will be out-of-distribution (see ADR-005 Decision 7). "
-            "Provide --bigtable-instance-id for real data."
+            "Provide --bigtable-instance for real data."
         )
         return [
             {

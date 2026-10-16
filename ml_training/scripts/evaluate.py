@@ -44,7 +44,7 @@ def main() -> None:
         dataset_dir   = args.dataset,
         split         = args.split,
     )
-    sys.exit(0 if report.get("ml_training_passed") else 1)
+    sys.exit(0 if report.get("outperforms_baseline") else 1)
 
 
 if __name__ == "__main__":

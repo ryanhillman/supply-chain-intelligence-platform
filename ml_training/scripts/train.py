@@ -122,9 +122,9 @@ def main() -> None:
     if args.upload_bucket:
         _upload_to_gcs(output, args.upload_bucket, args.sa_key)
 
-    ml_training_status = "PASSED" if report.get("ml_training_passed") else "FAILED"
-    print(f"\nPhase 4 training complete — success criterion: {ml_training_status}")
-    if not report.get("ml_training_passed"):
+    training_status = "PASSED" if report.get("outperforms_baseline") else "FAILED"
+    print(f"\nPhase 4 training complete — success criterion: {training_status}")
+    if not report.get("outperforms_baseline"):
         print("  Model did not outperform baseline on all metrics.")
         print("  Consider: more data, longer training, hyperparameter tuning.")
 
