@@ -140,7 +140,7 @@ services:
 
         kafka-topics --bootstrap-server kafka:29092 \
           --create --if-not-exists \
-          --topic orders.events.dlq \
+          --topic purchase.orders.events.dlq \
           --partitions 1 \
           --replication-factor 1
 

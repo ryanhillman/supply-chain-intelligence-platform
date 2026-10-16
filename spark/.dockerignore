@@ -1,0 +1,15 @@
+# Prevent secrets and local-only files from being baked into the image layer
+# by `COPY . /opt/spark-app/` in Dockerfile — matters for a direct
+# `docker build` (e.g. a production push); the dev docker-compose workflow
+# overrides this via a volume mount, but shouldn't be the only guard.
+.env
+keys/
+*.json
+!*.json.example
+
+__pycache__/
+*.pyc
+.pytest_cache/
+
+data/
+.git/

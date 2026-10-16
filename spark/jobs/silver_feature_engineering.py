@@ -111,16 +111,17 @@ def _read_bronze(spark: SparkSession, topic: str, schema, days_back: int) -> Dat
     cutoff_date = date.today() - timedelta(days=days_back)
 
     # Spark reads year/month/day/hour as partition columns from the directory
-    # names. Adding filter predicates on these columns enables partition pruning
-    # so the driver only lists directories within the cutoff date range.
-    year_ok  = F.col("year") > cutoff_date.year
-    month_ok = (F.col("year") == cutoff_date.year) & (F.col("month") > cutoff_date.month)
-    day_ok   = (
-        (F.col("year") == cutoff_date.year)
-        & (F.col("month") == cutoff_date.month)
-        & (F.col("day") >= cutoff_date.day)
+    # names. Adding a filter predicate on these columns enables partition
+    # pruning so the driver only lists directories within the cutoff date
+    # range. make_date() expresses this as a single date comparison instead
+    # of a hand-rolled lexicographic (year, month, day) OR-chain.
+    partition_filter = (
+        F.make_date(
+            F.col("year").cast("int"),
+            F.col("month").cast("int"),
+            F.col("day").cast("int"),
+        ) >= F.lit(cutoff_date)
     )
-    partition_filter = year_ok | month_ok | day_ok
 
     cutoff_ts = F.lit(cutoff_date.isoformat()).cast("timestamp")
 
