@@ -1,6 +1,6 @@
 """
-ShortagePredictor (inference) — loads trained model artifacts and runs
-batch inference on a feature DataFrame.
+BatchPredictor — loads trained model artifacts and runs batch inference
+on a feature DataFrame.
 
 Populates the two Phase 4 target columns:
   risk__shortage_prob_7d    — P(stockout ≤ 7d) ∈ [0, 1]
@@ -22,7 +22,7 @@ import torch
 
 from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from ml_training.training.config import TrainingConfig
-from ml_training.training.model import ShortagePredictor as _ShortageModel
+from ml_training.training.model import ShortagePredictor
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ OUT_PROB_COL:  str = "risk__shortage_prob_7d"
 OUT_SCORE_COL: str = "risk__stockout_risk_score"
 
 
-class ShortagePredictor:
+class BatchPredictor:
     """
     Loads model artifacts from a directory and provides a predict() method.
 
@@ -69,7 +69,7 @@ class ShortagePredictor:
         )
         self._config = ckpt.get("config", TrainingConfig())
 
-        self._model = _ShortageModel(
+        self._model = ShortagePredictor(
             n_numeric    = self._metadata["n_numeric_features"],
             n_warehouses = self._metadata["n_warehouses"],
             n_skus       = self._metadata["n_skus"],

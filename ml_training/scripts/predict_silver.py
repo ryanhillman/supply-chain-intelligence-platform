@@ -1,7 +1,7 @@
 """
 predict_silver.py — batch inference on the current Silver GCS layer.
 
-Reads the latest Silver snapshot, runs the trained ShortagePredictor,
+Reads the latest Silver snapshot, runs the trained model via BatchPredictor,
 and writes a Parquet file with risk__shortage_prob_7d and
 risk__stockout_risk_score populated for all 120 warehouse-SKU entities.
 
@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from ml_training.datasets.silver_snapshot_loader import load_silver_features
-from ml_training.inference.predictor import OUT_PROB_COL, OUT_SCORE_COL, ShortagePredictor
+from ml_training.inference.predictor import OUT_PROB_COL, OUT_SCORE_COL, BatchPredictor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,8 +83,8 @@ def main() -> None:
         credentials_path = args.sa_key,
     )
 
-    logger.info("Running ShortagePredictor inference")
-    predictor = ShortagePredictor(
+    logger.info("Running BatchPredictor inference")
+    predictor = BatchPredictor(
         artifacts_dir = args.artifacts,
         dataset_dir   = args.dataset,
     )
