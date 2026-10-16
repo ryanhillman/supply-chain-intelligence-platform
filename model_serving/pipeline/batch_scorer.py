@@ -202,7 +202,7 @@ class BatchScorer:
         all_scores: list[float] = []
 
         for batch in _chunks(requests, batch_size):
-            batch_probs, batch_scores, latency_ms = self._score_batch(batch, model_version)
+            batch_probs, batch_scores, latency_ms = self._score_batch(batch)
             all_probs.extend(batch_probs)
             all_scores.extend(batch_scores)
             stats.batches_sent          += 1
@@ -236,12 +236,14 @@ class BatchScorer:
     def _score_batch(
         self,
         batch: list[ScoringRequest],
-        model_version: str,
     ) -> tuple[list[float], list[float], float]:
         """
         Call endpoint.predict() for a single batch.
 
-        Returns (shortage_probs, risk_scores, latency_ms).
+        Returns (shortage_probs, risk_scores, latency_ms). model_version is
+        not needed here — the endpoint already routes to whichever model
+        version currently has traffic; it's only needed by _publish_batch()
+        to stamp the published record for lineage.
         """
         instances = [req.instance for req in batch]
 
