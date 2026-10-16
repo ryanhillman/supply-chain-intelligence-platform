@@ -120,19 +120,19 @@ resource "google_service_account" "prediction_writer_sa" {
   depends_on = [google_project_service.iam]
 }
 
-resource "google_project_iam_member" "writer_pubsub_subscriber" {
+resource "google_project_iam_member" "prediction_writer_pubsub_subscriber" {
   project = var.project_id
   role    = "roles/pubsub.subscriber"
   member  = "serviceAccount:${google_service_account.prediction_writer_sa.email}"
 }
 
-resource "google_project_iam_member" "writer_bigtable" {
+resource "google_project_iam_member" "prediction_writer_bigtable" {
   project = var.project_id
   role    = "roles/bigtable.user"
   member  = "serviceAccount:${google_service_account.prediction_writer_sa.email}"
 }
 
-resource "google_project_iam_member" "writer_logging" {
+resource "google_project_iam_member" "prediction_writer_logging" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.prediction_writer_sa.email}"

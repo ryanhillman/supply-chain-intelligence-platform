@@ -20,7 +20,7 @@ The Bronze → Silver pipeline already produces the feature computation. What re
 
 ---
 
-## Decision 1: Use Bigtable as the Online Feature Store
+## Decision 1 — Use Bigtable as the Online Feature Store
 
 **Chosen: Google Cloud Bigtable**
 
@@ -50,7 +50,7 @@ The Bronze → Silver pipeline already produces the feature computation. What re
 
 ---
 
-## Decision 2: Row Key Design — `{warehouse_id}#{sku_id}`
+## Decision 2 — Row Key Design — `{warehouse_id}#{sku_id}`
 
 **Chosen: `{warehouse_id}#{sku_id}` with `#` separator**
 
@@ -78,7 +78,7 @@ W-006#SKU-020
 
 ---
 
-## Decision 3: Six Column Families with Independent GC Policies
+## Decision 3 — Six Column Families with Independent GC Policies
 
 **Chosen: One column family per feature group, GC policy matched to feature staleness tolerance**
 
@@ -103,7 +103,7 @@ A single column family would require a single GC policy. `inventory` and `risk` 
 
 ---
 
-## Decision 4: Value Encoding — Big-Endian Double (IEEE 754)
+## Decision 4 — Value Encoding — Big-Endian Double (IEEE 754)
 
 **Chosen: `struct.pack(">d", float(value))` for numeric features; UTF-8 bytes for string features**
 
@@ -127,7 +127,7 @@ String features (`last_event_type`, `last_signal_type`, timestamps, `pipeline_ve
 
 ---
 
-## Decision 5: Dual-Write Pattern — Silver First, Bigtable Best-Effort
+## Decision 5 — Dual-Write Pattern — Silver First, Bigtable Best-Effort
 
 **Chosen: Write Silver GCS first; Bigtable write in isolated try/except; Silver is source of truth**
 
@@ -163,7 +163,7 @@ Without caching, the Silver write triggers a full DAG re-execution when Bigtable
 
 ---
 
-## Decision 6: `foreachPartition` for Bigtable Writes (not `collect` to Driver)
+## Decision 6 — `foreachPartition` for Bigtable Writes (not `collect` to Driver)
 
 **Chosen: `df.foreachPartition(lambda partition: ...)` with per-partition Bigtable client**
 
@@ -187,7 +187,7 @@ For the SCIP seed data (6 warehouses × 20 SKUs = 120 rows), the difference is n
 
 ---
 
-## Decision 7: SA Key via `gcloud` CLI, Not Terraform
+## Decision 7 — SA Key via `gcloud` CLI, Not Terraform
 
 **Chosen: SA key created manually via `gcloud iam service-accounts keys create`; not managed by Terraform**
 
