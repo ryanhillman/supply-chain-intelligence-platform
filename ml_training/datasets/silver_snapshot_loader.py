@@ -56,7 +56,7 @@ def load_silver_features(
 ) -> pd.DataFrame:
     """
     Read the latest Silver snapshot from GCS and return a feature DataFrame
-    ready for inference/predictor.ShortagePredictor.predict().
+    ready for inference/predictor.BatchPredictor.predict().
 
     When multiple Silver epochs are present, only the most recent snapshot
     per (warehouse_id, sku_id) pair is retained (deduplication on window_end).
