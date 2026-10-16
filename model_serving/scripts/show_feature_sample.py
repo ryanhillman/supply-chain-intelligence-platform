@@ -23,6 +23,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import os
 import struct
 import sys
 from pathlib import Path
@@ -63,12 +64,17 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="SCIP feature sample dashboard — shows raw feature data + predictions"
     )
-    p.add_argument("--project",  default="supply-chain-platform-499920")
+    p.add_argument(
+        "--project",
+        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
+        help="GCP project ID (GCP_PROJECT_ID env var)",
+    )
     p.add_argument("--instance", default="scip-feature-store")
     p.add_argument("--table",    default="inventory_features")
     p.add_argument(
         "--sa-key",
-        default="infrastructure/gcp/keys/scip-prediction-writer-sa.json",
+        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var)",
     )
     p.add_argument(
         "--n",
@@ -339,6 +345,9 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
 
 def main() -> None:
     args = parse_args()
+    if not args.project:
+        print("ERROR: --project is required (or set GCP_PROJECT_ID)", file=sys.stderr)
+        sys.exit(1)
 
     records = read_all_rows(
         project     = args.project,

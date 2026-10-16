@@ -11,16 +11,17 @@ Requires no UI libraries beyond the Python standard library.
 Usage
 -----
     python model_serving/scripts/show_predictions.py \\
-        --project  supply-chain-platform-499920 \\
+        --project  your-gcp-project-id \\
         --instance scip-feature-store \\
         --sa-key   infrastructure/gcp/keys/scip-prediction-writer-sa.json
 
-    # Minimal (uses defaults):
+    # Minimal (uses GCP_PROJECT_ID / GOOGLE_APPLICATION_CREDENTIALS env vars):
     python model_serving/scripts/show_predictions.py
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -57,8 +58,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--project",
-        default="supply-chain-platform-499920",
-        help="GCP project ID (default: supply-chain-platform-499920)",
+        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
+        help="GCP project ID (GCP_PROJECT_ID env var)",
     )
     p.add_argument(
         "--instance",
@@ -72,8 +73,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--sa-key",
-        default="infrastructure/gcp/keys/scip-prediction-writer-sa.json",
-        help="Service account key path",
+        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var)",
     )
     p.add_argument(
         "--top-n",
@@ -305,7 +306,10 @@ def _stdev(values: list[float], mean: float) -> float:
 # -- Entry point ---------------------------------------------------------------
 
 def main() -> None:
-    args    = parse_args()
+    args = parse_args()
+    if not args.project:
+        print("ERROR: --project is required (or set GCP_PROJECT_ID)", file=sys.stderr)
+        sys.exit(1)
     records = read_predictions(
         project     = args.project,
         instance_id = args.instance,
