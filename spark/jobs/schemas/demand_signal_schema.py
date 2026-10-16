@@ -1,14 +1,13 @@
-from __future__ import annotations
-
 """
 PySpark schema for demand.signals Bronze topic.
-Mirrors demand_signal.avsc (Phase 1.5).
 
 13 fields. Uses signal_type (not event_type) — demand signals are not
 "events" in the operational sense; they are forecasting inputs.
 The Bronze job normalises signal_type → event_type column for consistent
 partitioning across all Bronze topics.
 """
+from __future__ import annotations
+
 from pyspark.sql.types import (
     FloatType,
     IntegerType,

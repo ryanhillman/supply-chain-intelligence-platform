@@ -7,7 +7,7 @@ Two implementations share the same interface:
 
 Switch via DLQ_SINK env var ("file" | "kafka").
 
-DLQ envelope schema mirrors dlq_envelope.avsc:
+DLQ envelope fields:
   dlq_id, failed_at, consumer_group, original_topic, original_partition,
   original_offset, original_key, original_payload, error_reason,
   error_detail, epoch_id, replay_eligible

@@ -1,6 +1,5 @@
 """
 PySpark schema for inventory.events Bronze topic.
-Mirrors inventory_event.avsc (Phase 1.5).
 
 16 fields. FloatType for unit_cost (matches Avro float).
 The quantity_* fields are IntegerType (Avro int).

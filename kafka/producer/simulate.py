@@ -8,12 +8,16 @@ Topology:
   20 SKUs       (SKU-001 .. SKU-020)
   4 suppliers   (SUP-001 .. SUP-004)
 
-Per 2-second cycle:
+Per 2-second cycle, at the default EVENTS_PER_BATCH=17:
   inventory.events        — 10 events (mix of SALE, RECEIVE, ADJUSTMENT, RETURN, TRANSFER)
   demand.signals          —  3 events (FORECAST, SURGE, TREND, SEASONAL)
   purchase.orders.events  —  2 events (CREATED, SUBMITTED, APPROVED, RECEIVED)
   shipments.events        —  2 events (CREATED, SHIPPED, DELIVERED)
   suppliers.events        —  1 event  (PERFORMANCE_UPDATE, every 5th cycle only)
+
+Other EVENTS_PER_BATCH values scale each category proportionally to this
+10:3:2:2 ratio (see _batch_split()); suppliers.events stays fixed at once
+every 5th cycle regardless of EVENTS_PER_BATCH.
 
 All fields match the PySpark Bronze schemas in spark/jobs/schemas/.
 Required fields guaranteed present and non-null on every event.
@@ -38,9 +42,25 @@ from confluent_kafka import Producer
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-BOOTSTRAP_SERVERS: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+BOOTSTRAP_SERVERS: str  = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+EVENTS_PER_BATCH: int   = int(os.environ.get("EVENTS_PER_BATCH", "17"))
 BATCH_SLEEP: float      = float(os.environ.get("BATCH_SLEEP_SECONDS", "2"))
 LOG_LEVEL: str          = os.environ.get("LOG_LEVEL", "INFO")
+
+# Default per-category split (10 inventory : 3 demand : 2 PO : 2 shipment)
+# sums to 17 — the historical default. Other EVENTS_PER_BATCH values scale
+# each category proportionally, rounding down with a floor of 1 per category.
+_BASE_SPLIT: dict[str, int] = {
+    "inventory": 10, "demand": 3, "purchase_order": 2, "shipment": 2,
+}
+_BASE_TOTAL = sum(_BASE_SPLIT.values())
+
+
+def _batch_split(total: int) -> dict[str, int]:
+    return {
+        category: max(1, round(total * count / _BASE_TOTAL))
+        for category, count in _BASE_SPLIT.items()
+    }
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
@@ -349,9 +369,12 @@ def make_producer() -> Producer:
 
 
 def main() -> None:
+    split = _batch_split(EVENTS_PER_BATCH)
     logger.info(
-        "Supply chain simulator starting | bootstrap=%s warehouses=%d skus=%d suppliers=%d",
+        "Supply chain simulator starting | bootstrap=%s warehouses=%d skus=%d suppliers=%d "
+        "events_per_batch=%d split=%s",
         BOOTSTRAP_SERVERS, len(WAREHOUSES), len(SKUS), len(SUPPLIERS),
+        EVENTS_PER_BATCH, split,
     )
 
     # Retry connection to Kafka — broker may not be ready immediately
@@ -376,19 +399,19 @@ def main() -> None:
         batch += 1
 
         # ── inventory.events (most frequent — drives Silver trigger cadence) ──
-        for _ in range(10):
+        for _ in range(split["inventory"]):
             produce_inventory_event(p)
 
         # ── demand.signals ────────────────────────────────────────────────────
-        for _ in range(3):
+        for _ in range(split["demand"]):
             produce_demand_signal(p)
 
         # ── purchase.orders.events ────────────────────────────────────────────
-        for _ in range(2):
+        for _ in range(split["purchase_order"]):
             produce_purchase_order(p)
 
         # ── shipments.events ──────────────────────────────────────────────────
-        for _ in range(2):
+        for _ in range(split["shipment"]):
             produce_shipment(p)
 
         # ── suppliers.events (infrequent) ─────────────────────────────────────
@@ -401,13 +424,14 @@ def main() -> None:
         p.poll(0)
         p.flush()
 
-        batch_total = 10 + 3 + 2 + 2 + supplier_count
+        batch_total = sum(split.values()) + supplier_count
         total_events += batch_total
 
         logger.info(
-            "Batch %d | inventory=10 demand=3 po=2 shipment=2 supplier=%d | "
+            "Batch %d | inventory=%d demand=%d po=%d shipment=%d supplier=%d | "
             "batch_total=%d cumulative=%d",
-            batch, supplier_count, batch_total, total_events,
+            batch, split["inventory"], split["demand"], split["purchase_order"],
+            split["shipment"], supplier_count, batch_total, total_events,
         )
 
         time.sleep(BATCH_SLEEP)
