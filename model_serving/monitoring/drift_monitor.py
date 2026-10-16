@@ -29,7 +29,12 @@ Flow
      0.10 ≤ PSI < 0.20 → warning
      PSI ≥ 0.20  → retraining trigger
 6. Detect prediction variance collapse: std < 0.01.
-7. Print a tabular report. Optionally emit Cloud Monitoring metrics.
+7. Compare the model's binary risk call (shortage_prob_7d >= 0.5) against
+   the rule-based risk__reorder_urgency heuristic (urgency >= REORDER) for
+   every entity with both values present. Agreement > 95% means the model
+   adds no signal over the heuristic — retraining trigger (ADR-005
+   Decision 7, trigger 3).
+8. Print a tabular report. Optionally emit Cloud Monitoring metrics.
 
 PSI formula
 -----------
@@ -77,6 +82,15 @@ _N_BINS                = 10
 _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
 _PSI_STABLE_THRESHOLD  = 0.10
 _PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
+
+# Baseline divergence (ADR-005 Decision 7, trigger 3): if the model's binary
+# risk call agrees with the rule-based risk__reorder_urgency heuristic more
+# than this fraction of the time, the model adds no signal over the heuristic.
+_BASELINE_DIVERGENCE_THRESHOLD = 0.95
+_BASELINE_RISK_FAMILY          = "risk"
+_BASELINE_URGENCY_COL          = b"urgency"
+_BASELINE_PROB_THRESHOLD       = 0.5   # shortage_prob_7d >= this → model says "at risk"
+_BASELINE_AT_RISK_URGENCY_MIN  = 2     # urgency >= REORDER(2) → heuristic says "at risk"
 
 # Monitored features: (display_name, flat_feature_name)
 # The flat name must appear in NUMERIC_FEATURE_COLS from feature_engineer.py.
@@ -126,12 +140,26 @@ class PredictionMetrics:
 
 
 @dataclass
+class BaselineDivergenceMetrics:
+    """
+    Agreement between the model's binary risk call and the rule-based
+    risk__reorder_urgency heuristic (ADR-005 Decision 7, trigger 3).
+    """
+
+    n_compared:     int
+    n_agree:        int
+    agreement_rate: float
+    status:         str   # "stable" | "trigger"
+
+
+@dataclass
 class DriftReport:
     """Full output of a DriftMonitor.run() call."""
 
     run_timestamp:      str
     feature_metrics:    list[FeatureMetrics]
     prediction_metrics: PredictionMetrics | None
+    baseline_metrics:   BaselineDivergenceMetrics | None
     requires_retraining: bool
     trigger_reasons:    list[str]  # human-readable reasons for retraining flag
 
@@ -295,6 +323,23 @@ class DriftMonitor:
                     "Run model_serving/scripts/score.py first."
                 )
 
+        # Step 3b: compare model predictions against the rule-based heuristic.
+        baseline_metrics: BaselineDivergenceMetrics | None = None
+        if read_predictions:
+            logger.info("Comparing predictions against risk__reorder_urgency heuristic ...")
+            baseline_metrics = self._collect_baseline_divergence()
+            if baseline_metrics:
+                logger.info(
+                    "  baseline agreement=%.4f  n=%d  %s",
+                    baseline_metrics.agreement_rate, baseline_metrics.n_compared,
+                    baseline_metrics.status.upper(),
+                )
+            else:
+                logger.warning(
+                    "No entities with both a prediction and a risk__reorder_urgency "
+                    "value — skipping baseline divergence check."
+                )
+
         # Step 4: build report and assess retraining recommendation.
         trigger_reasons: list[str] = []
         for fm in feature_metrics:
@@ -313,11 +358,19 @@ class DriftMonitor:
                     f"stockout_risk_score variance collapsed: "
                     f"std={prediction_metrics.score_std:.4f} < {_VARIANCE_COLLAPSE_THRESHOLD}"
                 )
+        if baseline_metrics and baseline_metrics.status == "trigger":
+            trigger_reasons.append(
+                f"baseline divergence: model agrees with risk__reorder_urgency "
+                f"heuristic {baseline_metrics.agreement_rate:.1%} of the time "
+                f"(n={baseline_metrics.n_compared}) "
+                f"> {_BASELINE_DIVERGENCE_THRESHOLD:.0%} — model adds no signal"
+            )
 
         report = DriftReport(
             run_timestamp       = run_ts,
             feature_metrics     = feature_metrics,
             prediction_metrics  = prediction_metrics,
+            baseline_metrics    = baseline_metrics,
             requires_retraining = bool(trigger_reasons),
             trigger_reasons     = trigger_reasons,
         )
@@ -485,6 +538,80 @@ class DriftMonitor:
             prob_variance_collapsed  = prob_std  < _VARIANCE_COLLAPSE_THRESHOLD,
             score_variance_collapsed = score_std < _VARIANCE_COLLAPSE_THRESHOLD,
             n_entities              = n,
+        )
+
+    def _collect_baseline_divergence(self) -> BaselineDivergenceMetrics | None:
+        """
+        Compare the model's binary risk call against the rule-based
+        risk__reorder_urgency heuristic for every entity that has both a
+        prediction and an urgency value.
+
+        model_at_risk     = shortage_prob_7d >= _BASELINE_PROB_THRESHOLD
+        heuristic_at_risk = reorder_urgency  >= _BASELINE_AT_RISK_URGENCY_MIN
+
+        risk__reorder_urgency is written to Bigtable in the "risk" column
+        family as a big-endian double (same encoding as every other numeric
+        feature — see spark/utils/bigtable_writer.py), so it's decoded with
+        feature_client's _decode_double rather than the UTF-8 decode used
+        for the predictions family.
+
+        Returns None if no entity has both values present.
+        """
+        from google.cloud.bigtable import row_filters
+        from model_serving.pipeline.feature_client import _decode_double
+
+        filter_ = row_filters.RowFilterChain(filters=[
+            row_filters.FamilyNameRegexFilter(
+                f"{_PREDICTIONS_FAMILY}|{_BASELINE_RISK_FAMILY}"
+            ),
+            row_filters.CellsColumnLimitFilter(1),
+        ])
+
+        n_compared = 0
+        n_agree    = 0
+
+        for row_data in self._table.read_rows(filter_=filter_):
+            pred_cells = row_data.cells.get(_PREDICTIONS_FAMILY, {})
+            risk_cells = row_data.cells.get(_BASELINE_RISK_FAMILY, {})
+
+            prob_cells    = pred_cells.get(_PREDICTIONS_PROB_COL, [])
+            urgency_cells = risk_cells.get(_BASELINE_URGENCY_COL, [])
+
+            if not prob_cells or not urgency_cells:
+                continue
+
+            try:
+                prob = float(prob_cells[0].value.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+
+            urgency = _decode_double(
+                urgency_cells[0].value, _BASELINE_RISK_FAMILY, "urgency"
+            )
+            if urgency is None:
+                continue
+
+            model_at_risk     = prob    >= _BASELINE_PROB_THRESHOLD
+            heuristic_at_risk = urgency >= _BASELINE_AT_RISK_URGENCY_MIN
+
+            n_compared += 1
+            if model_at_risk == heuristic_at_risk:
+                n_agree += 1
+
+        if n_compared == 0:
+            return None
+
+        agreement_rate = n_agree / n_compared
+        status = (
+            "trigger" if agreement_rate > _BASELINE_DIVERGENCE_THRESHOLD
+            else "stable"
+        )
+
+        return BaselineDivergenceMetrics(
+            n_compared     = n_compared,
+            n_agree        = n_agree,
+            agreement_rate = agreement_rate,
+            status         = status,
         )
 
     # ── PSI computation ────────────────────────────────────────────────────────
@@ -672,6 +799,28 @@ class DriftMonitor:
             print(sep2)
             print("  Run model_serving/scripts/score.py first to populate predictions.")
 
+        # Baseline divergence table
+        if report.baseline_metrics:
+            bm = report.baseline_metrics
+            print(f"\nBaseline Divergence  (vs. risk__reorder_urgency heuristic)")
+            print(sep2)
+            flag = "  [TRIGGER]" if bm.status == "trigger" else ""
+            print(
+                f"  agreement={bm.agreement_rate:.1%}  n={bm.n_compared}  "
+                f"threshold={_BASELINE_DIVERGENCE_THRESHOLD:.0%}{flag}"
+            )
+            if bm.status == "trigger":
+                print(
+                    "\n  [NOTE] The model agrees with the rule-based heuristic on\n"
+                    "         almost every entity — it is not adding predictive signal\n"
+                    "         over the simple days-of-supply threshold (ADR-005\n"
+                    "         Decision 7, trigger 3)."
+                )
+        else:
+            print("\nBaseline Divergence  — no entities with both a prediction and urgency value")
+            print(sep2)
+            print("  Run model_serving/scripts/score.py first to populate predictions.")
+
         # Retraining recommendation
         print(f"\nRetraining Recommendation")
         print(sep2)
@@ -726,11 +875,18 @@ class DriftMonitor:
                 "score_variance_collapsed": report.prediction_metrics.score_variance_collapsed,
                 "n_entities":              report.prediction_metrics.n_entities,
             } if report.prediction_metrics else None,
+            "baseline_divergence": {
+                "n_compared":     report.baseline_metrics.n_compared,
+                "n_agree":        report.baseline_metrics.n_agree,
+                "agreement_rate": report.baseline_metrics.agreement_rate,
+                "status":         report.baseline_metrics.status,
+            } if report.baseline_metrics else None,
             "thresholds": {
-                "psi_stable":          _PSI_STABLE_THRESHOLD,
-                "psi_trigger":         _PSI_WARNING_THRESHOLD,
-                "variance_collapse":   _VARIANCE_COLLAPSE_THRESHOLD,
-                "n_psi_bins":          _N_BINS,
+                "psi_stable":           _PSI_STABLE_THRESHOLD,
+                "psi_trigger":          _PSI_WARNING_THRESHOLD,
+                "variance_collapse":    _VARIANCE_COLLAPSE_THRESHOLD,
+                "baseline_divergence":  _BASELINE_DIVERGENCE_THRESHOLD,
+                "n_psi_bins":           _N_BINS,
             },
         }
 
@@ -750,6 +906,7 @@ class DriftMonitor:
             label: feature_name
           custom.googleapis.com/scip/drift/prob_std     [GAUGE, double]
           custom.googleapis.com/scip/drift/score_std    [GAUGE, double]
+          custom.googleapis.com/scip/drift/baseline_agreement_rate  [GAUGE, double]
           custom.googleapis.com/scip/drift/retraining_required  [GAUGE, int64]
 
         Requires:
@@ -829,6 +986,13 @@ class DriftMonitor:
             ))
             time_series.append(_build_series(
                 "custom.googleapis.com/scip/drift/score_std", pm.score_std
+            ))
+
+        # Baseline divergence
+        if report.baseline_metrics:
+            time_series.append(_build_series(
+                "custom.googleapis.com/scip/drift/baseline_agreement_rate",
+                report.baseline_metrics.agreement_rate,
             ))
 
         # Retraining flag (1 = required, 0 = not required)
