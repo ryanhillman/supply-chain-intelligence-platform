@@ -107,7 +107,7 @@ output "prediction_writer_sa_email" {
   value       = google_service_account.prediction_writer_sa.email
 }
 
-output "phase5_next_steps" {
+output "model_serving_next_steps" {
   description = "Manual steps required after Phase 5 terraform apply"
   value       = <<-EOT
     Phase 5 infrastructure provisioned. Next steps (do not run terraform apply yet):
@@ -123,14 +123,14 @@ output "phase5_next_steps" {
 
     3. Build and push the serving container (Phase 5.2):
        docker build -t ${var.region}-docker.pkg.dev/${var.project_id}/scip-serving/shortage-predictor-serving:latest \
-         phase5/serving/container/
+         model_serving/serving/container/
        docker push ${var.region}-docker.pkg.dev/${var.project_id}/scip-serving/shortage-predictor-serving:latest
 
     4. Register the model (Phase 5.3):
-       python phase5/scripts/register.py --bucket $GCS_BUCKET_NAME --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
+       python model_serving/scripts/register.py --bucket $GCS_BUCKET_NAME --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
     5. Deploy the endpoint (Phase 5.3):
-       python phase5/scripts/deploy.py --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
+       python model_serving/scripts/deploy.py --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
     6. Verify Bigtable predictions column family:
        cbt -project ${var.project_id} -instance ${google_bigtable_instance.feature_store.name} \

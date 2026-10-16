@@ -191,7 +191,7 @@ or distribution issue for that location.
 
 **Artifact structure** written by `scripts/train.py`:
 ```
-phase4/artifacts/
+ml_training/artifacts/
   model.pt              — torch.save checkpoint: {epoch, model_state, config, val_metrics}
   model.onnx            — ONNX opset 17, dynamic batch axis, validated with onnxruntime
   feature_metadata.json — vocab mappings, feature list, pos_weight, split boundaries
@@ -199,7 +199,7 @@ phase4/artifacts/
   evaluation_test.json  — full model vs baseline comparison on test split
 ```
 
-**Local:** `phase4/artifacts/` (gitignored via root `.gitignore`: `phase4/artifacts/*.pt` etc.)
+**Local:** `ml_training/artifacts/` (gitignored via root `.gitignore`: `ml_training/artifacts/*.pt` etc.)
 
 **GCS (optional upload):**
 ```
@@ -207,7 +207,7 @@ gs://{bucket}/models/shortage-predictor/v{YYYYMMDD_HHMMSS}/
 ```
 Timestamped versioning enables champion/challenger comparison in Phase 5.
 
-**StandardScaler** (`preprocessor.pkl`) is written to `phase4/artifacts/dataset/`
+**StandardScaler** (`preprocessor.pkl`) is written to `ml_training/artifacts/dataset/`
 (the dataset directory, not the model directory) because it is a dataset-level
 artifact. The `ShortagePredictor` inference class accepts a `dataset_dir` parameter
 to locate it.

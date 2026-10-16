@@ -1,0 +1,19 @@
+# SCIP shortage-predictor serving container dependencies
+#
+# Pin to exact versions for container reproducibility.
+# To regenerate: pip install -c constraints.txt -r requirements.txt && pip freeze
+#
+# onnxruntime-cpu: CPU-only wheel, ~25 MB vs ~600 MB for the CUDA variant.
+# Opset 18 is supported by onnxruntime >= 1.16.0.
+# The exported model.onnx uses opset 18 (auto-upgraded by torch.onnx.export
+# from requested 17; see ml_training/inference/onnx_export.py).
+#
+# libgomp1 (system package) is required by onnxruntime-cpu on debian-slim.
+# It is installed in the Dockerfile RUN layer, not here.
+
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+onnxruntime==1.19.2
+google-cloud-storage==2.18.2
+numpy==1.26.4
+pydantic==2.9.2
