@@ -200,11 +200,6 @@ def write_to_bigtable(
         epoch_id, row_count, instance_id, table_id,
     )
 
-    # Capture args in local vars — these are serialised into the closure sent to executors
-    _project_id = project_id
-    _instance_id = instance_id
-    _table_id = table_id
-
     df.foreachPartition(
-        lambda partition: _write_partition(partition, _project_id, _instance_id, _table_id)
+        lambda partition: _write_partition(partition, project_id, instance_id, table_id)
     )

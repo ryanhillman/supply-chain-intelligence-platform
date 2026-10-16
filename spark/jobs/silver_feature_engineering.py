@@ -73,8 +73,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("silver_feature_engineering")
 
-SILVER_CHECKPOINT = SILVER_CHECKPOINT_BASE_PATH
-
 
 # ── Spark session ──────────────────────────────────────────────────────────────
 
@@ -548,7 +546,7 @@ def build_silver_query(spark: SparkSession):
         .writeStream
         .foreachBatch(make_silver_processor(spark))
         .trigger(processingTime=TRIGGER_INTERVAL)
-        .option("checkpointLocation", SILVER_CHECKPOINT)
+        .option("checkpointLocation", SILVER_CHECKPOINT_BASE_PATH)
         .queryName("silver-feature-engineering")
         .start()
     )

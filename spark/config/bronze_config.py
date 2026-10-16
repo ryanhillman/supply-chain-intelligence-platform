@@ -9,7 +9,7 @@ import os
 # ── Kafka ─────────────────────────────────────────────────────────────────────
 KAFKA_BOOTSTRAP_SERVERS: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 KAFKA_GROUP_ID: str = os.environ.get("KAFKA_GROUP_ID", "scip-spark-bronze")
-STARTING_OFFSETS: str = os.environ.get("STARTING_OFFSETS", "latest")
+STARTING_OFFSETS: str = os.environ.get("KAFKA_STARTING_OFFSETS", "latest")
 
 # ── Spark ─────────────────────────────────────────────────────────────────────
 TRIGGER_INTERVAL: str = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
