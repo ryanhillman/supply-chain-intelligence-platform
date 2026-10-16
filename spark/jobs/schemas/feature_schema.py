@@ -3,8 +3,12 @@ PySpark schema for the Silver feature layer.
 
 Defines:
   SILVER_FEATURE_SCHEMA — StructType for Silver Parquet output.
-  BIGTABLE_ROW_SCHEMA   — StructType for the Bigtable mutation DataFrame
-                          (row_key + flat feature columns before family grouping).
+  SILVER_PARTITION_COLS — partition columns for the Silver write.
+  SILVER_DEDUP_COLS     — dedup key for the Silver write.
+
+The Bigtable mutation path (spark/utils/bigtable_writer.py) writes directly
+from the Silver DataFrame's columns via FEATURE_REGISTRY in feature_config.py
+— there is no separate Bigtable-specific schema.
 
 Column naming convention: {family}__{attribute}
   Matches FEATURE_REGISTRY keys in feature_config.py exactly.

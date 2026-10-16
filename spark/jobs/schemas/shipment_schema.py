@@ -1,12 +1,11 @@
-from __future__ import annotations
-
 """
 PySpark schema for shipments.events Bronze topic.
-Mirrors shipment_event.avsc (Phase 1.5).
 
 16 fields. quantity is the number of units in this shipment leg.
 actual_arrival is nullable — null until the shipment is DELIVERED.
 """
+from __future__ import annotations
+
 from pyspark.sql.types import (
     IntegerType,
     StringType,
@@ -25,10 +24,10 @@ SHIPMENT_EVENT_SCHEMA = StructType([
     StructField("supplier_id",        StringType(),  nullable=True),
     StructField("carrier",            StringType(),  nullable=True),
     StructField("tracking_number",    StringType(),  nullable=True),
-    StructField("origin_location",    StringType(),  nullable=True),
     StructField("estimated_arrival",  StringType(),  nullable=True),
     StructField("actual_arrival",     StringType(),  nullable=True),
     StructField("timestamp",          StringType(),  nullable=False),
     StructField("producer_id",        StringType(),  nullable=True),
     StructField("correlation_id",     StringType(),  nullable=True),
+    StructField("metadata",           StringType(),  nullable=True),
 ])
