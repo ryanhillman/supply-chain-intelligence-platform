@@ -71,10 +71,17 @@ resource "google_vertex_ai_endpoint" "shortage_predictor" {
 # Used by:
 #   1. batch_scorer.py  — reads Bigtable features, calls endpoint.predict(),
 #                          publishes results to prediction-results topic
-#   2. Vertex AI serving container — reads model.onnx from GCS at startup
+#   2. Vertex AI serving container — downloads model.onnx from GCS at startup
+#      (gs://{bucket}/models/shortage-predictor/{version}/, set via
+#      MODEL_GCS_PATH — see register_model.py)
+#   3. register_model.py — uploads trained model artifacts to that same
+#      models/shortage-predictor/ prefix when registering a new version
 #
 # Least-privilege rationale:
-#   storage.objectViewer  — model artifact download only (not objectAdmin)
+#   storage.objectAdmin, scoped by IAM condition to the models/ prefix only —
+#     covers both the upload (register_model.py) and download (serving
+#     container) paths without granting any access to the Bronze/Silver raw
+#     data elsewhere in the same bucket.
 #   bigtable.user         — feature read + prediction write (row-level, not DDL)
 #   pubsub.publisher      — publish to prediction-results only
 #   aiplatform.user       — invoke endpoint.predict()
@@ -95,6 +102,12 @@ resource "google_storage_bucket_iam_member" "vertex_gcs_lake" {
   bucket = google_storage_bucket.data_lake.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.vertex_sa.email}"
+
+  condition {
+    title       = "models-prefix-only"
+    description = "Limits object access to models/ artifacts (upload on register, download on serve) — no access to Bronze/Silver raw data."
+    expression  = "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.data_lake.name}/objects/models/\")"
+  }
 }
 
 resource "google_project_iam_member" "vertex_bigtable" {
