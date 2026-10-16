@@ -21,6 +21,7 @@ GCP_PROJECT_ID: str = os.environ.get("GCP_PROJECT_ID", "")
 # Phase 2+: gs://... paths written to GCS.
 # Phase 1 fallback: local data/ paths (for unit tests / no-GCP dev).
 BRONZE_BASE_PATH: str = os.environ.get("BRONZE_BASE_PATH", "data/bronze")
+SILVER_BASE_PATH: str = os.environ.get("SILVER_BASE_PATH", "data/silver")
 CHECKPOINT_BASE_PATH: str = os.environ.get(
     "CHECKPOINT_BASE_PATH", "data/checkpoints/scip-spark-bronze"
 )
