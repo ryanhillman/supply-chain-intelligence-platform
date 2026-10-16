@@ -361,27 +361,21 @@ class PredictionWriter:
                 )
                 time.sleep(wait)
 
-        # failed_statuses is a list of statuses for rows that failed.
-        # Each entry has .index (position in `rows`) and .code (gRPC status code).
-        failed_indices: set[int] = {
-            s.index for s in failed_statuses if s.code != 0
-        }
-
+        # mutate_rows() returns a list of statuses positionally aligned with
+        # `rows` — one entry per input row, in order. There is no .index field
+        # (see spark/utils/bigtable_writer.py._flush_batch for the same API
+        # handled correctly via enumerate()).
         n_written = 0
         n_failed  = 0
         successful_ack_ids: list[str] = []
 
-        for i, p in enumerate(parsed):
-            if i in failed_indices:
+        for i, (p, status) in enumerate(zip(parsed, failed_statuses)):
+            if status.code != 0:
                 n_failed += 1
                 logger.warning(
                     "Bigtable write failed for %s (index %d, code %s) — "
                     "message will be redelivered",
-                    p.row_key, i,
-                    next(
-                        (s.code for s in failed_statuses if s.index == i),
-                        "unknown",
-                    ),
+                    p.row_key, i, status.code,
                 )
             else:
                 n_written += 1
