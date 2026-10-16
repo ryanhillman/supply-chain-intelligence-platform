@@ -12,7 +12,7 @@
 
 terraform {
   backend "gcs" {
-    bucket = "supply-chain-platform-499920-scip-tf-state"
+    bucket = "YOUR_PROJECT_ID-scip-tf-state"
     prefix = "supply-chain-platform/terraform/state"
   }
 }
