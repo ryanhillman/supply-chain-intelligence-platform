@@ -202,7 +202,8 @@ stale or distribution-shifted. Without monitoring:
    PSI thresholds:
    - PSI < 0.1: stable, no action
    - 0.1 ≤ PSI < 0.2: monitor, flag in logs
-   - PSI ≥ 0.2: retraining trigger — reject new prediction batch until retrained
+   - PSI ≥ 0.2: retraining trigger — flagged in the drift report (see
+     Implementation note below: this is advisory, not an automated block)
 
 2. **Prediction score collapse:** If the standard deviation of `shortage_prob_7d`
    across the 120 entities falls below 0.01, all entities have converged to the
@@ -217,10 +218,22 @@ stale or distribution-shifted. Without monitoring:
 
 | Trigger | Threshold | Action |
 |---|---|---|
-| Feature PSI | ≥ 0.2 on any primary feature | Schedule retraining; block prediction promotion |
-| Prediction variance | std(shortage_prob_7d) < 0.01 | Alert + schedule retraining |
+| Feature PSI | ≥ 0.2 on any primary feature | Flagged in drift report; retraining recommended |
+| Prediction variance | std(shortage_prob_7d) < 0.01 | Flagged in drift report; retraining recommended |
+| Baseline divergence | agreement with reorder_urgency > 95% | Flagged in drift report; retraining recommended |
 | Real Bronze data | ≥ 30 new real days accumulated | Retrain with `--simulate-days 0` |
 | Minimum interval | 7 days since last retrain | Throttle — do not retrain on noisy daily PSI spikes |
+
+**Implementation note — this is advisory, not an automated gate:** all three
+triggers above are implemented in `drift_monitor.py` and produce a
+`requires_retraining` flag plus human-readable reasons in the printed report
+and `drift_report.json`. Nothing in `score.py`, `batch_scorer.py`, or
+`promote_model.py` reads that flag back — none of them actually block or
+reject anything today. "Action" in the table means the report surfaces the
+recommendation for a human to act on, not that the pipeline enforces it.
+Wiring an automated gate (e.g. `promote_model.py` refusing to promote when
+the latest `drift_report.json` has `requires_retraining: true`) remains
+future work.
 
 **Production training requirement:**
 
@@ -230,8 +243,10 @@ real calendar days of Bronze events (`--simulate-days 0`), which eliminates the
 13× velocity inflation and produces a realistic `days_of_supply` distribution.
 
 Until real multi-day Bronze data is available, the monitoring layer's primary
-function is detecting the known Phase 4 distribution shift and blocking prediction
-promotion rather than allowing wrong predictions to propagate to consumers.
+function is detecting and reporting the known Phase 4 distribution shift so a
+human can withhold promotion, rather than allowing wrong predictions to
+propagate to consumers unnoticed. See the implementation note above — this
+detection is not yet wired into an automated block.
 
 ---
 
@@ -258,9 +273,17 @@ PSI = Σ (p_actual - p_expected) × ln(p_actual / p_expected)
 over 10 equal-width bins derived from the training distribution. Bins with zero
 observed count use a floor of 0.0001 to avoid log(0).
 
-**Monitoring output:** Cloud Monitoring custom metric
-`custom.googleapis.com/scip/feature_psi` with label `feature_name`. Alerting
-policy threshold: PSI ≥ 0.2 on any feature.
+**Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud
+Monitoring metrics (`custom.googleapis.com/scip/drift/feature_psi` with label
+`feature_name`, plus `prob_std`, `score_std`, `baseline_agreement_rate`, and
+`retraining_required`) via `--emit-cloud-monitoring`. `infrastructure/gcp/
+vertex_ai.tf` grants `scip-vertex-sa` the `monitoring.metricWriter` IAM role
+needed to write them.
+
+**Not yet implemented:** no `google_monitoring_alert_policy` Terraform
+resource exists. The metrics above can be written and graphed, but nothing
+pages or alerts on PSI ≥ 0.2 (or any other threshold) today — that would
+require adding an alert policy resource querying this custom metric.
 
 ---
 

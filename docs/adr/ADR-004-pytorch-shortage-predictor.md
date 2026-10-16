@@ -86,8 +86,20 @@ Bronze `inventory.events` stream. For each sample at date T:
 This eliminates all feature-to-label leakage. The model must predict the future
 from the present, which is the actual operational prediction task.
 
-**Estimated dataset size:** ~3,000–7,000 labeled examples (120 pairs × 30–60
-available sample dates after applying 30-day lookback and 7-day lookahead buffers).
+**Estimated dataset size (at ADR authoring time):** ~3,000–7,000 labeled
+examples (120 pairs × 30–60 available sample dates after applying 30-day
+lookback and 7-day lookahead buffers), based on real accumulating Bronze
+data.
+
+**Update:** the implemented training pipeline instead uses a synthetic data
+generator (`ml_training/datasets/synthetic_generator.py`) that simulates 365
+days across all 120 (warehouse, SKU) pairs, producing ~43,800 labeled
+examples — see the README's Training Data section. The leakage-control
+principle above (features from events at or before T, label from events in
+(T, T+7d]) applies identically regardless of data source; only the source
+and resulting scale changed. The "Why not TabNet" rationale below was
+written against the original ~3,000–7,000 estimate and was not
+re-evaluated at the larger scale — see that section's note.
 
 ---
 
@@ -145,6 +157,14 @@ numeric (21)  → StandardScaler        ┘
 
 **Why not TabNet:** TabNet's sparse attention requires ≥10,000 training examples
 to generalize; on 3,000–7,000 rows a regularized MLP matches TabNet in practice.
+**Note:** this was written against the ~3,000–7,000-row estimate above. The
+implemented pipeline's synthetic generator produces ~43,800 rows, which
+exceeds TabNet's stated threshold — this specific "insufficient data"
+argument no longer holds as stated, and the choice was not re-benchmarked
+against TabNet at the larger scale. The simpler MLP remains a reasonable
+default given the small, fixed, well-understood feature set (21 numeric + 2
+embeddings), but that's a different justification than the one originally
+given here.
 
 **Why not LSTM/Transformer:** Silver features are point-in-time snapshots, not
 sequences. Temporal structure is already encoded in the 7d/30d velocity windows.
