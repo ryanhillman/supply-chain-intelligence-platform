@@ -48,6 +48,7 @@ from config.bronze_config import (
     BRONZE_BASE_PATH,
     CHECKPOINT_BASE_PATH,
     GCP_PROJECT_ID,
+    SILVER_BASE_PATH,
     SILVER_CHECKPOINT_BASE_PATH,
     TRIGGER_INTERVAL,
 )
@@ -72,8 +73,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("silver_feature_engineering")
 
-# Silver GCS path (sibling of bronze/ under the same bucket)
-SILVER_BASE_PATH = BRONZE_BASE_PATH.replace("/bronze", "/silver")
 SILVER_CHECKPOINT = SILVER_CHECKPOINT_BASE_PATH
 
 
@@ -286,9 +285,13 @@ def _compute_supplier_features(spark: SparkSession, hot_pairs: DataFrame) -> Dat
         .agg(F.sum("quantity").cast("double").alias("supplier__in_transit_qty"))
     )
 
+    # Anchored on hot_pairs rather than active_po: a pair with no currently
+    # open PO must still keep its in_transit_qty and supplier_agg values —
+    # those facts are independent of whether a PO happens to be open right now.
     return (
-        active_po
-        .join(in_transit, ["warehouse_id", "sku_id"], "left")
+        hot_pairs
+        .join(active_po,    ["warehouse_id", "sku_id"], "left")
+        .join(in_transit,   ["warehouse_id", "sku_id"], "left")
         .join(supplier_agg, "warehouse_id", "left")
     )
 
