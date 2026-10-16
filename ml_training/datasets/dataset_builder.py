@@ -159,13 +159,36 @@ class DatasetBuilder:
         train_cutoff = sorted_dates[int(n_dates * TRAIN_FRAC) - 1]
         val_cutoff   = sorted_dates[int(n_dates * (TRAIN_FRAC + VAL_FRAC)) - 1]
 
-        train = df[df["sample_date"] <= train_cutoff].copy()
-        val   = df[(df["sample_date"] > train_cutoff) & (df["sample_date"] <= val_cutoff)].copy()
+        # Purge gap: a sample's label looks horizon_days into the future, so a
+        # sample dated right at train_cutoff has its outcome determined by
+        # events that chronologically fall inside the val period's date range.
+        # Dropping the horizon_days immediately before each cutoff from the
+        # earlier split removes that boundary contamination — standard
+        # purging for time-series train/val/test splits with a lookahead
+        # label window (see e.g. López de Prado, "Advances in Financial
+        # Machine Learning", ch. 7). These purged dates belong to neither
+        # split; they're excluded entirely rather than reassigned.
+        purge = pd.Timedelta(days=self.horizon_days)
+
+        train = df[df["sample_date"] <= train_cutoff - purge].copy()
+        val   = df[
+            (df["sample_date"] > train_cutoff)
+            & (df["sample_date"] <= val_cutoff - purge)
+        ].copy()
         test  = df[df["sample_date"] > val_cutoff].copy()
 
+        if train.empty or val.empty:
+            raise ValueError(
+                f"Purge gap of {self.horizon_days}d emptied train (n={len(train)}) "
+                f"or val (n={len(val)}) — increase Bronze data volume or reduce "
+                "horizon_days relative to the date range."
+            )
+
         logger.info(
-            "Split: train=%d (dates ≤ %s), val=%d (≤ %s), test=%d",
+            "Split: train=%d (dates ≤ %s), val=%d (≤ %s), test=%d  [%dd purge gap before "
+            "each cutoff]",
             len(train), train_cutoff.date(), len(val), val_cutoff.date(), len(test),
+            self.horizon_days,
         )
 
         # ── Step 5: Fit StandardScaler on train ───────────────────────────────
