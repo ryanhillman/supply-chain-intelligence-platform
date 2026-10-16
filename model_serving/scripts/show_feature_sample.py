@@ -30,30 +30,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-# ---------------------------------------------------------------------------
-# Bigtable column mapping
-#   (family, abbreviated_qualifier) -> display_name
-# Derived from feature_client._BIGTABLE_TO_FEATURE and the Bigtable write
-# contract in spark/utils/bigtable_writer.py.
-# ---------------------------------------------------------------------------
-_FEATURE_COLS: dict[tuple[str, str], str] = {
-    ("inventory", "cur_qty"):     "current_qty",
-    ("inventory", "reorder_pt"):  "reorder_point",
-    ("inventory", "safety_stk"):  "safety_stock",
-    ("velocity",  "sales_7d"):    "sales_7d",
-    ("velocity",  "sales_30d"):   "sales_30d",
-    ("velocity",  "avg_d_7d"):    "avg_daily_sales_7d",
-    ("demand",    "sig_24h"):     "demand_signal_count_24h",
-    ("supplier",  "lt_days"):     "lead_time_days",
-    ("supplier",  "reliability"): "supplier_reliability",
-    ("supplier",  "po_qty"):      "active_po_qty",
-    ("supplier",  "transit_qty"): "in_transit_qty",
-}
+# Bigtable column mapping — imported rather than duplicated so this dashboard
+# can't silently drift out of sync with FEATURE_REGISTRY the way it already
+# had (this local copy was missing avg_daily_sales_30d, velocity_trend,
+# stddev_daily_7d, and lead_time_stddev relative to the canonical mapping).
+from model_serving.pipeline.feature_client import (  # noqa: E402
+    _BIGTABLE_TO_FEATURE as _FEATURE_COLS,
+    _FEATURE_FAMILIES,
+)
 
-_FEATURE_FAMILIES = frozenset({"inventory", "velocity", "demand", "supplier"})
-_ALL_FAMILIES     = _FEATURE_FAMILIES | {"predictions"}
+_ALL_FAMILIES = _FEATURE_FAMILIES | {"predictions"}
 
-_HIGH_RISK_THRESHOLD = 0.40
+# Matches show_predictions.py's threshold so an entity doesn't flip between
+# "high risk" and not depending on which dashboard script you run.
+_HIGH_RISK_THRESHOLD = 0.50
 
 
 # ---------------------------------------------------------------------------

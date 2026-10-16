@@ -46,6 +46,9 @@ _SKU_CATEGORIES: dict[str, str] = {
 
 _CATEGORY_ORDER = ["FMCG", "Electronics", "Industrial", "Seasonal"]
 
+# Kept in sync with show_feature_sample.py's threshold — same cutoff in
+# both dashboard scripts so an entity's "high risk" label doesn't depend on
+# which one you run.
 _HIGH_RISK_THRESHOLD = 0.50
 _VARIANCE_COLLAPSE_STD = 0.01
 
