@@ -14,7 +14,6 @@ DLQ envelope fields:
 """
 from __future__ import annotations
 
-import uuid
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 # a stale demand signal would corrupt forecasts, so no DLQ is appropriate.
 DLQ_TOPIC_MAP: dict[str, str | None] = {
     "inventory.events":       "inventory.events.dlq",
-    "purchase.orders.events": "orders.events.dlq",
+    "purchase.orders.events": "purchase.orders.events.dlq",
     "shipments.events":       "shipments.events.dlq",
     "suppliers.events":       "suppliers.events.dlq",
     "demand.signals":         None,
@@ -51,7 +50,6 @@ def _build_envelope_df(df: DataFrame, topic: str, epoch_id: int, consumer_group:
       key   (binary) — original Kafka message key, preserves partition affinity
       value (string) — JSON-serialised DLQ envelope
     """
-    dlq_id_udf = F.udf(lambda: str(uuid.uuid4()), T.StringType())
     now_utc = datetime.now(timezone.utc).isoformat()
 
     envelope_df = df.select(
@@ -61,7 +59,9 @@ def _build_envelope_df(df: DataFrame, topic: str, epoch_id: int, consumer_group:
         # Build envelope as a struct then serialise to JSON
         F.to_json(
             F.struct(
-                dlq_id_udf().alias("dlq_id"),
+                # Native uuid() (Spark 2.3+) avoids the Python-worker
+                # round-trip a UDF would incur for every row.
+                F.expr("uuid()").alias("dlq_id"),
                 F.lit(now_utc).alias("failed_at"),
                 F.lit(consumer_group).alias("consumer_group"),
                 F.col("kafka_topic").alias("original_topic"),
@@ -151,7 +151,7 @@ class KafkaDlqHandler(DlqHandler):
 
     Routing (DLQ_TOPIC_MAP):
       inventory.events       → inventory.events.dlq
-      purchase.orders.events → orders.events.dlq
+      purchase.orders.events → purchase.orders.events.dlq
       shipments.events       → shipments.events.dlq
       suppliers.events       → suppliers.events.dlq
       demand.signals         → None (dropped — time-bounded, replay harmful)
