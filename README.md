@@ -6,6 +6,8 @@
 
 ---
 
+[Status: Work in Progress]
+
 This project demonstrates an end-to-end machine learning platform to predict the risk of an inventory shortage. 
 
 The historical training data is simulated to create realistic warehouse, inventory, supplier, and demand behavior. 
