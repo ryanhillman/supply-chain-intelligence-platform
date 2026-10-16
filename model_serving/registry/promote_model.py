@@ -30,7 +30,7 @@ for the distribution-shift check.
 Required packages:
     google-cloud-aiplatform>=1.38.0
     google-cloud-storage>=2.16.0
-    google-protobuf>=4.21.0
+    protobuf>=4.21.0
 """
 from __future__ import annotations
 

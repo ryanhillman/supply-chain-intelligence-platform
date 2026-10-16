@@ -360,6 +360,11 @@ class PredictionWriter:
                     attempt + 1, _BT_MAX_RETRIES, exc, wait,
                 )
                 time.sleep(wait)
+        else:
+            # Reached only if _BT_MAX_RETRIES == 0 (range(0) never executes
+            # the loop body) — same safety net _write_single_to_bigtable()
+            # has for the same edge case.
+            return 0, len(parsed), []
 
         # mutate_rows() returns a list of statuses positionally aligned with
         # `rows` — one entry per input row, in order. There is no .index field

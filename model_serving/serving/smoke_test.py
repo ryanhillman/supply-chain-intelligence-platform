@@ -330,7 +330,7 @@ class SmokeTest:
 
         all_pass = True
         for i, (inst, pred) in enumerate(zip(instances, predictions)):
-            prob  = pred.get("shortage_prob_7d",    pred.get("shortage_prob_7d", float("nan")))
+            prob  = pred.get("shortage_prob_7d",    float("nan"))
             score = pred.get("stockout_risk_score", float("nan"))
 
             ok = (
