@@ -64,29 +64,9 @@ from ml_training.datasets.feature_engineer import (
     engineer_features,
     fill_defaults,
 )
+from model_serving.pipeline.feature_client import _BIGTABLE_TO_FEATURE
 
 logger = logging.getLogger(__name__)
-
-# Maps (bigtable_family, bigtable_qualifier) -> flat feature name.
-# Derived from spark/config/feature_config.py FEATURE_REGISTRY.
-# Qualifiers are abbreviated; see bigtable_writer.py for the encoding contract.
-_BIGTABLE_TO_FEATURE: dict[tuple[str, str], str] = {
-    ("inventory", "cur_qty"):      "current_qty",
-    ("inventory", "reorder_pt"):   "reorder_point",
-    ("inventory", "safety_stk"):   "safety_stock",
-    ("velocity",  "sales_7d"):     "sales_7d",
-    ("velocity",  "sales_30d"):    "sales_30d",
-    ("velocity",  "avg_d_7d"):     "avg_daily_sales_7d",
-    ("velocity",  "avg_d_30d"):    "avg_daily_sales_30d",
-    ("velocity",  "v_trend"):      "velocity_trend",
-    ("velocity",  "stddev_7d"):    "stddev_daily_7d",
-    ("demand",    "sig_24h"):      "demand_signal_count_24h",
-    ("supplier",  "lt_days"):      "lead_time_days",
-    ("supplier",  "lt_std"):       "lead_time_stddev",
-    ("supplier",  "reliability"):  "supplier_reliability",
-    ("supplier",  "po_qty"):       "active_po_qty",
-    ("supplier",  "transit_qty"):  "in_transit_qty",
-}
 
 # Column families written by bigtable_writer.py that contain string values
 # (stored as UTF-8, not big-endian double). We skip these for feature extraction.
