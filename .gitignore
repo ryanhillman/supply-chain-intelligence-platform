@@ -94,20 +94,20 @@ ENV/
 # ── Phase 4 ML artifacts ─────────────────────────────────────────────────────
 # Generated datasets, trained model binaries, and ONNX exports.
 # .gitkeep files inside artifacts/ ARE tracked (to preserve the directory).
-phase4/artifacts/*.parquet
-phase4/artifacts/*.pt
-phase4/artifacts/*.pkl
-phase4/artifacts/*.onnx
-phase4/artifacts/*.onnx.data
-phase4/artifacts/*.json
-phase4/artifacts/dataset/
+ml_training/artifacts/*.parquet
+ml_training/artifacts/*.pt
+ml_training/artifacts/*.pkl
+ml_training/artifacts/*.onnx
+ml_training/artifacts/*.onnx.data
+ml_training/artifacts/*.json
+ml_training/artifacts/dataset/
 
 # ── Phase 5 runtime artifacts ─────────────────────────────────────────────────
 # registration_info.json, deployment_info.json, and drift_report.json are
 # generated at runtime (register.py, deploy.py, monitor.py). They contain
 # GCS paths and Vertex AI resource names that change per environment and
 # must not be committed. Excluded here to prevent accidental git add.
-phase5/artifacts/
+model_serving/artifacts/
 
 
 # ── Spark (local) ─────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 # Artifact Registry, Vertex AI Endpoint, serving service account + IAM.
 #
 # Resources created here do NOT deploy any model or container. They provision
-# the GCP scaffolding that phase5/scripts/register.py and deploy.py will target.
+# the GCP scaffolding that model_serving/scripts/register.py and deploy.py will target.
 ###############################################################################
 
 ###############################################################################
@@ -49,7 +49,7 @@ resource "google_artifact_registry_repository" "serving" {
 ###############################################################################
 # Vertex AI Endpoint
 # A dedicated endpoint for the shortage predictor model family.
-# Model deployment and traffic splits are managed via phase5/scripts/deploy.py —
+# Model deployment and traffic splits are managed via model_serving/scripts/deploy.py —
 # not by Terraform — to avoid coupling model lifecycle to infrastructure apply.
 ###############################################################################
 

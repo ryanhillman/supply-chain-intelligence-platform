@@ -222,4 +222,4 @@ The monitor produces a structured JSON report (`drift_report.json`) suitable for
 
 ### ADR-005 — Vertex AI Serving Architecture
 
-[Full decision record →](phase5/ADR-005-vertex-ai-serving.md)
+[Full decision record →](docs/adr/ADR-005-vertex-ai-serving.md)
