@@ -178,14 +178,26 @@ def _compute_velocity(inventory_30d: DataFrame) -> DataFrame:
         .agg(F.sum(-F.col("quantity_delta")).alias("velocity__sales_30d"))
     )
 
-    # stddev computed over 7d window — matches the column name
-    velocity_7d = (
+    # stddev_daily_7d is the standard deviation ACROSS DAYS, not across
+    # individual SALE transactions — so daily totals are aggregated first.
+    # This matches ml_training/datasets/bronze_temporal_sampler.py and
+    # synthetic_generator.py, both of which compute it the same way; using
+    # stddev_pop directly over per-transaction quantities here would be a
+    # different statistic from what the training pipeline produces for the
+    # same feature name.
+    daily_sales_7d = (
         sales_events
         .filter(F.col("timestamp").cast("timestamp") >= cutoff_7d)
+        .groupBy("warehouse_id", "sku_id", F.to_date(F.col("timestamp")).alias("sale_date"))
+        .agg(F.sum(-F.col("quantity_delta")).alias("daily_units_sold"))
+    )
+
+    velocity_7d = (
+        daily_sales_7d
         .groupBy("warehouse_id", "sku_id")
         .agg(
-            F.sum(-F.col("quantity_delta")).alias("velocity__sales_7d"),
-            F.stddev_pop(-F.col("quantity_delta")).alias("velocity__stddev_daily_7d"),
+            F.sum("daily_units_sold").alias("velocity__sales_7d"),
+            F.stddev_pop("daily_units_sold").alias("velocity__stddev_daily_7d"),
         )
     )
 
@@ -345,6 +357,15 @@ def _add_reserved_forecast_columns(df: DataFrame) -> DataFrame:
 def _add_lineage(df: DataFrame, epoch_id: int, event_count: int) -> DataFrame:
     """
     Append lineage columns: pipeline provenance + audit trail.
+
+    event_count is a run-level diagnostic, not a per-entity count — every
+    row in `df` gets the same value. Its scope differs by caller: the
+    streaming job (this module) passes the current micro-batch's event
+    count, while silver_batch.py passes the count of ALL historical Bronze
+    inventory events read in that one-shot backfill run. Both answer
+    "how many source events did the run that last wrote this row process,"
+    but the two numbers are not comparable in magnitude — do not use this
+    column to infer per-entity event density.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
 
