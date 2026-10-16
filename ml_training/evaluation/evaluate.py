@@ -50,7 +50,7 @@ def run_evaluation(
     Returns
     -------
     dict with keys: model, baseline, improvements, outperforms_baseline,
-                    per_warehouse, ml_training_passed.
+                    per_warehouse.
     """
     artifacts_dir = Path(artifacts_dir)
     dataset_dir   = Path(dataset_dir)
@@ -99,7 +99,6 @@ def run_evaluation(
         "improvements":         comparison["improvements"],
         "outperforms_baseline": comparison["outperforms_baseline"],
         "per_warehouse":        wh_breakdown.to_dict(orient="records"),
-        "ml_training_passed":        comparison["outperforms_baseline"],
     }
 
     out_path = artifacts_dir / f"evaluation_{split}.json"
@@ -127,7 +126,7 @@ def _print_report(report: dict) -> None:
         sign    = "+" if delta > 0 else ""
         print(f"  {metric:<12} {base_v:>10.4f} {model_v:>10.4f} {sign}{delta:>9.4f}")
     print()
-    status = "PASSED" if report["ml_training_passed"] else "FAILED"
+    status = "PASSED" if report["outperforms_baseline"] else "FAILED"
     print(f"  Phase 4 success criterion: {status}")
     print(f"  (Model outperforms baseline on all three metrics)")
     print(sep)

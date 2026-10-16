@@ -248,8 +248,8 @@ def main() -> None:
             credentials_path       = args.sa_key,
         )
         passed = smoke.run(
-            n_samples            = args.n_samples,
-            bigtable_instance_id = args.bigtable_instance or None,
+            n_samples   = args.n_samples,
+            instance_id = args.bigtable_instance or None,
         )
         sys.exit(0 if passed else 1)
 
