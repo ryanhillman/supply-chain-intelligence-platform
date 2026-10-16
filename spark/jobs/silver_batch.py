@@ -94,6 +94,10 @@ def main() -> None:
         .parquet(inventory_path)
     )
 
+    # Passed to _add_lineage() as lineage__source_event_count. This is the
+    # count for this whole one-shot backfill run (all historical events),
+    # not a per-micro-batch count — see _add_lineage()'s docstring for why
+    # that differs from the streaming job's scope for the same column.
     event_count = inventory_all.count()
     logger.info("Bronze inventory events read | count=%d", event_count)
 
