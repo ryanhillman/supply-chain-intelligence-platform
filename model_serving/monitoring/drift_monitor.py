@@ -242,11 +242,11 @@ class DriftMonitor:
             )
 
         from google.cloud import bigtable
-        bt_kwargs: dict = {"project": project_id, "admin": False}
+        bigtable_kwargs: dict = {"project": project_id, "admin": False}
         if self._creds:
-            bt_kwargs["credentials"] = self._creds
-        self._bt_client = bigtable.Client(**bt_kwargs)
-        self._table     = self._bt_client.instance(instance_id).table(table_id)
+            bigtable_kwargs["credentials"] = self._creds
+        self._bigtable_client = bigtable.Client(**bigtable_kwargs)
+        self._table     = self._bigtable_client.instance(instance_id).table(table_id)
 
         logger.info(
             "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  scaler_features=%d",
@@ -386,7 +386,7 @@ class DriftMonitor:
         return report
 
     def close(self) -> None:
-        self._bt_client.close()
+        self._bigtable_client.close()
 
     def __enter__(self) -> "DriftMonitor":
         return self
@@ -405,7 +405,7 @@ class DriftMonitor:
         rather than instantiating a separate FeatureClient, to avoid closing the
         shared client when a context manager exits.
         """
-        from google.cloud.bigtable import row_filters as bt_filters
+        from google.cloud.bigtable import row_filters as bigtable_filters
         from model_serving.pipeline.feature_client import (
             _BIGTABLE_TO_FEATURE,
             _FEATURE_FAMILIES,
@@ -414,9 +414,9 @@ class DriftMonitor:
         )
         from model_serving.pipeline.request_builder import _RAW_FEATURES
 
-        filter_ = bt_filters.RowFilterChain(filters=[
-            bt_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES))),
-            bt_filters.CellsColumnLimitFilter(1),
+        filter_ = bigtable_filters.RowFilterChain(filters=[
+            bigtable_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES))),
+            bigtable_filters.CellsColumnLimitFilter(1),
         ])
 
         feature_rows: list[FeatureRow] = []

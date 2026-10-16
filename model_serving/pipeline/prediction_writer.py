@@ -35,7 +35,7 @@ Modes
 
 Error handling
 --------------
-- Transient Bigtable errors: exponential backoff retry up to max_bt_retries=3.
+- Transient Bigtable errors: exponential backoff retry up to max_bigtable_retries=3.
 - Partial mutate_rows() failures: acknowledge only the successfully written rows.
 - Persistent failures: un-acknowledged messages are redelivered by Pub/Sub
   up to max_delivery_attempts=5 before landing on the DLQ.
@@ -43,8 +43,8 @@ Error handling
 Logging emitted
 ---------------
 - messages_pulled       : total messages received per pull call
-- bt_rows_written       : Bigtable rows written successfully per batch
-- bt_rows_failed        : rows that failed Bigtable write
+- bigtable_rows_written : Bigtable rows written successfully per batch
+- bigtable_rows_failed  : rows that failed Bigtable write
 - messages_acknowledged : Pub/Sub ACKs sent
 - messages_nacked       : messages left un-acknowledged (will be redelivered)
 
@@ -66,21 +66,21 @@ _PREDICTIONS_FAMILY    = "predictions"
 _PULL_TIMEOUT_SECONDS  = 30
 _STREAMING_FLOW_CONTROL_MAX_MESSAGES = 200
 _DEFAULT_MAX_MESSAGES  = 100
-_BT_MAX_RETRIES        = 3
-_BT_RETRY_BASE_SECONDS = 2
+_BIGTABLE_MAX_RETRIES        = 3
+_BIGTABLE_RETRY_BASE_SECONDS = 2
 
 
 @dataclass
 class WriterStats:
     """Running totals returned by PredictionWriter.run_batch()."""
 
-    messages_pulled:      int = 0
-    bt_rows_written:      int = 0
-    bt_rows_failed:       int = 0
+    messages_pulled:       int = 0
+    bigtable_rows_written: int = 0
+    bigtable_rows_failed:  int = 0
     messages_acknowledged: int = 0
-    messages_nacked:      int = 0
-    batches_processed:    int = 0
-    elapsed_seconds:      float = 0.0
+    messages_nacked:       int = 0
+    batches_processed:     int = 0
+    elapsed_seconds:       float = 0.0
 
 
 @dataclass
@@ -139,11 +139,11 @@ class PredictionWriter:
         from google.cloud import bigtable, pubsub_v1
 
         # Bigtable
-        bt_kwargs: dict = {"project": project_id, "admin": False}
+        bigtable_kwargs: dict = {"project": project_id, "admin": False}
         if self._creds:
-            bt_kwargs["credentials"] = self._creds
-        self._bt_client = bigtable.Client(**bt_kwargs)
-        self._table     = self._bt_client.instance(instance_id).table(table_id)
+            bigtable_kwargs["credentials"] = self._creds
+        self._bigtable_client = bigtable.Client(**bigtable_kwargs)
+        self._table     = self._bigtable_client.instance(instance_id).table(table_id)
 
         # Pub/Sub subscriber
         sub_kwargs: dict = {}
@@ -221,8 +221,8 @@ class PredictionWriter:
             parsed   = self._parse_messages(received)
             n_written, n_failed, ack_ids = self._write_to_bigtable(parsed)
 
-            stats.bt_rows_written  += n_written
-            stats.bt_rows_failed   += n_failed
+            stats.bigtable_rows_written  += n_written
+            stats.bigtable_rows_failed   += n_failed
             stats.batches_processed += 1
 
             # Acknowledge only the messages whose Bigtable write succeeded.
@@ -246,7 +246,7 @@ class PredictionWriter:
             stats.messages_nacked += nacked
 
             logger.info(
-                "batch %d: pulled=%d  bt_written=%d  bt_failed=%d  "
+                "batch %d: pulled=%d  bigtable_written=%d  bigtable_failed=%d  "
                 "acked=%d  nacked=%d",
                 batch_count, len(received), n_written, n_failed,
                 len(ack_ids), nacked,
@@ -315,7 +315,7 @@ class PredictionWriter:
             logger.info("Streaming pull stopped by KeyboardInterrupt")
 
     def close(self) -> None:
-        self._bt_client.close()
+        self._bigtable_client.close()
         self._subscriber.close()
 
     def __enter__(self) -> "PredictionWriter":
@@ -342,26 +342,26 @@ class PredictionWriter:
 
         rows = [self._build_mutation(p) for p in parsed]
 
-        for attempt in range(_BT_MAX_RETRIES):
+        for attempt in range(_BIGTABLE_MAX_RETRIES):
             try:
                 failed_statuses = self._table.mutate_rows(rows)
                 break
             except Exception as exc:
-                if attempt == _BT_MAX_RETRIES - 1:
+                if attempt == _BIGTABLE_MAX_RETRIES - 1:
                     logger.error(
                         "mutate_rows() failed after %d attempts: %s — "
                         "all %d messages will be nacked",
-                        _BT_MAX_RETRIES, exc, len(parsed),
+                        _BIGTABLE_MAX_RETRIES, exc, len(parsed),
                     )
                     return 0, len(parsed), []
-                wait = _BT_RETRY_BASE_SECONDS ** attempt
+                wait = _BIGTABLE_RETRY_BASE_SECONDS ** attempt
                 logger.warning(
                     "mutate_rows() attempt %d/%d failed: %s. Retrying in %ds.",
-                    attempt + 1, _BT_MAX_RETRIES, exc, wait,
+                    attempt + 1, _BIGTABLE_MAX_RETRIES, exc, wait,
                 )
                 time.sleep(wait)
         else:
-            # Reached only if _BT_MAX_RETRIES == 0 (range(0) never executes
+            # Reached only if _BIGTABLE_MAX_RETRIES == 0 (range(0) never executes
             # the loop body) — same safety net _write_single_to_bigtable()
             # has for the same edge case.
             return 0, len(parsed), []
@@ -396,16 +396,16 @@ class PredictionWriter:
     def _write_single_to_bigtable(self, parsed: _ParsedMessage) -> bool:
         """Write a single prediction row (used in streaming mode)."""
         row = self._build_mutation(parsed)
-        for attempt in range(_BT_MAX_RETRIES):
+        for attempt in range(_BIGTABLE_MAX_RETRIES):
             try:
                 failed = self._table.mutate_rows([row])
                 return not any(s.code != 0 for s in failed)
             except Exception as exc:
-                if attempt == _BT_MAX_RETRIES - 1:
+                if attempt == _BIGTABLE_MAX_RETRIES - 1:
                     logger.error("Single mutate_rows failed: %s", exc)
                     return False
-                time.sleep(_BT_RETRY_BASE_SECONDS ** attempt)
-        return False  # safety net: reached only if _BT_MAX_RETRIES == 0
+                time.sleep(_BIGTABLE_RETRY_BASE_SECONDS ** attempt)
+        return False  # safety net: reached only if _BIGTABLE_MAX_RETRIES == 0
 
     def _build_mutation(self, p: _ParsedMessage):
         """Build a Bigtable DirectRow mutation for the predictions column family."""
@@ -495,15 +495,15 @@ class PredictionWriter:
             "=== Prediction Writer Summary ===\n"
             "  batches_processed     : %d\n"
             "  messages_pulled       : %d\n"
-            "  bt_rows_written       : %d\n"
-            "  bt_rows_failed        : %d\n"
+            "  bigtable_rows_written : %d\n"
+            "  bigtable_rows_failed  : %d\n"
             "  messages_acknowledged : %d\n"
             "  messages_nacked       : %d\n"
             "  elapsed               : %.1f s",
             stats.batches_processed,
             stats.messages_pulled,
-            stats.bt_rows_written,
-            stats.bt_rows_failed,
+            stats.bigtable_rows_written,
+            stats.bigtable_rows_failed,
             stats.messages_acknowledged,
             stats.messages_nacked,
             stats.elapsed_seconds,

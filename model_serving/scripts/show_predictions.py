@@ -12,7 +12,7 @@ Usage
 -----
     python model_serving/scripts/show_predictions.py \\
         --project  your-gcp-project-id \\
-        --instance scip-feature-store \\
+        --bigtable-instance scip-feature-store \\
         --sa-key   infrastructure/gcp/keys/scip-prediction-writer-sa.json
 
     # Minimal (uses GCP_PROJECT_ID / GOOGLE_APPLICATION_CREDENTIALS env vars):
@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
+
+from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD
 
 # -- SKU category mapping (mirrors synthetic_generator._SKUS) -----------------
 # Hard-coded so show_predictions.py has zero dependency on ml_training modules.
@@ -50,7 +52,6 @@ _CATEGORY_ORDER = ["FMCG", "Electronics", "Industrial", "Seasonal"]
 # both dashboard scripts so an entity's "high risk" label doesn't depend on
 # which one you run.
 _HIGH_RISK_THRESHOLD = 0.50
-_VARIANCE_COLLAPSE_STD = 0.01
 
 
 # -- CLI -----------------------------------------------------------------------
@@ -65,12 +66,12 @@ def parse_args() -> argparse.Namespace:
         help="GCP project ID (GCP_PROJECT_ID env var)",
     )
     p.add_argument(
-        "--instance",
+        "--bigtable-instance",
         default="scip-feature-store",
         help="Bigtable instance ID (default: scip-feature-store)",
     )
     p.add_argument(
-        "--table",
+        "--bigtable-table",
         default="inventory_features",
         help="Bigtable table ID (default: inventory_features)",
     )
@@ -186,7 +187,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
     std_prob   = _stdev(probs,  mean_prob)
     mean_score = sum(scores) / n
     std_score  = _stdev(scores, mean_score)
-    collapsed  = std_prob < _VARIANCE_COLLAPSE_STD
+    collapsed  = std_prob < VARIANCE_COLLAPSE_THRESHOLD
 
     version = records[0]["model_version"]
     ts      = records[0]["prediction_timestamp"]
@@ -315,8 +316,8 @@ def main() -> None:
         sys.exit(1)
     records = read_predictions(
         project     = args.project,
-        instance_id = args.instance,
-        table_id    = args.table,
+        instance_id = args.bigtable_instance,
+        table_id    = args.bigtable_table,
         sa_key      = args.sa_key,
     )
     render_dashboard(records, top_n=args.top_n)
