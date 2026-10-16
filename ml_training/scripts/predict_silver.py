@@ -5,9 +5,12 @@ Reads the latest Silver snapshot, runs the trained ShortagePredictor,
 and writes a Parquet file with risk__shortage_prob_7d and
 risk__stockout_risk_score populated for all 120 warehouse-SKU entities.
 
-Also prints a sanity-check table comparing predictions against the
-existing rule-based risk__reorder_urgency field (not used as a feature —
-used only for post-hoc human review of prediction plausibility).
+Also prints a sanity-check summary for post-hoc human review: prediction
+mean/min/max, entity counts by risk tier, and the top-10 highest-risk
+entities. (A separate comparison against the rule-based
+risk__reorder_urgency heuristic exists in model_serving/monitoring/
+drift_monitor.py's baseline-divergence check — this script does not
+load or compare against that field.)
 
 Usage
 -----
