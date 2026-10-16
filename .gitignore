@@ -94,12 +94,15 @@ ENV/
 # ── Phase 4 ML artifacts ─────────────────────────────────────────────────────
 # Generated datasets, trained model binaries, and ONNX exports.
 # .gitkeep files inside artifacts/ ARE tracked (to preserve the directory).
-ml_training/artifacts/*.parquet
-ml_training/artifacts/*.pt
-ml_training/artifacts/*.pkl
-ml_training/artifacts/*.onnx
-ml_training/artifacts/*.onnx.data
-ml_training/artifacts/*.json
+# ** (not *) so this also matches nested subdirectories like artifacts/synthetic/ —
+# a single-star glob doesn't cross path separators and previously let
+# artifacts/synthetic/*.parquet slip through and get committed.
+ml_training/artifacts/**/*.parquet
+ml_training/artifacts/**/*.pt
+ml_training/artifacts/**/*.pkl
+ml_training/artifacts/**/*.onnx
+ml_training/artifacts/**/*.onnx.data
+ml_training/artifacts/**/*.json
 ml_training/artifacts/dataset/
 
 # ── Phase 5 runtime artifacts ─────────────────────────────────────────────────
