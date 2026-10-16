@@ -196,11 +196,11 @@ The drift monitor compares the live feature distribution (read from Bigtable) ag
 |---|---|
 | < 0.10 | Stable — no action required |
 | 0.10 – 0.20 | Warning — investigate distribution shift |
-| ≥ 0.20 | Trigger — retraining gate activated |
+| ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-Four features are monitored: `days_of_supply`, `sales_7d`, `avg_daily_sales_7d`, and `supplier_reliability`. In addition to feature PSI, the monitor checks **prediction variance collapse** — a `shortage_prob_7d` standard deviation below 0.01 across the scored population indicates the model has lost discriminative power and retraining is required regardless of feature PSI.
+Four features are monitored: `days_of_supply`, `sales_7d`, `avg_daily_sales_7d`, and `supplier_reliability`. Two additional triggers run alongside feature PSI: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of the three is sufficient to recommend retraining.
 
-The monitor produces a structured JSON report (`drift_report.json`) suitable for ingestion by Cloud Monitoring or an external observability platform.
+The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the same metrics to Cloud Monitoring. All three triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
 
 ---
 
