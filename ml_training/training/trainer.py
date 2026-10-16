@@ -262,7 +262,15 @@ class Trainer:
         if y_true.sum() > 0 and y_true.sum() < len(y_true):
             metrics.update(compute_metrics(y_true, y_prob))
         else:
-            metrics.update({"auc_roc": 0.5, "auprc": float(y_true.mean()), "brier": 1.0})
+            # AUC-ROC and AUPRC are undefined with only one class present,
+            # but Brier score (mean squared error of the probability against
+            # the single-class outcome) is well-defined regardless — compute
+            # it rather than hardcoding a placeholder.
+            metrics.update({
+                "auc_roc": 0.5,
+                "auprc":   float(y_true.mean()),
+                "brier":   float(np.mean((y_prob - y_true) ** 2)),
+            })
 
         return metrics
 
@@ -287,7 +295,7 @@ def _build_scheduler(
     if config.scheduler == "plateau":
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="max", factor=config.lr_factor,
-            patience=config.lr_patience, verbose=False,
+            patience=config.lr_patience,
         )
     return torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.T_max, eta_min=1e-6,

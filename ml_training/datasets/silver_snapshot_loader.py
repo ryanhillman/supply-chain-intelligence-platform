@@ -106,7 +106,7 @@ def load_silver_features(
     df = df.rename(columns=_SILVER_COL_MAP)
 
     # Placeholder for sample_date (required by engineer_features, unused at inference)
-    df["sample_date"] = pd.Timestamp.utcnow().date()
+    df["sample_date"] = pd.Timestamp.now("UTC").date()
 
     df = engineer_features(df)
 
