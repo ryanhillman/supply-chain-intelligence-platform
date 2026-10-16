@@ -173,7 +173,7 @@ resource "google_bigtable_table" "inventory_features" {
 ###############################################################################
 # Bigtable GC Policies
 # One policy per column family. Mirrors the feature store design in
-# docs/architecture/phase3-architecture.md.
+# docs/adr/ADR-003-bigtable-feature-store.md.
 #
 # Rationale per family:
 #   inventory  — max 1 version; realtime snapshot, older = stale
