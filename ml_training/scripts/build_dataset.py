@@ -9,7 +9,7 @@ Usage
     python ml_training/scripts/build_dataset.py \\
         --bucket my-project-scip-lake \\
         --sa-key infrastructure/gcp/keys/scip-spark-sa.json \\
-        --output ml_training/artifacts/dataset
+        --output-dir ml_training/artifacts/dataset
 
 Environment variables (alternative to flags):
     GCS_BUCKET_NAME            overrides --bucket
@@ -97,7 +97,7 @@ def parse_args() -> argparse.Namespace:
 
     # ── Shared options ────────────────────────────────────────────────────────
     p.add_argument(
-        "--output",
+        "--output-dir",
         default="ml_training/artifacts/dataset",
         help="Local output directory for Parquet splits and metadata",
     )
@@ -116,7 +116,7 @@ def main() -> None:
     builder = DatasetBuilder(
         bucket           = args.bucket,
         credentials_path = args.sa_key,
-        output_dir       = args.output,
+        output_dir       = args.output_dir,
         horizon_days     = args.horizon,
         simulate_days    = args.simulate_days,
     )
@@ -129,7 +129,7 @@ def main() -> None:
         logger.info("  start_date   : %s", args.start_date)
         logger.info("  total_days   : %d", args.total_days)
         logger.info("  seed         : %d", args.seed)
-        logger.info("  output       : %s", args.output)
+        logger.info("  output       : %s", args.output_dir)
         logger.info("  horizon      : %d days", args.horizon)
 
         config    = SyntheticConfig(
@@ -152,7 +152,7 @@ def main() -> None:
         logger.info("Dataset build mode : GCS BRONZE")
         logger.info("  Bucket        : %s", args.bucket)
         logger.info("  SA key        : %s", args.sa_key or "Application Default Credentials")
-        logger.info("  Output        : %s", args.output)
+        logger.info("  Output        : %s", args.output_dir)
         logger.info("  Horizon       : %d days", args.horizon)
         logger.info("  Simulate days : %d", args.simulate_days)
         if args.simulate_days > 0:
@@ -186,7 +186,7 @@ def main() -> None:
     print()
     print("  Next step:")
     print("    python ml_training/scripts/train.py \\")
-    print(f"      --dataset {args.output} \\")
+    print(f"      --dataset {args.output_dir} \\")
     print("      --artifacts ml_training/artifacts")
     print("=" * 60)
 

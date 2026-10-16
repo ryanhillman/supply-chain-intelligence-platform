@@ -121,7 +121,7 @@ def main() -> None:
     print(f"        --total-days {args.total_days} \\")
     print(f"        --start-date {args.start_date} \\")
     print(f"        --seed {args.seed} \\")
-    print("        --output ml_training/artifacts/dataset")
+    print("        --output-dir ml_training/artifacts/dataset")
     print("=" * 62)
 
 

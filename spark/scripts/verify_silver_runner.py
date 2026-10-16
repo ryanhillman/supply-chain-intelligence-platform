@@ -16,7 +16,7 @@ if not SILVER_PATH:
 
 spark = (
     SparkSession.builder
-    .appName("verify-silver")
+    .appName("scip-verify-silver")
     .config("spark.hadoop.fs.gs.impl",
             "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
     .config("spark.hadoop.fs.AbstractFileSystem.gs.impl",
