@@ -113,7 +113,14 @@ class EndpointDeployer:
                         endpoint_resource_name, traffic_pct, deployed_at
         """
         model_resource_name = model_resource_name or self._load_model_resource_name()
-        reg_info = self._load_registration_info()
+        # Only required to resolve model_resource_name when it isn't passed
+        # explicitly; registration_info.json also isn't needed in that case
+        # (only used below for display labels and the GCS audit copy).
+        reg_info = (
+            self._load_registration_info()
+            if _LOCAL_REGISTRATION_INFO.exists()
+            else {}
+        )
 
         logger.info("Deploying model: %s", model_resource_name)
         logger.info("Endpoint: %s", self.endpoint_resource_name)
