@@ -372,13 +372,14 @@ def main() -> None:
     else:
         print(
             "\n  Predictions are on the Pub/Sub topic.\n"
-            "  To write them to Bigtable, run the prediction writer:\n"
-            f"\n    python model_serving/scripts/score.py --write \\\n"
+            "  To write them to Bigtable, run the prediction writer standalone\n"
+            "  (this does NOT re-run scoring):\n"
+            f"\n    python model_serving/pipeline/prediction_writer.py \\\n"
             f"        --project {args.project} \\\n"
             f"        --bigtable-instance {args.bigtable_instance} \\\n"
             f"        --subscription {args.subscription} \\\n"
-            f"        --writer-sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json\n"
-            "\n  Or run it as a Cloud Run job listening on the subscription."
+            f"        --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json\n"
+            "\n  Or run it with --streaming as a long-lived Cloud Run service / GKE workload."
         )
 
 
