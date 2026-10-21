@@ -270,8 +270,11 @@ distribution. Monitoring Silver would give a false-negative in this scenario.
 PSI = Σ (p_actual - p_expected) × ln(p_actual / p_expected)
 ```
 
-over 10 equal-width bins derived from the training distribution. Bins with zero
-observed count use a floor of 0.0001 to avoid log(0).
+over 10 equal-frequency bins (edges at the 10th, 20th, ..., 90th percentile of
+the training distribution, so each bin holds 10% of the training mass by
+construction — not equal width; bins near the mean are narrower than the
+tail bins). Bins with zero observed count use a floor of 0.0001 to avoid
+log(0).
 
 **Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud
 Monitoring metrics (`custom.googleapis.com/scip/drift/feature_psi` with label

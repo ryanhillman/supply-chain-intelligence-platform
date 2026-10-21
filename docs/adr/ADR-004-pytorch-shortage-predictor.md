@@ -262,9 +262,12 @@ to locate it.
 - ONNX export provides a direct path to Vertex AI serving in Phase 5.
 
 **Accepted trade-offs:**
-- Training dataset is small (3,000–7,000 examples). The model is validated
-  against the baseline rather than against an absolute threshold to avoid
-  overfitting the success criterion to this specific dataset size.
+- The original Bronze-only sampling design targeted a small training set
+  (3,000–7,000 examples); the implemented pipeline's synthetic generator
+  produces ~43,800 (see the Update note under Decision 3). Either way, the
+  model is validated against the baseline rather than against an absolute
+  threshold, so the success criterion doesn't need to be re-tuned if the
+  dataset size changes again.
 - The Bronze temporal sampler recomputes rolling features in Python (not Spark).
   For the current Bronze dataset size (~53,000 events), Python + pandas is
   adequate. If Bronze grows to millions of events, the sampler should be
