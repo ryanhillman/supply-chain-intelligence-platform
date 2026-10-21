@@ -157,8 +157,17 @@ def read_predictions(project: str, instance_id: str, table_id: str, sa_key: str)
 # -- Formatting helpers --------------------------------------------------------
 
 def _bar(value: float, scale: float = 0.40, width: int = 4) -> str:
-    """ASCII bar proportional to value. scale=0.40 -> value=1.0 gives 40 blocks."""
-    n = max(0, min(width, int(round(value * scale * width / 1.0))))
+    """
+    ASCII bar proportional to value, where `scale` is the risk level at
+    which the bar becomes fully filled (values at or above `scale` render
+    as `width` full blocks). With the defaults, scale=0.40 and width=4,
+    each block represents 0.10 of risk — matching the dashboard's printed
+    "bar scale: 1 block ~ 0.10 risk" caption.
+    """
+    if scale <= 0:
+        n = width if value > 0 else 0
+    else:
+        n = max(0, min(width, round(value / scale * width)))
     return "#" * n + " " * (width - n)
 
 
@@ -288,7 +297,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
                 cells.append(f"{cell_mean:>7.2f}")
             else:
                 cells.append("   --  ")
-        bar = _bar(wh_bar_val, scale=0.25, width=4)
+        bar = _bar(wh_bar_val, scale=0.40, width=4)
         print(f"    {wh:<10}  {'  '.join(cells)}  {bar}")
 
     print()
