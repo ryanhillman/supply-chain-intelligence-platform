@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Verify the Silver GCS layer after Phase 3 deployment.
 
