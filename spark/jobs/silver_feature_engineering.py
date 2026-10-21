@@ -166,10 +166,41 @@ def _compute_velocity(inventory_30d: DataFrame) -> DataFrame:
 
     SALE events have negative quantity_delta (stock decreases).
     We sum -quantity_delta to get units sold (positive number).
+
+    avg_daily_sales_{7,30}d divide by the ACTUAL number of days a
+    (warehouse, sku) pair has been observed selling, not hardcoded 7.0 /
+    30.0. During a cold start (less than 7 days since the first sale),
+    inventory_30d and the 7-day-filtered subset cover the exact same
+    events, so sales_7d == sales_30d; dividing by mismatched fixed
+    constants (7 vs 30) then manufactures a velocity_trend of exactly
+    30/7 ≈ 4.29 regardless of the real trend (confirmed ~11 standard
+    deviations outside the training distribution). Dividing both by the
+    true elapsed days makes avg_daily_sales_7d == avg_daily_sales_30d in
+    that case, so velocity_trend correctly lands at 1.0 (flat — there
+    simply isn't enough history to say otherwise) instead of a numeric
+    artifact.
     """
     cutoff_7d = F.date_sub(F.current_date(), 7).cast("timestamp")
 
     sales_events = inventory_30d.filter(F.col("event_type") == "SALE")
+
+    # Actual days observed per (warehouse, sku), capped by the read window.
+    # inventory_30d already only contains the last 30 days (see
+    # _read_bronze), so first_seen can never be older than that.
+    days_observed = (
+        sales_events
+        .groupBy("warehouse_id", "sku_id")
+        .agg(F.min("timestamp").alias("first_seen"))
+        .withColumn(
+            "days_observed_30d",
+            F.greatest(F.lit(1), F.least(
+                F.lit(30),
+                F.datediff(F.current_date(), F.to_date(F.col("first_seen"))) + F.lit(1),
+            )),
+        )
+        .withColumn("days_observed_7d", F.least(F.lit(7), F.col("days_observed_30d")))
+        .select("warehouse_id", "sku_id", "days_observed_30d", "days_observed_7d")
+    )
 
     velocity_30d = (
         sales_events
@@ -202,14 +233,15 @@ def _compute_velocity(inventory_30d: DataFrame) -> DataFrame:
 
     return (
         velocity_30d
-        .join(velocity_7d, ["warehouse_id", "sku_id"], "left")
+        .join(velocity_7d,    ["warehouse_id", "sku_id"], "left")
+        .join(days_observed,  ["warehouse_id", "sku_id"], "left")
         .withColumn(
             "velocity__avg_daily_sales_30d",
-            F.col("velocity__sales_30d") / F.lit(30.0),
+            F.col("velocity__sales_30d") / F.col("days_observed_30d").cast("double"),
         )
         .withColumn(
             "velocity__avg_daily_sales_7d",
-            F.col("velocity__sales_7d") / F.lit(7.0),
+            F.col("velocity__sales_7d") / F.col("days_observed_7d").cast("double"),
         )
         .withColumn(
             "velocity__velocity_trend",
@@ -218,6 +250,7 @@ def _compute_velocity(inventory_30d: DataFrame) -> DataFrame:
                 F.col("velocity__avg_daily_sales_7d") / F.col("velocity__avg_daily_sales_30d"),
             ).otherwise(F.lit(None).cast("double")),
         )
+        .drop("days_observed_30d", "days_observed_7d")
     )
 
 
