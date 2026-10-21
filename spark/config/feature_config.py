@@ -2,7 +2,7 @@
 Feature engineering configuration for the Silver layer and Bigtable feature store.
 
 Defines:
-  - Bigtable column family → qualifier mappings (30 features across 6 families)
+  - Bigtable column family → qualifier mappings (29 features across 6 families)
   - Write tuning parameters
   - Feature derivation constants
 """
@@ -35,7 +35,7 @@ STOCKOUT_CRITICAL_DAYS: int = 1
 PIPELINE_VERSION: str = "1.0.0"
 
 # ── Bigtable column family → qualifier registry ───────────────────────────────
-# Single source of truth for all 30 features.
+# Single source of truth for all 29 features.
 # Structure: {family: {python_attr: bigtable_qualifier}}
 #
 # python_attr  — name used in PySpark DataFrame / Silver Parquet

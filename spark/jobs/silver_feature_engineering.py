@@ -2,7 +2,7 @@
 Silver Feature Engineering — Spark Structured Streaming job.
 
 Reads from Bronze GCS (inventory events as trigger stream) and computes
-a complete 30-feature vector per (warehouse_id, sku_id) snapshot.
+a complete 29-feature vector per (warehouse_id, sku_id) snapshot.
 
 Architecture:
   Bronze GCS (inventory.events) → readStream trigger
