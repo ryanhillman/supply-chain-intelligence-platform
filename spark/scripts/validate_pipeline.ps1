@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Pipeline validation — batch mode.
 
@@ -181,6 +181,7 @@ if ($SkipBatchRun) {
         -e BIGTABLE_INSTANCE_ID=$Instance `
         -e BIGTABLE_TABLE_ID=$Table `
         -e BRONZE_BASE_PATH="gs://$BucketName/bronze" `
+        -e SILVER_BASE_PATH="$SilverPath" `
         -e GOOGLE_APPLICATION_CREDENTIALS=/opt/spark-app/keys/scip-spark-sa.json `
         -v "${SparkDir}:/opt/spark-app" `
         -v "${KeyPath}:/opt/spark-app/keys/scip-spark-sa.json:ro" `
