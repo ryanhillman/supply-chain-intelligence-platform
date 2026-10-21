@@ -262,13 +262,23 @@ def main() -> None:
     )
 
     # ── Feature client ────────────────────────────────────────────────────────
-    feature_client = FeatureClient(
+    with FeatureClient(
         project_id       = args.project,
         instance_id      = args.bigtable_instance,
         table_id         = args.bigtable_table,
         credentials_path = args.sa_key,
-    )
+    ) as feature_client:
+        _run_scoring(args, feature_client, model_version)
 
+
+def _run_scoring(
+    args: argparse.Namespace,
+    feature_client: FeatureClient,
+    model_version: str,
+) -> None:
+    """The scoring body, run inside main()'s `with FeatureClient(...)` block
+    so the Bigtable client is always closed, including on an exception or
+    sys.exit() from any of the branches below."""
     # ── Request builder ───────────────────────────────────────────────────────
     request_builder = RequestBuilder(
         artifacts_dir = args.artifacts,
@@ -284,7 +294,6 @@ def main() -> None:
         requests = request_builder.build(feature_rows)
         logger.info("[dry-run] rows_scored=%d — NOT calling endpoint or Pub/Sub", len(requests))
 
-        feature_client.close()
         sys.exit(0)
 
     # ── Full scoring run ──────────────────────────────────────────────────────
@@ -302,8 +311,6 @@ def main() -> None:
         batch_size    = args.batch_size,
         model_version = model_version,
     )
-
-    feature_client.close()
 
     print("\n" + "=" * 68)
     print("  Batch Scoring Complete")
