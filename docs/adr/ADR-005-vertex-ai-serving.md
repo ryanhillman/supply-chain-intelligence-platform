@@ -270,11 +270,17 @@ distribution. Monitoring Silver would give a false-negative in this scenario.
 PSI = Σ (p_actual - p_expected) × ln(p_actual / p_expected)
 ```
 
-over 10 equal-frequency bins (edges at the 10th, 20th, ..., 90th percentile of
-the training distribution, so each bin holds 10% of the training mass by
-construction — not equal width; bins near the mean are narrower than the
-tail bins). Bins with zero observed count use a floor of 0.0001 to avoid
-log(0).
+Bin edges are the training distribution's own (deduplicated) deciles, read
+directly from `train.parquet`, with `p_expected` set to each bin's *actual*
+training fraction rather than assumed to be a uniform 10%. An earlier version
+derived bin edges from normal quantiles of `preprocessor.pkl`'s
+(`mean_`, `scale_`) instead; that assumption badly misrepresents the skewed
+features monitored here (`sales_7d`, `avg_daily_sales_7d`,
+`supplier_reliability`) and was confirmed to produce PSI ≥ 6 — a spurious
+TRIGGER — even when fed the training data against itself. Falls back to the
+normal-quantile approximation (with a logged warning) only if `train.parquet`
+isn't available alongside `preprocessor.pkl`. Bins with zero observed count
+use a floor of 0.0001 to avoid log(0).
 
 **Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud
 Monitoring metrics (`custom.googleapis.com/scip/drift/feature_psi` with label

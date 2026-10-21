@@ -127,10 +127,17 @@ output "model_serving_next_steps" {
        docker push ${var.region}-docker.pkg.dev/${var.project_id}/scip-serving/shortage-predictor-serving:latest
 
     4. Register the model (Phase 5.3):
-       python model_serving/scripts/register.py --bucket $GCS_BUCKET_NAME --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
+       python model_serving/scripts/register.py --bucket $GCS_BUCKET_NAME \
+         --project ${var.project_id} \
+         --image-uri ${var.region}-docker.pkg.dev/${var.project_id}/scip-serving/shortage-predictor-serving:latest \
+         --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
     5. Deploy the endpoint (Phase 5.3):
-       python model_serving/scripts/deploy.py --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
+       python model_serving/scripts/deploy.py deploy \
+         --project ${var.project_id} \
+         --endpoint ${google_vertex_ai_endpoint.shortage_predictor.id} \
+         --traffic 100 \
+         --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
     6. Verify Bigtable predictions column family:
        cbt -project ${var.project_id} -instance ${google_bigtable_instance.feature_store.name} \

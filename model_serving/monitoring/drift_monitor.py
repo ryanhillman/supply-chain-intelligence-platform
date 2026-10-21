@@ -9,8 +9,11 @@ The Phase 4 model was trained on 60x-tiled Bronze data:
   deviation                     ≈ -9.5 σ
 
 This 13× velocity inflation collapses model predictions to prob≈0, score≈1 for all
-120 entities. PSI monitoring detects this shift and blocks prediction consumers
-until retraining on real data resolves the distribution mismatch.
+120 entities. PSI monitoring detects this shift and flags it in the printed
+report / drift_report.json. This is advisory only -- per ADR-005 Decision 7's
+implementation note, nothing in score.py, batch_scorer.py, or promote_model.py
+reads requires_retraining back, so it does not actually block or reject
+predictions today. A human has to act on the report.
 
 Flow
 ----
