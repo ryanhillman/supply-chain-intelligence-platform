@@ -58,11 +58,15 @@ expected_cols = [
     "velocity__avg_daily_sales_7d", "velocity__avg_daily_sales_30d",
     "velocity__velocity_trend", "velocity__stddev_daily_7d",
     # demand
+    "demand__demand_forecast_7d", "demand__demand_forecast_30d",
     "demand__demand_signal_count_24h", "demand__last_signal_type",
+    "demand__demand_multiplier",
     # supplier
-    "supplier__lead_time_days", "supplier__supplier_reliability",
+    "supplier__lead_time_days", "supplier__lead_time_stddev",
+    "supplier__supplier_reliability",
     "supplier__active_po_qty", "supplier__in_transit_qty",
     # risk
+    "risk__stockout_risk_score", "risk__shortage_prob_7d",
     "risk__reorder_urgency",
     # lineage
     "lineage__last_bronze_epoch", "lineage__last_silver_write",

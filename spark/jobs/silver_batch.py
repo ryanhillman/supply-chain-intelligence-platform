@@ -2,7 +2,7 @@
 Silver Batch — one-shot batch validation for Phase 3.
 
 Reads existing Bronze GCS Parquet in batch mode (spark.read, not readStream),
-computes the full 30-feature vector for every active (warehouse_id, sku_id)
+computes the full 29-feature vector for every active (warehouse_id, sku_id)
 pair, writes Silver Parquet to GCS, and dual-writes to Bigtable.
 
 This is NOT the production job. Production uses streaming mode via

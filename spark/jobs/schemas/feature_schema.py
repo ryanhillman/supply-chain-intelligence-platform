@@ -128,7 +128,7 @@ SILVER_FEATURE_SCHEMA = StructType(
 )
 """
 Full schema for Silver Parquet output.
-30 feature columns + 4 identity/window columns + 3 partition columns = 37 total.
+29 feature columns + 4 identity/window columns + 3 partition columns = 36 total.
 """
 
 # Columns used as partition keys when writing Silver Parquet.

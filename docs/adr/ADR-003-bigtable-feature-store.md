@@ -36,7 +36,7 @@ The Bronze → Silver pipeline already produces the feature computation. What re
 
 ### Why Bigtable
 
-**Latency.** Bigtable SSD instances deliver single-digit millisecond reads at the 99th percentile. The inference path requires reading ~30 features for a `(warehouse_id, sku_id)` pair — a single row read, achievable in < 10 ms including network round-trip.
+**Latency.** Bigtable SSD instances deliver single-digit millisecond reads at the 99th percentile. The inference path requires reading ~29 features for a `(warehouse_id, sku_id)` pair — a single row read, achievable in < 10 ms including network round-trip.
 
 **Throughput.** Bigtable scales to millions of reads/writes per second by adding nodes. The Silver job writes one row per `(warehouse_id, sku_id)` per micro-batch (~120 rows for 6 warehouses × 20 SKUs in the seed). At production scale (thousands of SKUs), `mutate_rows` batch API handles the write volume without throttling.
 
@@ -99,7 +99,7 @@ A single column family would require a single GC policy. `inventory` and `risk` 
 
 ### Why not one family per feature
 
-30 families for 30 features would complicate the GC policy management and exceed Bigtable's recommended maximum of ~100 column families per table. Six families match the logical feature groups already established in the data model.
+29 families for 29 features would complicate the GC policy management and exceed Bigtable's recommended maximum of ~100 column families per table. Six families match the logical feature groups already established in the data model.
 
 ---
 

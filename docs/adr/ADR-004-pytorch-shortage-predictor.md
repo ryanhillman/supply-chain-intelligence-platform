@@ -9,7 +9,7 @@
 
 ## Context
 
-Phase 3 completed the Silver feature store: 30 features across 6 column families
+Phase 3 completed the Silver feature store: 29 features across 6 column families
 per (warehouse_id, sku_id) entity, written to GCS Parquet and Bigtable.
 
 Two Silver columns currently contain null placeholders:
