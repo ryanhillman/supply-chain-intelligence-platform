@@ -130,6 +130,20 @@ def produce_inventory_event(p: Producer) -> None:
       ADJUSTMENT  10% — cycle count correction; small delta either direction
       RETURN       5% — customer return; increases stock
       TRANSFER     5% — inter-warehouse; decreases stock at source
+
+    RECEIVE only actually restocks when qty_before is at or below the
+    SKU's reorder_point -- matching how real warehouses operate (you
+    don't place a replenishment order against healthy stock). If a
+    RECEIVE is drawn while stock is still above the reorder point, it's
+    treated as an extra SALE instead. Without this gate, restocking fires
+    unconditionally at a fixed 20% rate regardless of stock level: mean
+    quantity per item climbs from ~280 to tens of thousands within days,
+    no item ever reaches zero even over a week of continuous running (a
+    bounded-below random walk with near-zero per-event drift still
+    ratchets upward off the zero floor), and training on real (non-tiled)
+    Bronze data yields no positive stockout labels at all. Gating RECEIVE
+    on the reorder point makes inventory mean-revert around a realistic
+    band and ensures genuine stockouts occur.
     """
     wh  = random.choice(WAREHOUSES)
     sku = random.choice(SKUS)
@@ -143,12 +157,18 @@ def produce_inventory_event(p: Producer) -> None:
         weights=[60, 20, 10, 5, 5],
     )[0]
 
+    # A replenishment order only exists when stock is actually low; above
+    # the reorder point there's nothing to receive, so this draw becomes
+    # another SALE instead (see docstring).
+    if event_type == "RECEIVE" and qty_before > params["reorder_point"]:
+        event_type = "SALE"
+
     if event_type == "SALE":
         # Sell between 1 and 20 units; can't sell more than in stock
         delta = -random.randint(1, max(1, min(20, qty_before)))
     elif event_type == "RECEIVE":
-        # Restocking order arrival
-        delta = random.randint(10, 100)
+        # Restocking order arrival, triggered because qty_before <= reorder_point.
+        delta = random.randint(10, 54)
     elif event_type == "ADJUSTMENT":
         # Small positive or negative correction
         delta = random.randint(-10, 10)
