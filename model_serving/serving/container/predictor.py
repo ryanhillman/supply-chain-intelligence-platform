@@ -20,6 +20,7 @@ Environment variables:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -37,6 +38,12 @@ _N_NUMERIC_FEATURES: int = 21
 # Model files are downloaded here at startup. /tmp is world-writable so
 # this works under both root and the non-root appuser.
 _MODEL_DIR: Path = Path("/tmp/model")
+
+# Uploaded by register.py alongside model.onnx (see register_model.py's
+# _ARTIFACTS_TO_UPLOAD) — gives us the embedding vocab sizes so main.py can
+# reject an out-of-range warehouse_id/sku_id with 422 instead of letting it
+# reach the ONNX Gather op and fail as a 500.
+_METADATA_FILENAME: str = "feature_metadata.json"
 
 
 class ONNXPredictor:
@@ -58,11 +65,14 @@ class ONNXPredictor:
         _MODEL_DIR.mkdir(parents=True, exist_ok=True)
         self._download_model_files()
         self._session = self._create_session()
+        self.n_warehouses, self.n_skus = self._load_vocab_sizes()
 
         logger.info(
-            "ONNXPredictor ready | version=%s | inputs=%s",
+            "ONNXPredictor ready | version=%s | inputs=%s | n_warehouses=%d | n_skus=%d",
             self.model_version,
             [inp.name for inp in self._session.get_inputs()],
+            self.n_warehouses,
+            self.n_skus,
         )
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -144,7 +154,7 @@ class ONNXPredictor:
         downloaded: list[str] = []
         for blob in blobs:
             filename = blob.name.rsplit("/", 1)[-1]
-            if filename in ("model.onnx", "model.onnx.data"):
+            if filename in ("model.onnx", "model.onnx.data", _METADATA_FILENAME):
                 dest = _MODEL_DIR / filename
                 blob.download_to_filename(str(dest))
                 downloaded.append(filename)
@@ -157,6 +167,11 @@ class ONNXPredictor:
             raise FileNotFoundError(
                 f"model.onnx not found at {self._gcs_path}. "
                 "Verify the MODEL_GCS_PATH environment variable."
+            )
+        if _METADATA_FILENAME not in downloaded:
+            raise FileNotFoundError(
+                f"{_METADATA_FILENAME} not found at {self._gcs_path}. "
+                "Re-run register.py — it uploads this alongside model.onnx."
             )
 
     def _create_session(self) -> ort.InferenceSession:
@@ -187,6 +202,20 @@ class ONNXPredictor:
             )
 
         return session
+
+    def _load_vocab_sizes(self) -> tuple[int, int]:
+        """Read n_warehouses/n_skus from the downloaded feature_metadata.json."""
+        path = _MODEL_DIR / _METADATA_FILENAME
+        with open(path) as f:
+            metadata = json.load(f)
+
+        try:
+            return int(metadata["n_warehouses"]), int(metadata["n_skus"])
+        except KeyError as exc:
+            raise ValueError(
+                f"{_METADATA_FILENAME} is missing required key {exc}. "
+                "Re-run register.py against a freshly built feature_metadata.json."
+            ) from exc
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:

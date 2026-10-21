@@ -110,6 +110,28 @@ resource "google_storage_bucket_iam_member" "vertex_gcs_lake" {
   }
 }
 
+# The condition above is evaluated per-object for get/create/delete, but
+# NOT for list: GCS checks storage.objects.list against the bucket as the
+# resource (there's no object yet to test the condition against), so a
+# resource.name condition scoped to a prefix denies list_blobs() entirely
+# — breaking both predictor.py's model download and register.py's upload.
+# Grant list unconditionally at the bucket level instead; list only
+# reveals object names/sizes/metadata, not Bronze/Silver content, so this
+# doesn't undermine the models/-prefix restriction above.
+resource "google_project_iam_custom_role" "vertex_gcs_list_only" {
+  project     = var.project_id
+  role_id     = "scipVertexGcsListOnly"
+  title       = "SCIP Vertex GCS List Only"
+  description = "Allows listing object names/metadata in the data lake bucket, without granting read access to object content. Needed because IAM conditions on resource.name are not evaluated for storage.objects.list (see vertex_gcs_lake)."
+  permissions = ["storage.objects.list"]
+}
+
+resource "google_storage_bucket_iam_member" "vertex_gcs_list" {
+  bucket = google_storage_bucket.data_lake.name
+  role   = google_project_iam_custom_role.vertex_gcs_list_only.id
+  member = "serviceAccount:${google_service_account.vertex_sa.email}"
+}
+
 resource "google_project_iam_member" "vertex_bigtable" {
   project = var.project_id
   role    = "roles/bigtable.user"

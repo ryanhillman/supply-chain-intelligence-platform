@@ -9,8 +9,11 @@ The Phase 4 model was trained on 60x-tiled Bronze data:
   deviation                     ≈ -9.5 σ
 
 This 13× velocity inflation collapses model predictions to prob≈0, score≈1 for all
-120 entities. PSI monitoring detects this shift and blocks prediction consumers
-until retraining on real data resolves the distribution mismatch.
+120 entities. PSI monitoring detects this shift and flags it in the printed
+report / drift_report.json. This is advisory only -- per ADR-005 Decision 7's
+implementation note, nothing in score.py, batch_scorer.py, or promote_model.py
+reads requires_retraining back, so it does not actually block or reject
+predictions today. A human has to act on the report.
 
 Flow
 ----
@@ -41,7 +44,11 @@ PSI formula
     PSI = Σ_i (A_i - E_i) × ln(A_i / E_i)
 
     Where:
-      N     = 10 equal-probability bins, edges at normal quantiles of (μ, σ)
+      N     = 10 equal-probability bins, edges at the training data's own
+              deciles (train.parquet) — correct for any feature shape.
+              Falls back to normal quantiles of (μ, σ) only if
+              train.parquet is unavailable; that fallback understates
+              drift for skewed features (sales, supplier_reliability).
       E_i   = 0.10 (expected training fraction per bin, equal by construction)
       A_i   = actual fraction of current Bigtable values in bin i
       μ, σ  = scaler.mean_[feature_idx], scaler.scale_[feature_idx]
@@ -206,6 +213,7 @@ class DriftMonitor:
 
         self._scaler   = self._load_scaler()
         self._metadata = self._load_metadata()
+        self._training_quantiles = self._load_training_quantiles()
 
         # Import from ml_training — sys.path must include the repo root.
         from ml_training.datasets.feature_engineer import (
@@ -634,6 +642,7 @@ class DriftMonitor:
         idx          = self._feature_to_idx[feature_name]
         train_mean   = float(self._scaler.mean_[idx])
         train_std    = float(self._scaler.scale_[idx])
+        bin_edges, expected = self._training_quantiles.get(feature_name, (None, None))
 
         if not current_values:
             logger.warning("No current values for %s — PSI set to NaN", display_name)
@@ -650,7 +659,7 @@ class DriftMonitor:
             )
 
         arr = np.array(current_values, dtype=float)
-        psi = self._compute_psi(train_mean, train_std, arr)
+        psi = self._compute_psi(train_mean, train_std, arr, bin_edges, expected)
 
         return FeatureMetrics(
             display_name  = display_name,
@@ -669,17 +678,36 @@ class DriftMonitor:
         training_mean: float,
         training_std:  float,
         current_values: np.ndarray,
+        bin_edges: np.ndarray | None = None,
+        expected: np.ndarray | None = None,
     ) -> float:
         """
-        Population Stability Index using 10 equal-frequency bins.
+        Population Stability Index using the training data's own bins.
 
-        Bins are defined at the 10th, 20th, ..., 90th percentile of the
-        training normal distribution N(training_mean, training_std).
+        bin_edges/expected come from _load_training_quantiles: bin_edges
+        are the training distribution's own (deduplicated) decile edges,
+        and expected is the ACTUAL fraction of training rows that fall in
+        each of those bins — not assumed to be a uniform 1/10, since
+        several monitored features are heavily clustered (e.g.
+        supplier_reliability is a per-supplier value shared by every SKU
+        in a warehouse, so one value alone can be ~50% of all rows) and
+        naive equal-frequency binning degenerates in that case.
+
+        If the training parquet isn't available, falls back to bins at
+        the 10th, 20th, ..., 90th percentile of a normal distribution
+        N(training_mean, training_std) with a uniform 1/10 expected
+        fraction per bin; this is only a good approximation for
+        roughly-Gaussian features. Several monitored features here
+        (sales, days_of_supply, supplier_reliability) are heavily
+        skewed, so the normal approximation packs most of the training
+        mass into one or two bins and makes PSI blow up (>> 0.20) even
+        when the current data is drawn from the exact same distribution
+        as training — see the ADR-005 drift-monitor postmortem.
 
         PSI = Σ_i (A_i - E_i) × ln(A_i / E_i)
 
         Where:
-          E_i = 1/N = 0.10  (equal by construction)
+          E_i = expected training fraction in bin i
           A_i = actual fraction of current values in bin i
 
         References
@@ -687,25 +715,26 @@ class DriftMonitor:
         Siddiqi, N. (2006). Credit Risk Scorecards.
         Industry convention: PSI < 0.10 stable, ≥ 0.20 requires retraining.
         """
-        if training_std <= 0:
-            logger.warning(
-                "Training std=%.6f <= 0 for this feature — cannot compute PSI",
-                training_std,
+        if bin_edges is None:
+            if training_std <= 0:
+                logger.warning(
+                    "Training std=%.6f <= 0 for this feature — cannot compute PSI",
+                    training_std,
+                )
+                return float("nan")
+
+            # Equal-probability bin edges based on training normal distribution.
+            # quantile_points: [0, 0.1, 0.2, ..., 1.0] → 11 values, 10 intervals.
+            quantile_points = np.linspace(0.0, 1.0, _N_BINS + 1)
+            bin_edges       = scipy_stats.norm.ppf(
+                quantile_points, loc=training_mean, scale=training_std
             )
-            return float("nan")
-
-        # Equal-probability bin edges based on training normal distribution.
-        # quantile_points: [0, 0.1, 0.2, ..., 1.0] → 11 values, 10 intervals.
-        quantile_points = np.linspace(0.0, 1.0, _N_BINS + 1)
-        bin_edges       = scipy_stats.norm.ppf(
-            quantile_points, loc=training_mean, scale=training_std
-        )
-        # Force true infinity at the tails to capture all current values.
-        bin_edges[0]  = -np.inf
-        bin_edges[-1] =  np.inf
-
-        # Expected fraction: exactly 1/_N_BINS per bin (equal-frequency design).
-        expected = np.full(_N_BINS, 1.0 / _N_BINS)
+            # Force true infinity at the tails to capture all current values.
+            bin_edges[0]  = -np.inf
+            bin_edges[-1] =  np.inf
+            # Only the normal-approximation fallback assumes a uniform
+            # 1/N_BINS split; the empirical path always supplies its own.
+            expected = np.full(_N_BINS, 1.0 / _N_BINS)
 
         # Actual fraction of current Bigtable values per bin.
         counts, _  = np.histogram(current_values, bins=bin_edges)
@@ -1049,6 +1078,67 @@ class DriftMonitor:
             )
         with open(path) as f:
             return json.load(f)
+
+    def _load_training_quantiles(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """
+        Empirical bin edges AND expected fractions for each monitored
+        feature, computed from the real training distribution
+        (train.parquet, alongside preprocessor.pkl in dataset_dir).
+
+        These are the correct PSI bins regardless of the feature's shape
+        — unlike bins derived from a normal-distribution assumption (the
+        fallback in _compute_psi), which badly misrepresents skewed
+        features such as sales_7d, avg_daily_sales_7d, and
+        supplier_reliability and causes false "retraining required"
+        triggers even on in-distribution data.
+
+        Quantile edges are deduplicated before use: several monitored
+        features are heavily clustered (e.g. supplier_reliability is a
+        per-supplier value shared by every SKU in a warehouse until the
+        next PERFORMANCE_UPDATE event, so one value alone can account for
+        ~50% of all training rows). Naively using 10 quantile edges on
+        such a feature produces repeated edges and collapses most of the
+        mass into one degenerate bin. Deduplicating the edges and then
+        computing each bin's *actual* training fraction (instead of
+        assuming a uniform 1/10 per bin) keeps PSI correct — and ~0 for
+        training-vs-itself — however the mass happens to be distributed.
+
+        Returns {} (triggering the normal-distribution fallback, with a
+        warning) if train.parquet isn't available — e.g. a deployment
+        that ships only preprocessor.pkl and feature_metadata.json.
+        """
+        train_path = self._dataset_dir / "train.parquet"
+        if not train_path.exists():
+            logger.warning(
+                "train.parquet not found at %s — PSI will fall back to a "
+                "normal-distribution approximation, which overstates drift "
+                "for skewed features. Copy train.parquet alongside "
+                "preprocessor.pkl to fix this.",
+                train_path,
+            )
+            return {}
+
+        feature_names = [fname for _, fname in _MONITORED_FEATURES]
+        train_df = pd.read_parquet(train_path, columns=feature_names)
+
+        quantile_points = np.linspace(0.0, 1.0, _N_BINS + 1)
+        quantiles: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        for feature_name in feature_names:
+            values = train_df[feature_name].dropna().to_numpy(dtype=float)
+            edges  = np.unique(np.quantile(values, quantile_points))
+            edges[0]  = -np.inf
+            edges[-1] =  np.inf
+
+            train_counts, _ = np.histogram(values, bins=edges)
+            expected = train_counts.astype(float) / len(values)
+
+            quantiles[feature_name] = (edges, expected)
+
+        logger.info(
+            "Loaded empirical training quantiles for %d monitored features from %s",
+            len(quantiles), train_path,
+        )
+        return quantiles
 
 
 # ── Module helpers ─────────────────────────────────────────────────────────────

@@ -148,6 +148,22 @@ def predict(request: PredictRequest) -> dict[str, Any]:
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not yet loaded")
 
+    out_of_range = [
+        (i, inst.warehouse_id, inst.sku_id)
+        for i, inst in enumerate(request.instances)
+        if inst.warehouse_id >= _predictor.n_warehouses
+        or inst.sku_id >= _predictor.n_skus
+    ]
+    if out_of_range:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"warehouse_id must be < {_predictor.n_warehouses} and "
+                f"sku_id must be < {_predictor.n_skus}. Out-of-range instances "
+                f"(index, warehouse_id, sku_id): {out_of_range}"
+            ),
+        )
+
     batch_size = len(request.instances)
     t0 = time.perf_counter()
 

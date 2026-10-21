@@ -6,7 +6,8 @@ Two targets are produced:
 
   stockout_label_7d (int, 0 or 1)
       Ground truth binary label: did inventory quantity_after reach 0 at any
-      point in the open window (sample_date, sample_date + 7d]?
+      point during the 7 full calendar days after sample_date — i.e. any
+      time from the start of day+1 through the end of day+7?
       Derived from actual Bronze inventory events — no information from the
       feature snapshot leaks into this label.
 
@@ -97,7 +98,13 @@ def _compute_labels(
     horizon_days: int,
 ) -> pd.DataFrame:
     """Core label computation — iterates feature rows once."""
-    horizon_td = pd.Timedelta(days=horizon_days)
+    # Window offsets relative to sample_date: [day+1, day+horizon_days], i.e.
+    # everything from the start of day+1 up to (but not including) the start
+    # of day+horizon_days+1. Using sample_date + horizon_days as the upper
+    # bound would land exactly at midnight of day+horizon_days, excluding
+    # every event later that day.
+    start_offset = pd.Timedelta(days=1)
+    end_offset   = pd.Timedelta(days=horizon_days + 1)
     rows: list[dict] = []
 
     for row in feature_rows.itertuples(index=False):
@@ -105,15 +112,14 @@ def _compute_labels(
         sku  = row.sku_id
         d    = row.sample_date  # datetime.date
 
-        # Lookahead window: strictly after sample_date end-of-day
-        t_start = pd.Timestamp(d, tz="UTC") + pd.Timedelta(days=1)
-        t_end   = pd.Timestamp(d, tz="UTC") + horizon_td
+        t_start = pd.Timestamp(d, tz="UTC") + start_offset
+        t_end   = pd.Timestamp(d, tz="UTC") + end_offset
 
         # Ground-truth binary label from future Bronze events
         stockout = 0
         grp = event_index.get((wh, sku))
         if grp is not None:
-            future = grp[(grp["ts"] > t_start) & (grp["ts"] <= t_end)]
+            future = grp[(grp["ts"] >= t_start) & (grp["ts"] < t_end)]
             if not future.empty and future["quantity_after"].min() == 0:
                 stockout = 1
 

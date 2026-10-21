@@ -51,11 +51,31 @@ Logging emitted
 Required packages:
     google-cloud-bigtable>=2.22.0
     google-cloud-pubsub>=2.20.0
+
+CLI usage
+---------
+    python model_serving/pipeline/prediction_writer.py \\
+        --project supply-chain-platform-499920 \\
+        --bigtable-instance scip-feature-store \\
+        --subscription prediction-writer \\
+        --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json
+
+    # Long-lived daemon (Cloud Run service / GKE) instead of drain-and-exit:
+    python model_serving/pipeline/prediction_writer.py --streaming ...
+
+Environment variables (alternatives to CLI flags):
+    GCP_PROJECT_ID          -- --project
+    BIGTABLE_INSTANCE_ID    -- --bigtable-instance
+    PUBSUB_SUBSCRIPTION_ID  -- --subscription
+    GOOGLE_APPLICATION_CREDENTIALS -- --sa-key
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
+import os
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -508,3 +528,119 @@ class PredictionWriter:
             stats.messages_nacked,
             stats.elapsed_seconds,
         )
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description=(
+            "Drain the prediction-results Pub/Sub subscription into Bigtable, "
+            "standalone (does not re-run scoring -- see score.py for that)."
+        )
+    )
+    p.add_argument(
+        "--project",
+        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
+        help="GCP project ID (GCP_PROJECT_ID env var)",
+    )
+    p.add_argument(
+        "--subscription",
+        default=os.environ.get("PUBSUB_SUBSCRIPTION_ID", "prediction-writer"),
+        help="Pub/Sub subscription ID (default: prediction-writer)",
+    )
+    p.add_argument(
+        "--bigtable-instance",
+        default=os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store"),
+        help="Bigtable instance ID (default: scip-feature-store)",
+    )
+    p.add_argument(
+        "--bigtable-table",
+        default="inventory_features",
+        help="Bigtable table ID (default: inventory_features)",
+    )
+    p.add_argument(
+        "--sa-key",
+        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="Service account key for the writer (scip-prediction-writer-sa.json)",
+    )
+    p.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Run indefinitely via Pub/Sub streaming pull instead of draining once and exiting.",
+    )
+    p.add_argument(
+        "--max-messages",
+        type=int,
+        default=_DEFAULT_MAX_MESSAGES,
+        help=f"Max messages per Pub/Sub pull call in batch mode (default: {_DEFAULT_MAX_MESSAGES})",
+    )
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Set log level to DEBUG",
+    )
+    return p.parse_args()
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+    )
+    args = parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    if not args.project:
+        logger.error("Missing required flag --project or env var GCP_PROJECT_ID")
+        sys.exit(1)
+
+    logger.info(
+        "Prediction writer starting:\n"
+        "  project          : %s\n"
+        "  subscription     : %s\n"
+        "  bigtable         : %s / %s\n"
+        "  mode             : %s",
+        args.project, args.subscription,
+        args.bigtable_instance, args.bigtable_table,
+        "streaming" if args.streaming else "batch (drain and exit)",
+    )
+
+    with PredictionWriter(
+        project_id       = args.project,
+        subscription_id  = args.subscription,
+        instance_id      = args.bigtable_instance,
+        table_id         = args.bigtable_table,
+        credentials_path = args.sa_key,
+    ) as writer:
+        if args.streaming:
+            writer.run_streaming()
+            return
+
+        stats = writer.run_batch(max_messages=args.max_messages)
+
+    print("\n" + "=" * 68)
+    print("  Prediction Writer Summary")
+    print("=" * 68)
+    print(f"  messages_pulled       : {stats.messages_pulled}")
+    print(f"  bigtable_rows_written : {stats.bigtable_rows_written}")
+    print(f"  bigtable_rows_failed  : {stats.bigtable_rows_failed}")
+    print(f"  messages_acknowledged : {stats.messages_acknowledged}")
+    print(f"  messages_nacked       : {stats.messages_nacked}")
+    print("=" * 68)
+
+    if stats.bigtable_rows_failed > 0:
+        logger.warning(
+            "%d Bigtable write failures — those messages remain on the "
+            "subscription and will be redelivered (up to 5 attempts before DLQ).",
+            stats.bigtable_rows_failed,
+        )
+    if stats.messages_pulled > 0 and stats.bigtable_rows_written == 0:
+        logger.error("No Bigtable rows written — check Bigtable connectivity and IAM")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

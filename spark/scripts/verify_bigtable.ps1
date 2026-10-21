@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Verify the Bigtable feature store after Phase 3 deployment.
 
@@ -51,8 +51,12 @@ function Assert-True([bool]$condition, [string]$pass, [string]$fail) {
     else            { Write-Fail $fail; $script:failures++ }
 }
 
-function Invoke-Cbt([string[]]$args) {
-    $output = & cbt -project $ProjectId -instance $InstanceId @args 2>&1
+function Invoke-Cbt {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$CbtArgs
+    )
+    $output = & cbt -project $ProjectId -instance $InstanceId @CbtArgs 2>&1
     return $output
 }
 
@@ -151,7 +155,7 @@ Write-Info "Raw cbt output:"
 $sampleRow | ForEach-Object { Write-Info "  $_" }
 
 foreach ($family in $expectedFamilies) {
-    $familyCells = $sampleRow | Where-Object { $_ -match "^  $family:" }
+    $familyCells = $sampleRow | Where-Object { $_ -match "^  ${family}:" }
     Assert-True ($null -ne $familyCells -and ($familyCells | Measure-Object).Count -gt 0) `
         "Family '$family' has cells in sample row" `
         "Family '$family' has NO cells in sample row — writer may have skipped this family"

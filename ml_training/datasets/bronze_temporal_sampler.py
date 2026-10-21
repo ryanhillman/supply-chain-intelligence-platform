@@ -277,15 +277,32 @@ class BronzeTemporalSampler:
         """
         Rolling 7d and 30d sales velocity per (warehouse, sku, date).
         Demand is measured as -quantity_delta for SALE events (stock decreases).
+
+        avg_daily_sales_{7,30}d divide by the ACTUAL number of days observed
+        before each sample_date, not hardcoded 7.0/30.0. The class-level
+        min_lookback_days=30 buffer only guarantees 30 days have passed since
+        the GLOBAL earliest event across every (warehouse, sku) pair -- it
+        does not guarantee any given pair's own first sale is that old (a
+        pair with sparse or late-starting history can still be sampled
+        during its individual cold start). Dividing by a fixed constant in
+        that case manufactures a velocity_trend artifact exactly like the
+        one fixed in spark/jobs/silver_feature_engineering.py's
+        _compute_velocity: when sales_7d == sales_30d (no sales before the
+        last 7 days), trend becomes a numeric artifact of the window-length
+        ratio rather than a real trend. This matters more here than in the
+        live Spark job, since this is the TRAINING label generator -- the
+        artifact would be baked into the model's training data itself.
         """
         sales = inv[inv["event_type"] == "SALE"].copy()
         sales["units_sold"] = (-sales["quantity_delta"]).clip(lower=0).astype(float)
         sales_sorted = sales.sort_values("ts")
         rows: list[dict] = []
+        _NS_PER_DAY = 24 * 60 * 60 * 1_000_000_000
 
         for (wh, sku), grp in sales_sorted.groupby(["warehouse_id", "sku_id"], sort=False):
             ts_ns   = grp["ts"].values.astype("int64")
             units   = grp["units_sold"].values
+            first_ts_ns = int(ts_ns[0]) if len(ts_ns) > 0 else None
             # Pre-compute daily totals for stddev (avoids repeated groupby inside loop)
             grp["date_only"] = grp["ts"].dt.floor("D")
             daily   = grp.groupby("date_only")["units_sold"].sum()
@@ -311,8 +328,15 @@ class BronzeTemporalSampler:
                 daily_window = d_vals[d_mask]
                 stddev = float(np.std(daily_window, ddof=0)) if len(daily_window) > 1 else 0.0
 
-                avg_d7  = s7  / 7.0
-                avg_d30 = s30 / 30.0
+                if first_ts_ns is not None:
+                    days_since_first = (eod_ns - first_ts_ns) // _NS_PER_DAY + 1
+                    days_observed_30 = max(1, min(30, days_since_first))
+                else:
+                    days_observed_30 = 30
+                days_observed_7 = min(7, days_observed_30)
+
+                avg_d7  = s7  / days_observed_7
+                avg_d30 = s30 / days_observed_30
                 trend   = (avg_d7 / avg_d30) if avg_d30 > 0.0 else 1.0
 
                 rows.append({
