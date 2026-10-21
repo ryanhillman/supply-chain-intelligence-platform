@@ -162,7 +162,7 @@ The simulator generates 365 days of history across 6 warehouses and 20 SKUs, pro
 
 - Temporal train / validation / test split
 - 7-day shortage prediction horizon
-- Adam optimizer
+- AdamW optimizer
 - Early stopping on validation performance
 - ONNX export for production inference
   
