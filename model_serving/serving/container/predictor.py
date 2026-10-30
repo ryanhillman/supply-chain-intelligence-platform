@@ -4,7 +4,8 @@ inference via onnxruntime.
 
 Inputs received from batch_scorer.py (all scaling and vocab mapping is
 done client-side; see ADR-005 Decision 3):
-  numeric_features : float32 (batch, 21)  — StandardScaler-transformed
+  numeric_features : float32 (batch, n)   — StandardScaler-transformed; n is
+                                            read from the ONNX graph at startup
   warehouse_ids    : int64   (batch,)     — vocab int, NOT warehouse string ID
   sku_ids          : int64   (batch,)     — vocab int, NOT SKU string ID
 
@@ -30,10 +31,6 @@ import onnxruntime as ort
 from google.cloud import storage
 
 logger = logging.getLogger(__name__)
-
-# Must match len(ml_training.datasets.feature_engineer.NUMERIC_FEATURE_COLS).
-# If the model architecture changes, rebuild the container image.
-_N_NUMERIC_FEATURES: int = 21
 
 # Model files are downloaded here at startup. /tmp is world-writable so
 # this works under both root and the non-root appuser.
@@ -65,12 +62,15 @@ class ONNXPredictor:
         _MODEL_DIR.mkdir(parents=True, exist_ok=True)
         self._download_model_files()
         self._session = self._create_session()
+        self.n_numeric_features: int = self._read_numeric_width()
         self.n_warehouses, self.n_skus = self._load_vocab_sizes()
 
         logger.info(
-            "ONNXPredictor ready | version=%s | inputs=%s | n_warehouses=%d | n_skus=%d",
+            "ONNXPredictor ready | version=%s | inputs=%s | n_numeric=%d "
+            "| n_warehouses=%d | n_skus=%d",
             self.model_version,
             [inp.name for inp in self._session.get_inputs()],
+            self.n_numeric_features,
             self.n_warehouses,
             self.n_skus,
         )
@@ -88,7 +88,7 @@ class ONNXPredictor:
 
         Parameters
         ----------
-        numeric_features : float32, shape (batch, 21)
+        numeric_features : float32, shape (batch, n_numeric_features)
             Already StandardScaler-transformed. Do NOT pass raw Silver values.
         warehouse_ids : int64, shape (batch,)
             Vocab indices from feature_metadata.json["warehouse_vocab"].
@@ -118,11 +118,27 @@ class ONNXPredictor:
 
         return shortage_prob, stockout_risk
 
-    @property
-    def n_numeric_features(self) -> int:
-        return _N_NUMERIC_FEATURES
-
     # ── Internals ─────────────────────────────────────────────────────────────
+
+    def _read_numeric_width(self) -> int:
+        """
+        Width of the numeric_features input, taken from the loaded graph.
+
+        Reading it from the model instead of hardcoding it means the container
+        cannot disagree with the model it serves if the feature list changes;
+        main.py validates each request row against this value.
+        """
+        shape = next(
+            inp.shape for inp in self._session.get_inputs()
+            if inp.name == "numeric_features"
+        )
+        width = shape[1]
+        if not isinstance(width, int) or width <= 0:
+            raise ValueError(
+                f"numeric_features input has a non-static width: {shape}. "
+                "Only the batch axis may be dynamic."
+            )
+        return width
 
     @staticmethod
     def _parse_version(gcs_path: str) -> str:
