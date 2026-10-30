@@ -34,12 +34,13 @@ class TrainingConfig:
     risk_score_weight: float = 0.3   # coefficient on the MSE risk-score term
 
     # ── LR scheduler ─────────────────────────────────────────────────────────
-    # "cosine"  — CosineAnnealingLR(T_max=T_max)
+    # "cosine"  — CosineAnnealingLR over T_max epochs; None means max_epochs,
+    #             i.e. one anneal from lr down to 1e-6 across the whole run
     # "plateau" — ReduceLROnPlateau monitoring val AUPRC
-    scheduler:   str   = "cosine"
-    T_max:       int   = 20
-    lr_factor:   float = 0.5
-    lr_patience: int   = 5
+    scheduler:   str        = "cosine"
+    T_max:       int | None = None
+    lr_factor:   float      = 0.5
+    lr_patience: int        = 5
 
     # ── Paths ─────────────────────────────────────────────────────────────────
     dataset_dir: str = "ml_training/artifacts/dataset"
