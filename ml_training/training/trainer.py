@@ -130,8 +130,10 @@ class Trainer:
         train_ds = ShortageDataset(train_df, wh_vocab, sku_vocab)
         val_ds   = ShortageDataset(val_df,   wh_vocab, sku_vocab)
 
+        # drop_last=True: BatchNorm1d raises on a training batch of size 1,
+        # which happens whenever len(train) % batch_size == 1.
         train_loader = DataLoader(
-            train_ds, batch_size=self.config.batch_size, shuffle=True,  drop_last=False
+            train_ds, batch_size=self.config.batch_size, shuffle=True,  drop_last=True
         )
         val_loader = DataLoader(
             val_ds,   batch_size=self.config.batch_size, shuffle=False, drop_last=False
@@ -297,8 +299,11 @@ def _build_scheduler(
             optimizer, mode="max", factor=config.lr_factor,
             patience=config.lr_patience,
         )
+    # One cosine period over the whole epoch budget. A shorter T_max (the old
+    # default of 20 against max_epochs=100) restarts the schedule every T_max
+    # epochs, cycling the LR back up to its initial value.
     return torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config.T_max, eta_min=1e-6,
+        optimizer, T_max=config.T_max or config.max_epochs, eta_min=1e-6,
     )
 
 
