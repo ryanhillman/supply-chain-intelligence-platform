@@ -15,10 +15,9 @@ project_id = "your-gcp-project-id"
 # gcs_bucket_name      = ""    # empty = "{project_id}-scip-lake"
 # bronze_retention_days = 90
 
-# Bigtable
-# bigtable_instance_type = "DEVELOPMENT"   # DEVELOPMENT | PRODUCTION
+# Bigtable (one PRODUCTION node; the DEVELOPMENT type is deprecated by Google)
 # bigtable_storage_type  = "SSD"           # SSD | HDD
-# bigtable_num_nodes     = 1               # PRODUCTION only
+# bigtable_num_nodes     = 1
 
 # IAM
 # service_account_id    = "scip-spark-sa"
