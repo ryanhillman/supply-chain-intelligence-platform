@@ -77,9 +77,12 @@ def build_loss(config: TrainingConfig, pos_weight: float) -> CombinedLoss:
 
     pos_weight is computed by DatasetBuilder from the training split:
         pos_weight = n_negative / n_positive
+    It is applied only for loss_type "weighted_bce" or "focal".
     """
     if config.loss_type == "focal":
         binary: nn.Module = FocalLoss(gamma=config.focal_gamma, pos_weight=pos_weight)
-    else:
+    elif config.loss_type == "weighted_bce":
         binary = WeightedBCELoss(pos_weight=pos_weight)
+    else:  # "bce" — unweighted; the dataset's pos_weight is ignored
+        binary = WeightedBCELoss(pos_weight=1.0)
     return CombinedLoss(binary, risk_score_weight=config.risk_score_weight)

@@ -142,7 +142,6 @@ The shortage predictor is implemented in PyTorch as a feed-forward neural networ
 - Warehouse embeddings
 - SKU embeddings
 - Dual prediction outputs
-- Class imbalance handling for rare shortage events
 
 After training, the model is exported to ONNX and validated with ONNX Runtime before deployment.
 
