@@ -49,7 +49,12 @@ resource "google_project_service" "iam" {
 # Single bucket, prefix-based organization:
 #   bronze/    — raw Kafka events, 90-day lifecycle
 #   silver/    — feature aggregates, permanent
-#   checkpoints/ — Spark streaming checkpoints
+#   checkpoints/ — Spark streaming checkpoints. No lifecycle rule: Spark bounds
+#                its own checkpoint growth (minBatchesToRetain, log compaction),
+#                and an age rule deleted the live offsets after a pause, so the
+#                Bronze query restarted from "latest" and silently skipped the
+#                Kafka data produced in between. Remove abandoned checkpoint
+#                directories by hand.
 #   dlq/       — dead-letter queue (Kafka DLQ is primary in Phase 3)
 ###############################################################################
 
@@ -69,16 +74,6 @@ resource "google_storage_bucket" "data_lake" {
     condition {
       age            = var.bronze_retention_days
       matches_prefix = ["bronze/"]
-    }
-    action {
-      type = "Delete"
-    }
-  }
-
-  lifecycle_rule {
-    condition {
-      age            = 7
-      matches_prefix = ["checkpoints/"]
     }
     action {
       type = "Delete"
