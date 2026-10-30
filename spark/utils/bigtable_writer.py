@@ -15,7 +15,7 @@ Design:
 
 Row key format: {warehouse_id}#{sku_id}
   Key design documented in docs/adr/ADR-003-bigtable-feature-store.md.
-  Split points W-2/W-4/W-6 distribute load across tablet servers.
+  Bigtable splits tablets automatically; the table has no pre-split points.
 """
 from __future__ import annotations
 

@@ -130,10 +130,6 @@ resource "google_bigtable_table" "inventory_features" {
   instance_name = google_bigtable_instance.feature_store.name
   name          = "inventory_features"
 
-  # Split points based on warehouse_id prefix ranges.
-  # Distributes load across tablet servers for range scans.
-  split_keys = ["W-2", "W-4", "W-6"]
-
   column_family {
     family = "inventory"
   }
