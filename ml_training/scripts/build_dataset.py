@@ -178,7 +178,7 @@ def main() -> None:
     bm = manifest.baseline_test_metrics
     if bm.get("auc_roc") is not None:
         print()
-        print("  Baseline (days_of_supply < 7) test metrics:")
+        print("  Baseline (Normal-approx formula) test metrics:")
         print(f"    AUC-ROC : {bm['auc_roc']:.4f}")
         print(f"    AUPRC   : {bm['auprc']:.4f}")
         print(f"    Brier   : {bm['brier']:.4f}")

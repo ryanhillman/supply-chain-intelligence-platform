@@ -12,13 +12,17 @@ Two targets are produced:
       feature snapshot leaks into this label.
 
   baseline_pred (float, 0.0 or 1.0)
-      The heuristic comparator: 1.0 when days_of_supply < HORIZON_DAYS, else 0.0.
-      This is the rule-based threshold the PyTorch model must outperform.
+      The 0/1 business rule: 1.0 when days_of_supply < HORIZON_DAYS, else 0.0.
+      Reported alongside the model for context. A binary predictor has
+      structurally low AUC/AUPRC, so it is not the bar the model must clear.
       days_of_supply = current_qty / max(avg_daily_sales_7d, EPS)
 
   continuous_risk_score (float, 0.0–1.0)
-      Stochastic probability label used as the regression target for the
-      risk_score output head. Computed via a Normal approximation:
+      Closed-form probability from a Normal approximation. It is the baseline
+      the PyTorch model must outperform (see evaluation/metrics.py): if the
+      network cannot beat a formula of three of its own inputs, it is not
+      adding value. It is also the regression target for the risk_score head.
+      Computed as:
 
           P(stockout ≤ horizon) ≈ Φ((horizon − μ) / σ)
 
