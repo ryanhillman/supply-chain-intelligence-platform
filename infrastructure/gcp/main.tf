@@ -47,7 +47,7 @@ resource "google_project_service" "iam" {
 ###############################################################################
 # GCS Data Lake Bucket
 # Single bucket, prefix-based organization:
-#   bronze/    — raw Kafka events, 90-day lifecycle
+#   bronze/    — raw Kafka events, deleted after var.bronze_retention_days (120d)
 #   silver/    — feature aggregates, permanent
 #   checkpoints/ — Spark streaming checkpoints. No lifecycle rule: Spark bounds
 #                its own checkpoint growth (minBatchesToRetain, log compaction),

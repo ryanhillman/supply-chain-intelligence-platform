@@ -13,7 +13,7 @@ project_id = "your-gcp-project-id"
 
 # GCS
 # gcs_bucket_name      = ""    # empty = "{project_id}-scip-lake"
-# bronze_retention_days = 90
+# bronze_retention_days = 120   # must exceed Silver's 90-day lookback
 
 # Bigtable (one PRODUCTION node; the DEVELOPMENT type is deprecated by Google)
 # bigtable_storage_type  = "SSD"           # SSD | HDD

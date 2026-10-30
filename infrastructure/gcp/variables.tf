@@ -41,13 +41,13 @@ variable "gcs_bucket_name" {
 }
 
 variable "bronze_retention_days" {
-  description = "Days before Bronze layer objects are deleted by lifecycle rule."
+  description = "Days before Bronze layer objects are deleted by the bucket lifecycle rule. Must exceed Silver's longest lookback (90 days of supplier and PO history) so a partition cannot expire mid-read; 120 leaves a month of slack."
   type        = number
-  default     = 90
+  default     = 120
 
   validation {
-    condition     = var.bronze_retention_days >= 7
-    error_message = "bronze_retention_days must be at least 7 to allow Silver reprocessing windows."
+    condition     = var.bronze_retention_days > 90
+    error_message = "bronze_retention_days must exceed Silver's 90-day lookback window."
   }
 }
 
