@@ -75,3 +75,12 @@ def test_negative_warehouse_id_still_rejected_by_pydantic(client):
     """Pre-existing validation (not part of this fix) must still work."""
     response = client.post("/predict", json=_instance(warehouse_id=-1, sku_id=0))
     assert response.status_code == 422
+
+
+def test_wrong_feature_count_returns_422(client):
+    """The expected width comes from the loaded model (FakePredictor reports
+    21), not from a constant baked into the container image."""
+    bad = {"instances": [{"numeric_features": [0.0] * 20, "warehouse_id": 0, "sku_id": 0}]}
+    response = client.post("/predict", json=bad)
+    assert response.status_code == 422
+    assert "21" in response.json()["detail"]

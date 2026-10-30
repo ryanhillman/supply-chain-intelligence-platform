@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
-from predictor import ONNXPredictor, _N_NUMERIC_FEATURES
+from predictor import ONNXPredictor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,9 +68,11 @@ class Instance(BaseModel):
     Fields
     ------
     numeric_features:
-        21 floats in the same order as NUMERIC_FEATURE_COLS, already
-        StandardScaler-transformed. Sending raw Silver values will produce
-        wrong predictions (see ADR-005 Decision 7 — distribution shift).
+        Floats in the same order as NUMERIC_FEATURE_COLS, already
+        StandardScaler-transformed. The count must match the loaded model's
+        input width (reported by /health as n_numeric_features); a mismatch
+        is rejected with 422. Sending raw Silver values will produce wrong
+        predictions (see ADR-005 Decision 7 — distribution shift).
     warehouse_id:
         Integer vocab index from feature_metadata.json["warehouse_vocab"].
         NOT the string ID "W-001".
@@ -81,16 +83,6 @@ class Instance(BaseModel):
     numeric_features: list[float]
     warehouse_id: int
     sku_id: int
-
-    @field_validator("numeric_features")
-    @classmethod
-    def check_feature_count(cls, v: list[float]) -> list[float]:
-        if len(v) != _N_NUMERIC_FEATURES:
-            raise ValueError(
-                f"numeric_features must have exactly {_N_NUMERIC_FEATURES} elements "
-                f"(one per NUMERIC_FEATURE_COL), got {len(v)}."
-            )
-        return v
 
     @field_validator("warehouse_id", "sku_id")
     @classmethod
@@ -147,6 +139,22 @@ def predict(request: PredictRequest) -> dict[str, Any]:
     """
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not yet loaded")
+
+    expected_width = _predictor.n_numeric_features
+    bad_width = [
+        (i, len(inst.numeric_features))
+        for i, inst in enumerate(request.instances)
+        if len(inst.numeric_features) != expected_width
+    ]
+    if bad_width:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"numeric_features must have exactly {expected_width} elements "
+                f"(the loaded model's input width). Offending instances "
+                f"(index, length): {bad_width}"
+            ),
+        )
 
     out_of_range = [
         (i, inst.warehouse_id, inst.sku_id)
