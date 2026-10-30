@@ -291,16 +291,18 @@ resource "google_service_account" "spark_sa" {
 ###############################################################################
 # IAM Bindings
 # Principle of least privilege: SA gets only what Spark needs.
-#   storage.objectAdmin  — read/write/delete GCS objects (bronze, silver, checkpoints)
+#   storage.objectAdmin  — read/write/delete objects in the data-lake bucket only
+#                          (bronze, silver, checkpoints, dlq); granted on the
+#                          bucket, not the project, like the Vertex SA
 #   bigtable.user        — read/write Bigtable rows (not admin/DDL)
 #   monitoring.metricWriter — emit custom metrics from Spark
 #   logging.logWriter    — write structured logs to Cloud Logging
 ###############################################################################
 
-resource "google_project_iam_member" "spark_gcs" {
-  project = var.project_id
-  role    = "roles/storage.objectAdmin"
-  member  = "serviceAccount:${google_service_account.spark_sa.email}"
+resource "google_storage_bucket_iam_member" "spark_gcs" {
+  bucket = google_storage_bucket.data_lake.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.spark_sa.email}"
 }
 
 resource "google_project_iam_member" "spark_bigtable" {
