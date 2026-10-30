@@ -58,7 +58,7 @@ The Bronze → Silver pipeline already produces the feature computation. What re
 
 **Access pattern.** The primary read pattern is point lookup by `(warehouse_id, sku_id)`. The primary write pattern is upsert of the full feature vector for one pair per Silver batch. A composite key satisfies both without secondary indexes.
 
-**Key distribution.** Bigtable distributes data by row key range across tablets. Warehouse IDs (`W-001` through `W-006`) are short, fixed-width prefixes that spread naturally across the keyspace. Split points `W-2`, `W-4`, `W-6` are pre-configured in Terraform to distribute load at launch without waiting for automatic splits.
+**Key distribution.** Bigtable distributes data by row key range across tablets and splits tablets automatically under load. Warehouse IDs (`W-001` through `W-006`) are short, fixed-width prefixes that keep each warehouse's rows contiguous. With 120 rows the table is a single tablet, so no pre-split points are configured. (An earlier version pre-split at `W-2`, `W-4`, `W-6`; every key begins with `W-0`, so all rows sorted before the first split point and the splits did nothing.)
 
 **Separator choice.** `#` (0x23) sorts before alphanumeric characters in ASCII, ensuring warehouse-level range scans (`ReadRows(prefix="W-001#")`) are tight and do not bleed into adjacent warehouses.
 
