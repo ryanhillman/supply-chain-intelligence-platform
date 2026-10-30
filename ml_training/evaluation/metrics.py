@@ -1,12 +1,17 @@
 """
 Metric computation for the Phase 4 baseline comparison framework.
 
-Phase 4 success criterion: PyTorch model outperforms the heuristic baseline
-  baseline_pred = float(days_of_supply < 7)
+Phase 4 success criterion: PyTorch model outperforms the closed-form baseline
+  continuous_risk_score = P(stockout ≤ 7d) under a Normal approximation
+                        = Φ((7 − μ) / σ),  μ = qty / avg_7d,  σ = qty·std_7d / avg_7d²
 on held-out test data across all three metrics:
   AUC-ROC  — higher is better
   AUPRC    — higher is better (primary: more informative under class imbalance)
   Brier    — lower is better
+
+The 0/1 rule baseline_pred = float(days_of_supply < 7) is reported alongside
+for context only. A binary predictor has structurally low AUC-ROC and AUPRC,
+so beating it proves little.
 """
 from __future__ import annotations
 
@@ -67,7 +72,7 @@ def per_warehouse_metrics(
     df:           pd.DataFrame,
     y_prob:       np.ndarray,
     label_col:    str = "stockout_label_7d",
-    baseline_col: str = "baseline_pred",
+    baseline_col: str = "continuous_risk_score",
 ) -> pd.DataFrame:
     """
     Compute model vs baseline metrics broken down by warehouse_id.

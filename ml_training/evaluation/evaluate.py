@@ -2,8 +2,9 @@
 evaluate.py — standalone evaluation runner.
 
 Loads model artifacts from output_dir, runs inference on a dataset split,
-computes full metric comparison against the heuristic baseline, and saves
-an evaluation report JSON.
+compares the model against the closed-form Normal-approximation baseline
+(continuous_risk_score) with the days_of_supply < 7 rule reported for
+context, and saves an evaluation report JSON.
 
 Called by scripts/evaluate.py.
 """
@@ -20,9 +21,14 @@ import torch
 from ml_training.datasets.feature_engineer import (
     BASELINE_COL,
     NUMERIC_FEATURE_COLS,
+    RISK_SCORE_COL,
     TARGET_COL,
 )
-from ml_training.evaluation.metrics import compare_to_baseline, per_warehouse_metrics
+from ml_training.evaluation.metrics import (
+    compare_to_baseline,
+    compute_metrics,
+    per_warehouse_metrics,
+)
 from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 
@@ -35,7 +41,7 @@ def run_evaluation(
     split:         str = "test",
 ) -> dict:
     """
-    Evaluate the trained model against the heuristic baseline.
+    Evaluate the trained model against the closed-form formula baseline.
 
     Parameters
     ----------
@@ -49,8 +55,8 @@ def run_evaluation(
 
     Returns
     -------
-    dict with keys: model, baseline, improvements, outperforms_baseline,
-                    per_warehouse.
+    dict with keys: model, baseline, baseline_description, rule_baseline,
+                    improvements, outperforms_baseline, per_warehouse.
     """
     artifacts_dir = Path(artifacts_dir)
     dataset_dir   = Path(dataset_dir)
@@ -82,13 +88,15 @@ def run_evaluation(
 
     y_prob_model = prob.squeeze(1).numpy()
     y_true       = df[TARGET_COL].values.astype(float)
-    y_baseline   = df[BASELINE_COL].values.astype(float)
+    y_baseline   = df[RISK_SCORE_COL].values.astype(float)   # the bar: closed-form formula
+    y_rule       = df[BASELINE_COL].values.astype(float)     # context: 0/1 rule
 
     if y_true.sum() == 0 or y_true.sum() == len(y_true):
         logger.warning("Split '%s' has only one class — metrics may be degenerate.", split)
 
     comparison   = compare_to_baseline(y_true, y_prob_model, y_baseline)
-    wh_breakdown = per_warehouse_metrics(df, y_prob_model)
+    rule_metrics = compute_metrics(y_true, y_rule)
+    wh_breakdown = per_warehouse_metrics(df, y_prob_model, baseline_col=RISK_SCORE_COL)
 
     report = {
         "split":                split,
@@ -96,6 +104,8 @@ def run_evaluation(
         "positive_rate":        float(y_true.mean()),
         "model":                comparison["model"],
         "baseline":             comparison["baseline"],
+        "baseline_description": "Normal-approx P(stockout <= 7d)",
+        "rule_baseline":        rule_metrics,   # days_of_supply < 7, for context
         "improvements":         comparison["improvements"],
         "outperforms_baseline": comparison["outperforms_baseline"],
         "per_warehouse":        wh_breakdown.to_dict(orient="records"),
@@ -117,18 +127,23 @@ def _print_report(report: dict) -> None:
     print(f"  Examples : {report['n_examples']}")
     print(f"  Pos rate : {report['positive_rate']:.3f}")
     print()
-    print(f"  {'Metric':<12} {'Baseline':>10} {'Model':>10} {'Delta':>10}")
-    print(f"  {'-'*12} {'-'*10} {'-'*10} {'-'*10}")
+    print(f"  {'Metric':<12} {'Rule':>10} {'Formula':>10} {'Model':>10} {'Delta':>10}")
+    print(f"  {'-'*12} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
     for metric in ["auc_roc", "auprc", "brier"]:
+        rule_v  = report["rule_baseline"][metric]
         base_v  = report["baseline"][metric]
         model_v = report["model"][metric]
         delta   = report["improvements"][metric]
         sign    = "+" if delta > 0 else ""
-        print(f"  {metric:<12} {base_v:>10.4f} {model_v:>10.4f} {sign}{delta:>9.4f}")
+        print(
+            f"  {metric:<12} {rule_v:>10.4f} {base_v:>10.4f} {model_v:>10.4f} "
+            f"{sign}{delta:>9.4f}"
+        )
     print()
     status = "PASSED" if report["outperforms_baseline"] else "FAILED"
     print(f"  Phase 4 success criterion: {status}")
-    print(f"  (Model outperforms baseline on all three metrics)")
+    print("  (Model outperforms the Normal-approx formula on all three metrics;")
+    print("   Rule = days_of_supply < 7 is shown for context and is not the bar)")
     print(sep)
 
     if report["per_warehouse"]:

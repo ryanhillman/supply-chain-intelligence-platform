@@ -182,14 +182,23 @@ unnecessary dimensionality for a small dataset.
 ## Decision 6 — Evaluation Metrics and Success Criterion
 
 **Phase 4 success criterion:** The trained PyTorch model must outperform the
-heuristic baseline on ALL three metrics on the held-out test split.
+closed-form baseline on ALL three metrics on the held-out test split.
 
 **Baseline:**
 ```python
-baseline_pred = float(days_of_supply < 7)
+continuous_risk_score = Φ((7 − μ) / σ)     # P(stockout ≤ 7d), Normal approximation
+μ = current_qty / avg_daily_sales_7d       # mean days to zero
+σ = current_qty · stddev_daily_7d / avg_daily_sales_7d²
 ```
-This is the simplest defensible business rule: flag any entity whose current
-stock is expected to run out within 7 days at the current average daily sales rate.
+This is the strongest thing the business could compute without a model: a
+calibrated probability from three features the model also sees. If the network
+cannot beat it, it is not adding value.
+
+The simpler 0/1 rule `baseline_pred = float(days_of_supply < 7)` is still
+computed and reported for context, but it is no longer the bar. A binary
+predictor has structurally low AUC-ROC and AUPRC (on the current synthetic test
+split: 0.84 / 0.45, versus 0.87 / 0.59 for the formula and 0.92 / 0.65 for
+simply ranking by `days_of_supply`), so outperforming it proved very little.
 
 | Metric | Direction | Rationale |
 |---|---|---|

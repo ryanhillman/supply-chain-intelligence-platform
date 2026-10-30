@@ -204,16 +204,21 @@ class DatasetBuilder:
         sku_vocab = {s: i for i, s in enumerate(sorted(df["sku_id"].unique()))}
 
         # ── Step 7: Baseline metrics on test split ────────────────────────────
+        # The bar is the closed-form Normal-approx formula (RISK_SCORE_COL);
+        # the 0/1 rule (BASELINE_COL) is recorded alongside for context.
         y_true_test  = test[TARGET_COL].values.astype(float)
-        y_base_test  = test[BASELINE_COL].values.astype(float)
+        y_base_test  = test[RISK_SCORE_COL].values.astype(float)
+        y_rule_test  = test[BASELINE_COL].values.astype(float)
 
         if y_true_test.sum() == 0 or y_true_test.sum() == len(y_true_test):
             logger.warning("Test split has only one class — baseline metrics will be degenerate.")
             baseline_test_metrics: dict = {"auc_roc": None, "auprc": None, "brier": None}
+            rule_test_metrics:     dict = dict(baseline_test_metrics)
         else:
             baseline_test_metrics = compute_metrics(y_true_test, y_base_test)
+            rule_test_metrics     = compute_metrics(y_true_test, y_rule_test)
             logger.info(
-                "Baseline test metrics: AUC-ROC=%.4f  AUPRC=%.4f  Brier=%.4f",
+                "Baseline (Normal-approx formula) test metrics: AUC-ROC=%.4f  AUPRC=%.4f  Brier=%.4f",
                 baseline_test_metrics["auc_roc"],
                 baseline_test_metrics["auprc"],
                 baseline_test_metrics["brier"],
@@ -272,7 +277,12 @@ class DatasetBuilder:
         baseline_path = self.output_dir / "baseline_metrics.json"
         with open(baseline_path, "w") as f:
             json.dump(
-                {"test": baseline_test_metrics, "description": "days_of_supply < 7"},
+                {
+                    "test":             baseline_test_metrics,
+                    "description":      "Normal-approx P(stockout <= 7d)",
+                    "rule_test":        rule_test_metrics,
+                    "rule_description": "days_of_supply < 7",
+                },
                 f, indent=2,
             )
 
