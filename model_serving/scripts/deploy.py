@@ -1,14 +1,20 @@
 """
 deploy.py — CLI for EndpointDeployer and ModelPromoter.
 
-Two subcommands:
+Subcommands:
 
-    deploy  — deploy the latest registered model to the Vertex AI endpoint.
-              Reads model_resource_name from model_serving/artifacts/registration_info.json.
-              Defaults to 0% traffic (challenger pattern).
+    deploy     — deploy the latest registered model to the Vertex AI endpoint.
+                 Reads model_resource_name from model_serving/artifacts/registration_info.json.
+                 Defaults to 0% traffic (challenger pattern).
 
-    promote — compare champion vs challenger and promote the challenger if it
-              beats the champion on AUPRC, AUC-ROC, and Brier score.
+    smoke-test — score a few Bigtable entities through the endpoint.
+
+    promote    — compare champion vs challenger and promote the challenger if it
+                 beats the champion on AUPRC, AUC-ROC, and Brier score.
+
+    undeploy   — undeploy every model from the endpoint (the endpoint resource
+                 stays). Deployed replicas bill by the hour with or without
+                 traffic, so run this between demo sessions.
 
 Usage
 -----
@@ -44,6 +50,13 @@ Usage
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
         --dry-run   # preview the comparison before committing
 
+    # Between demo sessions — stop paying for idle replicas:
+    python model_serving/scripts/deploy.py undeploy \\
+        --project your-gcp-project-id \\
+        --region  us-central1 \\
+        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json
+
 Environment variables:
     GCP_PROJECT_ID                   -- --project
     GCP_REGION                       -- --region
@@ -75,7 +88,7 @@ logger = logging.getLogger("deploy")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Deploy, smoke-test, or promote the SCIP shortage predictor"
+        description="Deploy, smoke-test, promote, or undeploy the SCIP shortage predictor"
     )
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -183,6 +196,13 @@ def parse_args() -> argparse.Namespace:
         help="Print comparison without updating endpoint traffic split",
     )
 
+    # ── undeploy subcommand ───────────────────────────────────────────────────
+    undeploy_p = sub.add_parser(
+        "undeploy",
+        help="Undeploy every model from the endpoint (keeps the endpoint resource)",
+    )
+    _add_common(undeploy_p)
+
     return p.parse_args()
 
 
@@ -262,6 +282,20 @@ def main() -> None:
         )
         promoted = promoter.promote(dry_run=args.dry_run)
         sys.exit(0 if promoted else 1)
+
+    elif args.command == "undeploy":
+        deployer = EndpointDeployer(
+            project_id             = args.project,
+            region                 = args.region,
+            endpoint_resource_name = args.endpoint,
+            credentials_path       = args.sa_key,
+        )
+        removed = deployer.undeploy_all()
+        if removed:
+            print(f"\nUndeployed {len(removed)} model(s) from the endpoint: {removed}")
+        else:
+            print("\nNothing was deployed on the endpoint.")
+        print("The endpoint resource is kept (Terraform-managed); redeploy with `deploy.py deploy`.")
 
 
 if __name__ == "__main__":
