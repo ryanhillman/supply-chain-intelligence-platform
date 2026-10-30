@@ -56,7 +56,7 @@ _REPO_ROOT = Path(__file__).parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from model_serving.pipeline.feature_client    import FeatureClient
+from model_serving.pipeline.feature_client    import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder   import RequestBuilder
 from model_serving.pipeline.batch_scorer      import BatchScorer
 from model_serving.pipeline.prediction_writer import PredictionWriter
@@ -142,6 +142,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=32,
         help="Instances per endpoint.predict() call (default: 32)",
+    )
+    p.add_argument(
+        "--max-feature-age-hours",
+        type=float,
+        default=float(os.environ.get("MAX_FEATURE_AGE_HOURS", "48")),
+        help=(
+            "Skip rows whose lineage:silver_ts is older than this many hours "
+            "(default: 48). 0 disables the check."
+        ),
     )
 
     # ── Local artifacts ───────────────────────────────────────────────────────
@@ -289,7 +298,8 @@ def _run_scoring(
     if args.dry_run:
         logger.info("[dry-run] Scanning Bigtable...")
         feature_rows = feature_client.scan_all()
-        logger.info("[dry-run] rows_scanned=%d", len(feature_rows))
+        feature_rows, n_stale = split_fresh(feature_rows, args.max_feature_age_hours)
+        logger.info("[dry-run] rows_scanned=%d  rows_stale=%d", len(feature_rows) + n_stale, n_stale)
 
         requests = request_builder.build(feature_rows)
         logger.info("[dry-run] rows_scored=%d — NOT calling endpoint or Pub/Sub", len(requests))
@@ -308,14 +318,16 @@ def _run_scoring(
     )
 
     stats = scorer.run(
-        batch_size    = args.batch_size,
-        model_version = model_version,
+        batch_size            = args.batch_size,
+        model_version         = model_version,
+        max_feature_age_hours = args.max_feature_age_hours or None,
     )
 
     print("\n" + "=" * 68)
     print("  Batch Scoring Complete")
     print("=" * 68)
     print(f"  rows_scanned            : {stats.rows_scanned}")
+    print(f"  rows_stale              : {stats.rows_stale}")
     print(f"  rows_scored             : {stats.rows_scored}")
     print(f"  predictions_published   : {stats.predictions_published}")
     print(f"  publish_failures        : {stats.publish_failures}")
@@ -334,7 +346,14 @@ def _run_scoring(
         )
 
     if stats.predictions_published == 0:
-        logger.error("No predictions were published — check Vertex AI endpoint and Pub/Sub config")
+        if stats.rows_stale and not stats.rows_scored:
+            logger.error(
+                "No predictions were published: all %d rows were stale — "
+                "re-run the Silver job, or raise --max-feature-age-hours",
+                stats.rows_stale,
+            )
+        else:
+            logger.error("No predictions were published — check Vertex AI endpoint and Pub/Sub config")
         sys.exit(1)
 
     # ── Optional in-process write ─────────────────────────────────────────────

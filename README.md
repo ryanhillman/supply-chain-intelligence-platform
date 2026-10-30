@@ -170,7 +170,7 @@ The simulator generates 365 days of history across 6 warehouses and 20 SKUs, pro
 
 ## Model Serving Pipeline
 
-1. Feature snapshots are read from Bigtable.
+1. Feature snapshots are read from Bigtable; rows whose last Silver write is older than 48 hours are skipped rather than scored on stale features.
 2. The batch scorer constructs feature vectors and invokes a Vertex AI endpoint.
 3. The serving container performs inference using ONNX Runtime.
 4. Prediction results are published to Pub/Sub.

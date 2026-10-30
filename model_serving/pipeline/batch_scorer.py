@@ -3,7 +3,9 @@ batch_scorer.py — orchestrates the full batch scoring run.
 
 Flow
 ----
-1. FeatureClient.scan_all() — scan all rows from Bigtable inventory_features.
+1. FeatureClient.scan_all() — scan all rows from Bigtable inventory_features,
+   then split_fresh() drops rows whose lineage:silver_ts is older than
+   max_feature_age_hours (default 48 h): stale features are not scored.
 2. RequestBuilder.build()   — fill defaults, engineer features, scale, map vocab.
 3. endpoint.predict()       — call the Vertex AI endpoint in batches of `batch_size`.
    The endpoint returns {"shortage_prob_7d": float, "stockout_risk_score": float}
@@ -25,6 +27,7 @@ Pub/Sub message schema (one per entity)
 Logging emitted
 ---------------
 - rows_scanned       : total FeatureRow objects returned by scan_all()
+- rows_stale         : rows skipped because their Silver write was too old or missing
 - rows_scored        : entities that passed vocab filter and were sent to endpoint
 - batches_sent       : number of endpoint.predict() calls
 - endpoint_latency_ms: per-batch and overall mean latency
@@ -48,13 +51,14 @@ from typing import Iterator
 import numpy as np
 
 from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
-from model_serving.pipeline.feature_client import FeatureClient
+from model_serving.pipeline.feature_client import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder import RequestBuilder, ScoringRequest
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BATCH_SIZE = 32
 _DEFAULT_TOPIC_ID   = "prediction-results"
+_DEFAULT_MAX_FEATURE_AGE_HOURS = 48.0
 
 
 @dataclass
@@ -62,6 +66,7 @@ class ScoringStats:
     """Summary statistics returned by BatchScorer.run()."""
 
     rows_scanned:            int   = 0
+    rows_stale:              int   = 0
     rows_scored:             int   = 0
     batches_sent:            int   = 0
     predictions_published:   int   = 0
@@ -155,6 +160,7 @@ class BatchScorer:
         self,
         batch_size: int = _DEFAULT_BATCH_SIZE,
         model_version: str = "unknown",
+        max_feature_age_hours: float | None = _DEFAULT_MAX_FEATURE_AGE_HOURS,
     ) -> ScoringStats:
         """
         Execute the full batch scoring pipeline.
@@ -169,6 +175,9 @@ class BatchScorer:
             Version string embedded in each Pub/Sub message so PredictionWriter
             can write it to the predictions:model_version Bigtable column.
             Obtain from registration_info.json or the --model-version CLI flag.
+        max_feature_age_hours:
+            Rows whose lineage:silver_ts is older than this (or missing) are
+            skipped and counted in rows_stale. Default 48 h; None disables.
 
         Returns
         -------
@@ -183,8 +192,19 @@ class BatchScorer:
         stats.rows_scanned = len(feature_rows)
         logger.info("rows_scanned=%d", stats.rows_scanned)
 
+        # Step 1b: refuse stale rows. Feature families keep only the latest cell
+        # (no age-based GC), so after a quiet period the store still looks
+        # complete; the Silver timestamp is what tells us it is out of date.
+        feature_rows, stats.rows_stale = split_fresh(feature_rows, max_feature_age_hours)
+        if stats.rows_stale:
+            logger.warning(
+                "rows_stale=%d skipped (lineage:silver_ts older than %s h or missing) "
+                "— re-run the Silver job to refresh features",
+                stats.rows_stale, max_feature_age_hours,
+            )
+
         if not feature_rows:
-            logger.warning("No feature rows returned — aborting scoring run")
+            logger.warning("No fresh feature rows — aborting scoring run")
             return stats
 
         # Step 2: apply defaults, engineer features, scale, vocab-map.
@@ -310,6 +330,7 @@ class BatchScorer:
             "=== Batch Scoring Summary ===\n"
             "  model_version           : %s\n"
             "  rows_scanned            : %d\n"
+            "  rows_stale              : %d\n"
             "  rows_scored             : %d\n"
             "  batches_sent            : %d\n"
             "  predictions_published   : %d\n"
@@ -321,6 +342,7 @@ class BatchScorer:
             "  elapsed                 : %.1f s",
             stats.model_version,
             stats.rows_scanned,
+            stats.rows_stale,
             stats.rows_scored,
             stats.batches_sent,
             stats.predictions_published,

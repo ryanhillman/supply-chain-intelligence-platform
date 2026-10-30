@@ -4,9 +4,13 @@ feature_client.py — reads all feature rows from the Bigtable inventory_feature
 Design
 ------
 - Scans all rows in the table (no row key filter) to score every entity.
-- Restricts to feature column families (inventory, velocity, demand, supplier).
-  The risk, lineage, and predictions families are skipped — they contain ML outputs
-  or metadata, not model inputs.
+- Restricts to feature column families (inventory, velocity, demand, supplier)
+  plus lineage:silver_ts, the ISO-8601 time of the Silver run that wrote the
+  row. The risk and predictions families are skipped — they contain ML
+  outputs, not model inputs. Callers use split_fresh() to drop rows whose
+  Silver write is older than their freshness threshold: feature families keep
+  only the latest cell (no age-based GC), so a quiet store would otherwise be
+  scored on stale features.
 - Numeric cells are stored as big-endian IEEE 754 doubles (8 bytes).
   See spark/utils/bigtable_writer.py for the write side.
 - Abbreviated column qualifiers are mapped to flat feature names via
@@ -23,6 +27,7 @@ from __future__ import annotations
 import logging
 import struct
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,11 @@ _BIGTABLE_TO_FEATURE: dict[tuple[str, str], str] = {
 # Column families that hold model input features (not outputs or metadata).
 _FEATURE_FAMILIES: frozenset[str] = frozenset({"inventory", "velocity", "demand", "supplier"})
 
+# Lineage cell stamping the Silver run that wrote the row (UTF-8 ISO-8601; see
+# spark/config/feature_config.py FEATURE_REGISTRY["lineage"]).
+_LINEAGE_FAMILY:      str = "lineage"
+_SILVER_TS_QUALIFIER: str = "silver_ts"
+
 
 @dataclass
 class FeatureRow:
@@ -69,12 +79,16 @@ class FeatureRow:
         Flat feature name -> float value, covering the 15 raw model inputs
         that are present in Bigtable. Missing features will be filled with
         domain defaults by RequestBuilder before inference.
+    last_silver_write:
+        UTC time of the Silver run that last wrote this row (lineage:silver_ts),
+        or None if the cell is missing or unparseable.
     """
 
-    row_key:      str
-    warehouse_id: str
-    sku_id:       str
-    features:     dict[str, float] = field(default_factory=dict)
+    row_key:           str
+    warehouse_id:      str
+    sku_id:            str
+    features:          dict[str, float] = field(default_factory=dict)
+    last_silver_write: datetime | None  = None
 
 
 class FeatureClient:
@@ -123,7 +137,8 @@ class FeatureClient:
         """
         Scan every row in the inventory_features table and return decoded feature rows.
 
-        Only reads feature column families (inventory, velocity, demand, supplier).
+        Reads the feature column families (inventory, velocity, demand, supplier)
+        and lineage:silver_ts.
         Only reads the latest cell version per column qualifier.
 
         Returns
@@ -141,14 +156,14 @@ class FeatureClient:
         from google.cloud.bigtable import row_filters
 
         filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES))),
+            row_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES | {_LINEAGE_FAMILY}))),
             row_filters.CellsColumnLimitFilter(1),
         ])
 
         logger.info(
             "Scanning Bigtable %s/%s (project=%s, families=%s)",
             self.instance_id, self.table_id, self.project_id,
-            sorted(_FEATURE_FAMILIES),
+            sorted(_FEATURE_FAMILIES | {_LINEAGE_FAMILY}),
         )
 
         rows: list[FeatureRow] = []
@@ -166,8 +181,14 @@ class FeatureClient:
 
             warehouse_id, sku_id = parts[0], parts[1]
             raw_features: dict[str, float] = {}
+            last_silver_write: datetime | None = None
 
             for cf_name, cf_data in row_data.cells.items():
+                if cf_name == _LINEAGE_FAMILY:
+                    ts_cells = cf_data.get(_SILVER_TS_QUALIFIER.encode("utf-8"))
+                    if ts_cells:
+                        last_silver_write = _decode_timestamp(ts_cells[0].value, row_key)
+                    continue
                 if cf_name not in _FEATURE_FAMILIES:
                     continue
 
@@ -191,6 +212,7 @@ class FeatureClient:
                 warehouse_id=warehouse_id,
                 sku_id=sku_id,
                 features=raw_features,
+                last_silver_write=last_silver_write,
             ))
 
             if len(rows) % 20 == 0:
@@ -215,6 +237,41 @@ class FeatureClient:
 
 
 # ── Module helpers ─────────────────────────────────────────────────────────────
+
+def split_fresh(
+    rows: list[FeatureRow],
+    max_age_hours: float | None,
+    now: datetime | None = None,
+) -> tuple[list[FeatureRow], int]:
+    """
+    Split rows into (fresh_rows, n_stale) by the age of lineage:silver_ts.
+
+    A row is stale when last_silver_write is missing or older than
+    max_age_hours. None or a non-positive max_age_hours disables the check
+    and returns every row as fresh.
+    """
+    if max_age_hours is None or max_age_hours <= 0:
+        return rows, 0
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(hours=max_age_hours)
+    fresh  = [
+        r for r in rows
+        if r.last_silver_write is not None and r.last_silver_write >= cutoff
+    ]
+    return fresh, len(rows) - len(fresh)
+
+
+def _decode_timestamp(value: bytes, row_key: str) -> datetime | None:
+    """Decode a UTF-8 ISO-8601 cell to an aware UTC datetime, or None."""
+    try:
+        ts = datetime.fromisoformat(value.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        logger.warning(
+            "Row %s: cannot parse lineage:silver_ts %r — treating as stale",
+            row_key, value[:40],
+        )
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
 
 def _decode_double(value: bytes, family: str, qualifier: str) -> float | None:
     """
