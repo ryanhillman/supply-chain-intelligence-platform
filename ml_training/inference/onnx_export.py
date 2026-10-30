@@ -76,10 +76,16 @@ def export_to_onnx(
         [0, 1 % max(metadata["n_skus"], 1)], dtype=torch.long
     )
 
+    # dynamo=False pins the TorchScript exporter. torch >= 2.9 defaults to
+    # the dynamo exporter, which ignores dynamic_axes (it wants dynamic_shapes),
+    # upgrades opset 17 to 18 on its own, and crashed here on a Windows console
+    # while printing its progress line. The TorchScript path honors the
+    # arguments below and emits the opset-17 graph the container documents.
     torch.onnx.export(
         model,
         (dummy_numeric, dummy_wh, dummy_sku),
         str(output_path),
+        dynamo           = False,
         opset_version    = 17,
         input_names      = ["numeric_features", "warehouse_ids", "sku_ids"],
         output_names     = ["logit_prob", "risk_score"],

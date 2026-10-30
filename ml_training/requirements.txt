@@ -14,7 +14,9 @@ scikit-learn>=1.4.0
 # ── PyTorch (CPU-only — installed via --extra-index-url in Dockerfile) ────────
 # Do not install torch here directly; the Dockerfile pip command handles the
 # CPU wheel index. This line is a version constraint only.
-torch>=2.2.0
+# >= 2.5: first release with the dynamo= flag on torch.onnx.export, which
+# onnx_export.py uses to pin the TorchScript exporter.
+torch>=2.5.0,<3
 
 # ── ONNX (Phase 5 Vertex AI serving readiness) ────────────────────────────────
 onnx>=1.15.0
