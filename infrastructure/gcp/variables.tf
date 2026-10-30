@@ -53,17 +53,6 @@ variable "bronze_retention_days" {
 
 # ── Bigtable ──────────────────────────────────────────────────────────────────
 
-variable "bigtable_instance_type" {
-  description = "DEVELOPMENT = single node, no SLA. PRODUCTION = minimum 3 nodes, 99.9% SLA."
-  type        = string
-  default     = "DEVELOPMENT"
-
-  validation {
-    condition     = contains(["DEVELOPMENT", "PRODUCTION"], var.bigtable_instance_type)
-    error_message = "bigtable_instance_type must be DEVELOPMENT or PRODUCTION."
-  }
-}
-
 variable "bigtable_storage_type" {
   description = "SSD for low-latency online serving. HDD for batch-heavy workloads."
   type        = string
@@ -76,7 +65,7 @@ variable "bigtable_storage_type" {
 }
 
 variable "bigtable_num_nodes" {
-  description = "Number of Bigtable nodes (PRODUCTION only; ignored for DEVELOPMENT)."
+  description = "Number of Bigtable nodes in the single cluster. One node (~$0.65/hour, no free tier) is plenty for the 120-row demo table."
   type        = number
   default     = 1
 }

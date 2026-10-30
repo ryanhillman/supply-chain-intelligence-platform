@@ -220,7 +220,7 @@ The manual approach (`gcloud iam service-accounts keys create keys/scip-spark-sa
 
 ### Negative / Trade-offs
 
-- **Bigtable minimum cost** — DEVELOPMENT instance is free-tier; PRODUCTION requires minimum 3 nodes (~$1,500/month). Acceptable for a production deployment; use DEVELOPMENT for portfolio demos.
+- **Bigtable cost** — a node bills about $0.65 per node-hour (~$475/month at us-central1 list price) whether the instance is DEVELOPMENT or PRODUCTION; there is no free tier, and PRODUCTION no longer requires three nodes (Google has deprecated the DEVELOPMENT type). This is the project's dominant cost, so the instance is destroyed between demo sessions and rebuilt from Silver, the durable source of truth.
 - **No ad-hoc SQL** — Bigtable does not support SQL. Range scans require careful key design. Complex aggregations must be done in Silver (Spark SQL), not Bigtable.
 - **Cold start** — first `terraform apply` + Silver batch before Bigtable has any data. Inference must handle "feature not found" gracefully until the first batch writes.
 - **At-least-once writes** — `foreachBatch` at-least-once semantics means a row may be re-written on Spark retry. Bigtable upsert semantics (overwrite on same row key) make re-writes idempotent for the latest-value pattern.

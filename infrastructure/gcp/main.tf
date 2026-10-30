@@ -87,8 +87,11 @@ resource "google_storage_bucket" "data_lake" {
 
 ###############################################################################
 # Bigtable Instance
-# DEVELOPMENT = single node, no replication, no SLA — use for dev/local testing
-# PRODUCTION  = minimum 3 nodes per cluster, 99.9% SLA
+# One PRODUCTION node. Google deprecated the DEVELOPMENT instance type
+# ("Prefer PRODUCTION for all use cases"); a 1-node PRODUCTION instance costs
+# the same (~$0.65/node-hour, no free tier) without the restrictions. This is
+# the project's largest line item — destroy the instance between demo sessions
+# (Silver is the source of truth; the next Silver run repopulates Bigtable).
 ###############################################################################
 
 resource "google_bigtable_instance" "feature_store" {
@@ -100,14 +103,15 @@ resource "google_bigtable_instance" "feature_store" {
   cluster {
     cluster_id   = "scip-feature-store-c1"
     zone         = var.zone
-    num_nodes    = var.bigtable_instance_type == "PRODUCTION" ? var.bigtable_num_nodes : null
+    num_nodes    = var.bigtable_num_nodes
     storage_type = var.bigtable_storage_type
 
     # autoscaling_config omitted — manual scaling, simpler for portfolio demo
   }
 
-  instance_type = var.bigtable_instance_type
-  labels        = local.common_labels
+  # instance_type is intentionally unset: the provider defaults to PRODUCTION
+  # and the field is deprecated (DEVELOPMENT instances are being converted).
+  labels = local.common_labels
 
   depends_on = [
     google_project_service.bigtable,
