@@ -173,15 +173,19 @@ resource "google_bigtable_table" "inventory_features" {
 ###############################################################################
 # Bigtable GC Policies
 # One policy per column family. Mirrors the feature store design in
-# docs/adr/ADR-003-bigtable-feature-store.md.
+# docs/adr/ADR-003-bigtable-feature-store.md (Decision 3).
 #
-# Rationale per family:
-#   inventory  — max 1 version; realtime snapshot, older = stale
-#   velocity   — max age 7d; rolling window, cells older than window are meaningless
-#   demand     — max 1 version; forecasts are replaced not appended
-#   supplier   — max age 90d; lead time history used in 90d rolling averages
-#   risk       — max age 48h; stale risk scores are worse than no score
-#   lineage    — max age 7d; audit window for replay debugging
+# Every feature family keeps exactly the latest cell (max_version = 1): Silver
+# rewrites the whole row on each run and every reader takes the newest cell
+# only, so older versions are never read. Age-based expiry (velocity 7d, risk
+# 48h, lineage 7d, supplier 90d) was removed — this store is written in bursts
+# around demo sessions, and max_age turned an idle store into a partially
+# empty one that the scorer back-filled with defaults and scored as all-clear.
+# Freshness is enforced by the scorer instead (lineage:silver_ts, see
+# model_serving/pipeline/feature_client.py split_fresh()).
+#
+#   predictions — max 3 versions: current + 2 prior rounds for rollback
+#                 inspection (ADR-005 Decision 2)
 ###############################################################################
 
 resource "google_bigtable_gc_policy" "inventory" {
@@ -203,8 +207,8 @@ resource "google_bigtable_gc_policy" "velocity" {
   column_family   = "velocity"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "168h" # 7 days
+  max_version {
+    number = 1
   }
 }
 
@@ -227,8 +231,8 @@ resource "google_bigtable_gc_policy" "supplier" {
   column_family   = "supplier"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "2160h" # 90 days
+  max_version {
+    number = 1
   }
 }
 
@@ -239,8 +243,8 @@ resource "google_bigtable_gc_policy" "risk" {
   column_family   = "risk"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "48h"
+  max_version {
+    number = 1
   }
 }
 
@@ -251,8 +255,8 @@ resource "google_bigtable_gc_policy" "lineage" {
   column_family   = "lineage"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "168h" # 7 days
+  max_version {
+    number = 1
   }
 }
 

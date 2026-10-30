@@ -78,24 +78,29 @@ W-006#SKU-020
 
 ---
 
-## Decision 3 — Six Column Families with Independent GC Policies
+## Decision 3 — Column Families and GC Policy
 
-**Chosen: One column family per feature group, GC policy matched to feature staleness tolerance**
+**Chosen: One column family per feature group; every feature family keeps exactly the latest cell**
 
 ### Column family design
 
 | Family | GC Policy | Rationale |
 |---|---|---|
 | `inventory` | max 1 version | Current stock snapshot — only the latest value is meaningful |
-| `velocity` | max age 7 days | Rolling window feature — cells older than the window are stale |
+| `velocity` | max 1 version | Rolling windows are recomputed from Bronze on every Silver run; the previous cell is superseded, not aged |
 | `demand` | max 1 version | Demand forecasts are replaced, not appended |
-| `supplier` | max age 90 days | Lead time history used in 90-day rolling averages |
-| `risk` | max age 48 hours | Risk scores expire fast — stale risk alerts are worse than no alert |
-| `lineage` | max age 7 days | Audit window for replay debugging |
+| `supplier` | max 1 version | 90-day rolling stats are recomputed by Silver; the cell is the result, not the history |
+| `risk` | max 1 version | Only the latest risk score is read |
+| `lineage` | max 1 version | Provenance of the current row; the scorer uses `silver_ts` to refuse stale rows |
+| `predictions` | max 3 versions | Current prediction plus two prior rounds for rollback inspection (ADR-005 Decision 2) |
+
+### Why not age-based GC
+
+The first version of this table expired `velocity` after 7 days, `risk` after 48 hours and `lineage` after 7 days. That design assumes a store that is written continuously. This one is written in bursts around demo sessions, so after a quiet week the age-based families were empty while `inventory` and `demand` were intact. The scorer then filled the missing velocity features with defaults (`sales_7d` → 0, so `days_of_supply` → 365) and scored every entity as low risk: a stale store became a confident all-clear. Keeping the latest cell and letting the scorer reject rows whose `lineage:silver_ts` is older than its freshness threshold (`score.py --max-feature-age-hours`, default 48) fails loudly instead.
 
 ### Why not a single family
 
-A single column family would require a single GC policy. `inventory` and `risk` need aggressive cleanup (1 version / 48 h); `supplier` needs 90-day retention. A shared policy would either retain stale risk scores or delete valid supplier history.
+The families still group the 29 features into the six logical domains used throughout Silver, the Bigtable writer and the scorer, and `predictions` needs a different policy (3 versions) from the feature families (1).
 
 ### Why not one family per feature
 
