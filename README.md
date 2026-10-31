@@ -179,6 +179,24 @@ The model was built in PyTorch for hands-on experience.
 
 ---
 
+## Serving API
+
+The serving container (`model_serving/serving/container/`) is a FastAPI app on port 8080; interactive docs are at `/docs`.
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/health` | 200 with status, model version and feature count; 503 if the model is not loaded |
+| POST | `/predict` | 200 with one `shortage_prob_7d` per instance; 422 for invalid input; 500 if inference fails |
+
+```
+POST /predict  {"instances": [{"numeric_features": [<21 floats>], "warehouse_id": 0, "sku_id": 0}]}
+200            {"predictions": [{"shortage_prob_7d": 0.73}]}
+```
+
+Features are raw values in training order; the IDs are integer indices from `feature_metadata.json`, not `W-001`/`SKU-001` strings.
+
+---
+
 ## Drift Monitoring
 
 The drift monitor compares live features in Bigtable with the training split using the Population Stability Index (PSI). Its reference bins (deciles of the raw training split) are written next to the model as `drift_reference.json`, so the reference travels with the model. PSI thresholds:
