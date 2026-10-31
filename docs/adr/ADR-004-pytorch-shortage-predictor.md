@@ -1,286 +1,97 @@
-# ADR-004 — PyTorch Shortage Predictor
+# ADR-004: PyTorch Shortage Predictor
 
-**Status:** Accepted  
-**Date:** 2026-06-20  
-**Phase:** 4  
-**Author:** Supply Chain Intelligence Platform
-
----
+**Status:** Accepted, June 2026. LightGBM comparison added October 2026.
 
 ## Context
 
-Phase 3 completed the Silver feature store: 29 features across 6 column families
-per (warehouse_id, sku_id) entity, written to GCS Parquet and Bigtable.
+The model predicts, for each (warehouse, SKU) pair, the probability that stock runs out within the next 7 days. Inputs are 21 numeric features plus the warehouse and SKU identities. Training data comes from a simulator covering 365 days and 120 pairs, about 43,800 labeled rows.
 
-Two Silver columns currently contain null placeholders:
+## Decision 1 — PyTorch as a learning objective
 
-| Column | Family | Phase 4 target |
-|---|---|---|
-| `risk__shortage_prob_7d` | risk | P(stockout ≤ 7d) ∈ [0, 1] |
-| `risk__stockout_risk_score` | risk | Continuous risk score ∈ [0, 1] |
+PyTorch was selected to gain experience training a network end to end: embeddings, a training loop, early stopping, and ONNX export to a serving container. The problem does not require a neural network.
 
-Phase 4 must define and train a model to populate these columns and provide a
-defensible business justification that the model improves on a rule-based baseline.
+A same-split benchmark confirms this. Synthetic test split, 6,600 rows, 17.3% positive:
 
----
+| Model | AUC-ROC | AUPRC | Brier |
+|---|---|---|---|
+| Rule: `days_of_supply < 7` | 0.842 | 0.446 | 0.184 |
+| Normal-approximation formula | 0.871 | 0.593 | 0.166 |
+| Logistic regression | 0.928 | 0.688 | 0.080 |
+| LightGBM (120 trees) | 0.936 | 0.740 | 0.075 |
+| PyTorch MLP, weighted BCE (original default) | 0.933 | 0.719 | 0.117 |
+| PyTorch MLP, unweighted BCE (current default) | 0.932 | 0.732 | 0.076 |
 
-## Decision 1 — Framework: PyTorch
+LightGBM matches the MLP. It trains in about 6 seconds, scores 120 rows in about 6 ms, needs no standardization or embeddings, and can run inside the scorer with no endpoint. It is the recommended model for a production version of this system.
 
-**Chosen:** PyTorch (`torch >= 2.5`, CPU-only wheels; trained on the developer machine or CI, no training image)
+The MLP is retained as the learning artifact and as the comparison row that documents the choice as measured rather than assumed. The original version of this record rejected LightGBM on ONNX-export and embedding grounds. Both points are technically valid, but they were not the basis of the decision, and the benchmark supersedes them.
 
-**Rejected:**
-- XGBoost / LightGBM — no native ONNX embedding support; harder to extend to
-  sequence models in Phase 6; excluded by project constraint
-- scikit-learn models as final model — excluded by project constraint
-  (sklearn may be used for preprocessing utilities only)
+## Decision 2 — Target: stockout within 7 days
 
-**Rationale:**
-1. **Phase 5 readiness**: Vertex AI Model Registry accepts ONNX. `torch.onnx.export`
-   produces a compatible graph with dynamic batch axis. LightGBM requires a separate
-   ONNX converter with known edge-case failures on categorical features.
-2. **Entity embeddings**: PyTorch `nn.Embedding` layers learn latent
-   warehouse and SKU representations from data. A gradient-boosted tree would
-   require one-hot encoding (12 binary columns for 6 warehouses + 20 SKUs),
-   which loses the geometric structure that embeddings capture.
-3. **Extensibility**: The shallow MLP trunk can be replaced with a Transformer
-   or LSTM in Phase 6 if multi-step Silver snapshots accumulate, without
-   changing the serving infrastructure.
+The label `stockout_label_7d` is 1 if `quantity_after` reaches 0 at any point in (T, T+7d] for that pair.
 
----
+`stockout_risk_score` is not a model output. It is the closed-form Normal-approximation probability computed from current stock, average daily sales and their standard deviation. It is the baseline (Decision 6), and the scorer publishes it next to the model's probability. An earlier version trained a second head to regress this formula, which only approximated a function of three of the model's own inputs; that head was removed.
 
-## Decision 2 — Target Definition
+## Decision 3 — Labels from the event history, not from Silver
 
-**Primary target:** `stockout_label_7d` (binary, 0 or 1)  
-Definition: did `quantity_after` reach 0 at any point in (T, T+7d] in the
-Bronze `inventory.events` event stream for the same (warehouse_id, sku_id)?
+Labeling a Silver row by `days_of_supply < 7` makes the label a threshold on a feature the model already sees, so the model would learn the rule back. Instead, each sample at date T takes its features from events at or before T and its label from events in (T, T+7d]. The model predicts the future from the present, which is the operational task.
 
-**Closed-form companion:** `continuous_risk_score` (float ∈ [0, 1])  
-Definition: P(days-to-stockout ≤ 7) under a Normal approximation, where
-`days-to-stockout ~ N(μ, σ²)`:
+The original plan sampled real Bronze history, which required weeks of accumulated events. The training set comes from the simulator instead. The leakage rule is identical for either source.
+
+## Decision 4 — Features and a time-based split
+
+Numeric features (21): current stock and reorder settings, 7- and 30-day sales velocity, supplier lead time and reliability, open purchase orders, in-transit quantity, the 24-hour demand-signal count, and six derived ratios (days of supply, buffer ratio, and others). Warehouse and SKU are embedded (dimensions 3 and 5).
+
+Excluded: `reorder_urgency`, built from the same threshold logic as the label; the two `risk` outputs; the reserved forecast columns; lineage metadata.
+
+The split is by date: the first 70% of dates train, the next 15% validate, the last 15% test, with a 7-day gap between splits so no label window overlaps the next split's features. The test split is not used for tuning or early stopping.
+
+## Decision 5 — A small MLP with entity embeddings
+
 ```
+warehouse_id → Embedding(6, 3)  ┐
+sku_id       → Embedding(20, 5) ┤ concat → 29
+numeric (21) → Standardize      ┘
+  → Linear(29→64) + BatchNorm + ReLU + Dropout(0.3)
+  → Linear(64→32) + BatchNorm + ReLU + Dropout(0.2)
+  → Linear(32→16) + BatchNorm + ReLU
+  → logit → shortage_prob_7d
+```
+
+Standardization is a fixed layer inside the model, so the exported graph takes raw features (ADR-005 Decision 3). Training uses AdamW, unweighted BCE, cosine LR decay over the full run, and early stopping on validation AUPRC. Class weighting did not improve ranking and degraded calibration (Brier 0.117 vs 0.076), so it is off by default.
+
+## Decision 6 — Beat the formula, not the rule
+
+The model must beat the Normal-approximation formula on all three test metrics: AUPRC (primary, since positives are a minority), AUC-ROC, and Brier score for calibration.
+
+```
+continuous_risk_score = Φ((7 − μ) / σ)
 μ = current_qty / avg_daily_sales_7d
-σ = current_qty × stddev_daily_7d / avg_daily_sales_7d²
-```
-This is not a model output. It is the baseline the model must beat (Decision 6)
-and the `stockout_risk_score` the batch scorer publishes next to the model's
-probability. An earlier version trained a second head to regress it, which could
-only approximate a formula of three of the model's own inputs.
-
-**Prediction horizon:** 7 calendar days.
-
----
-
-## Decision 3 — Label Generation Strategy: Bronze Temporal Sampling
-
-**Problem with Silver-only labels:**
-`inventory__days_of_supply = current_qty / avg_daily_sales_7d` already exists
-as a Silver feature. Labeling each Silver row by `(days_of_supply < 7)`
-produces a label that is a deterministic threshold on a feature the model
-already sees. The model would trivially recover the baseline rule with near-zero
-training error but learn nothing generalizable about demand uncertainty.
-
-**Chosen approach:** Bronze temporal sampling.
-For each (warehouse_id, sku_id), sample one row per calendar day from the
-Bronze `inventory.events` stream. For each sample at date T:
-- **Features**: computed from events at or before T (no future data)
-- **Label**: derived from events in (T, T+7d] — strictly after the feature window
-
-This eliminates all feature-to-label leakage. The model must predict the future
-from the present, which is the actual operational prediction task.
-
-**Estimated dataset size (at ADR authoring time):** ~3,000–7,000 labeled
-examples (120 pairs × 30–60 available sample dates after applying 30-day
-lookback and 7-day lookahead buffers), based on real accumulating Bronze
-data.
-
-**Update:** the implemented training pipeline instead uses a synthetic data
-generator (`ml_training/datasets/synthetic_generator.py`) that simulates 365
-days across all 120 (warehouse, SKU) pairs, producing ~43,800 labeled
-examples — see the README's Training Data section. The leakage-control
-principle above (features from events at or before T, label from events in
-(T, T+7d]) applies identically regardless of data source; only the source
-and resulting scale changed. The "Why not TabNet" rationale below was
-written against the original ~3,000–7,000 estimate and was not
-re-evaluated at the larger scale — see that section's note.
-
----
-
-## Decision 4 — Feature Selection and Leakage Controls
-
-**Included features (21 numeric + 2 categorical):**
-
-| Group | Features |
-|---|---|
-| Inventory state | current_qty, reorder_point, safety_stock |
-| Velocity | sales_7d, sales_30d, avg_daily_sales_{7d,30d}, velocity_trend, stddev_daily_7d |
-| Supplier | lead_time_days, lead_time_stddev, supplier_reliability |
-| Pipeline | active_po_qty, in_transit_qty |
-| Demand | demand_signal_count_24h |
-| Derived | days_of_supply, effective_supply, buffer_ratio, demand_cv, supply_coverage_days, replenishment_gap |
-| Categorical | warehouse_id → Embedding(6, 3), sku_id → Embedding(20, 5) |
-
-**Excluded (leakage or target):**
-
-| Column | Reason |
-|---|---|
-| `risk__reorder_urgency` | Derived from the same threshold logic as the label |
-| `risk__stockout_risk_score` | Closed-form score published by the scorer, not a model output |
-| `risk__shortage_prob_7d` | Target output |
-| `demand__demand_forecast_{7d,30d,multiplier}` | Reserved null columns |
-| All `lineage__*` | Pipeline metadata, no predictive value |
-
-**Time-based split (no random leakage):**
-```
-Train : earliest dates → 70th percentile date
-Val   : 70th → 85th percentile date
-Test  : 85th percentile date → latest date
-```
-Future events are never visible in features. The test split is held out entirely
-until final evaluation — it is not used for hyperparameter tuning or early stopping.
-
----
-
-## Decision 5 — Model Architecture: Shallow MLP with Entity Embeddings
-
-```
-warehouse_id  → Embedding(6,  dim=3)  ┐
-sku_id        → Embedding(20, dim=5)  ┤ concatenated → [29]
-numeric (21)  → Standardize(μ, σ)    ┘
-                      ↓
-    Linear(29→64) + BatchNorm1d + ReLU + Dropout(0.30)
-                      ↓
-    Linear(64→32) + BatchNorm1d + ReLU + Dropout(0.20)
-                      ↓
-    Linear(32→16) + BatchNorm1d + ReLU
-                      ↓
-    prob_head  → logit  → BCEWithLogitsLoss  → shortage_prob_7d
-```
-
-**Why not TabNet:** TabNet's sparse attention requires ≥10,000 training examples
-to generalize; on 3,000–7,000 rows a regularized MLP matches TabNet in practice.
-**Note:** this was written against the ~3,000–7,000-row estimate above. The
-implemented pipeline's synthetic generator produces ~43,800 rows, which
-exceeds TabNet's stated threshold — this specific "insufficient data"
-argument no longer holds as stated, and the choice was not re-benchmarked
-against TabNet at the larger scale. The simpler MLP remains a reasonable
-default given the small, fixed, well-understood feature set (21 numeric + 2
-embeddings), but that's a different justification than the one originally
-given here.
-
-**Why not LSTM/Transformer:** Silver features are point-in-time snapshots, not
-sequences. Temporal structure is already encoded in the 7d/30d velocity windows.
-A sequence model would require aligned multi-step history per entity — a Phase 6
-concern once more Silver epochs have accumulated.
-
-**Why entity embeddings:** Warehouse and SKU IDs are not ordinal. One-hot
-encoding would add 26 binary columns that lose geometric structure. Embeddings
-(dim 3 and 5 respectively) learn latent representations — e.g., the embedding
-space may cluster warehouses with similar demand patterns — without adding
-unnecessary dimensionality for a small dataset.
-
----
-
-## Decision 6 — Evaluation Metrics and Success Criterion
-
-**Phase 4 success criterion:** The trained PyTorch model must outperform the
-closed-form baseline on ALL three metrics on the held-out test split.
-
-**Baseline:**
-```python
-continuous_risk_score = Φ((7 − μ) / σ)     # P(stockout ≤ 7d), Normal approximation
-μ = current_qty / avg_daily_sales_7d       # mean days to zero
 σ = current_qty · stddev_daily_7d / avg_daily_sales_7d²
 ```
-This is the strongest thing the business could compute without a model: a
-calibrated probability from three features the model also sees. If the network
-cannot beat it, it is not adding value.
 
-The simpler 0/1 rule `baseline_pred = float(days_of_supply < 7)` is still
-computed and reported for context, but it is no longer the bar. A binary
-predictor has structurally low AUC-ROC and AUPRC (on the current synthetic test
-split: 0.84 / 0.45, versus 0.87 / 0.59 for the formula and 0.92 / 0.65 for
-simply ranking by `days_of_supply`), so outperforming it proved very little.
+The formula is the strongest prediction available without a model, computed from three features the model also sees. The initial version compared against the 0/1 rule `days_of_supply < 7`. A binary predictor has structurally low AUC and AUPRC (0.84 / 0.45 on the test split, against 0.87 / 0.59 for the formula and 0.92 / 0.65 for ranking by `days_of_supply`), so beating it demonstrated little. The rule is still reported for context.
 
-| Metric | Direction | Rationale |
-|---|---|---|
-| AUPRC (Average Precision) | Higher is better | Primary metric; most informative under class imbalance |
-| AUC-ROC | Higher is better | Overall discriminative ability |
-| Brier Score | Lower is better | Probability calibration quality |
+Evaluation also reports in-stock rows separately. Rows already at zero stock are easy positives and inflate the headline metrics.
 
-No fixed numeric thresholds are hardcoded. The comparison to the baseline
-provides a naturally calibrated, self-updating target: if the data changes
-in production, the baseline automatically adjusts.
+## Decision 7 — Training artifacts
 
-**Per-warehouse breakdown** is computed as a secondary diagnostic. If the model
-underperforms the baseline for a specific warehouse, that signals a data quality
-or distribution issue for that location.
+`ml_training/scripts/train.py` writes to `ml_training/artifacts/`:
 
----
+- `model.pt` and `model.onnx` (opset 17, dynamic batch axis, checked against PyTorch with onnxruntime)
+- `feature_metadata.json`: feature order, vocabularies, standardization mean and scale
+- `evaluation_test.json`: model, formula and rule metrics, plus a sha256 of the test split
+- `training_metrics.json`: per-epoch curves
+- `drift_reference.json`: training-distribution bins for the drift monitor (ADR-005 Decision 8)
 
-## Decision 7 — Model Persistence
+`model_serving/scripts/register.py` uploads these to `gs://{bucket}/models/shortage-predictor/v{timestamp}/` for Vertex AI.
 
-**Artifact structure** written by `scripts/train.py`:
-```
-ml_training/artifacts/
-  model.pt              — torch.save checkpoint: {epoch, model_state, config, val_metrics}
-  model.onnx            — ONNX opset 17, dynamic batch axis, validated with onnxruntime
-  feature_metadata.json — vocab mappings, feature list, pos_weight, split boundaries
-  training_metrics.json — per-epoch train/val AUPRC, AUC-ROC, loss curves
-  evaluation_test.json  — full model vs baseline comparison on test split
-```
+## Decision 8 — Retraining
 
-**Local:** `ml_training/artifacts/` (gitignored via root `.gitignore`: `ml_training/artifacts/*.pt` etc.)
-
-**GCS (optional upload):**
-```
-gs://{bucket}/models/shortage-predictor/v{YYYYMMDD_HHMMSS}/
-```
-Timestamped versioning enables champion/challenger comparison in Phase 5.
-
-**Standardization statistics** (`feature_mean`, `feature_scale`) are fit on the
-train split and written to `feature_metadata.json`; the model registers them as
-fixed buffers, so they ship inside `model.pt` and `model.onnx`. There is no
-separate preprocessor artifact (see ADR-005 Decision 3).
-
----
-
-## Decision 8 — Retraining Strategy
-
-**Trigger:** Event-driven, not calendar-driven.
-- When the Silver batch job produces a new GCS epoch, a retraining run may be
-  scheduled (Phase 5 orchestration to define the exact trigger).
-- Minimum retraining interval: weekly (to accumulate meaningful new Bronze data).
-
-**Champion/challenger:**
-- A new model version is only promoted if it outperforms the current champion
-  on the held-out test split (using the same three-metric criterion).
-- The test split cutoff date advances with each retraining (rolling window).
-
-**Feature drift detection (Phase 5):**
-- PSI (Population Stability Index) on key features (days_of_supply, sales_7d,
-  supplier_reliability) monitored weekly.
-- PSI > 0.2 triggers an alert and a retraining recommendation.
-
----
+Retraining is manual. The drift monitor recommends it (ADR-005 Decision 7), and a new model reaches traffic only if it beats the current one on the same test split (ADR-005 Decision 6). No scheduler triggers a retrain; at this scale none is needed.
 
 ## Consequences
 
-**Positive:**
-- Phase 4 populates the two null Silver placeholders with meaningful predictions.
-- The model provides a defensible improvement over the heuristic baseline,
-  quantified by AUPRC / AUC-ROC / Brier on held-out data.
-- ONNX export provides a direct path to Vertex AI serving in Phase 5.
-
-**Accepted trade-offs:**
-- The original Bronze-only sampling design targeted a small training set
-  (3,000–7,000 examples); the implemented pipeline's synthetic generator
-  produces ~43,800 (see the Update note under Decision 3). Either way, the
-  model is validated against the baseline rather than against an absolute
-  threshold, so the success criterion doesn't need to be re-tuned if the
-  dataset size changes again.
-- The Bronze temporal sampler recomputes rolling features in Python (not Spark).
-  For the current Bronze dataset size (~53,000 events), Python + pandas is
-  adequate. If Bronze grows to millions of events, the sampler should be
-  reimplemented as a Spark batch job.
-- `continuous_risk_score` (the baseline and the published `stockout_risk_score`)
-  uses a Normal approximation; it degrades when daily demand has heavy tails.
+- The model is measured against the strongest simple baseline, so a win is meaningful.
+- The benchmark makes the cost of the learning objective explicit: a simpler model with no endpoint performs as well.
+- The Normal approximation behind the baseline and `stockout_risk_score` degrades when daily demand has heavy tails.
+- The sampler computes rolling features in pandas. That is adequate at this data size; at millions of events it would move to Spark.
