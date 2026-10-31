@@ -133,16 +133,7 @@ Five are reserved and left empty: the three demand-forecast columns and the two 
 
 ### Model
 
-The shortage predictor is implemented in PyTorch as a feed-forward neural network with learned warehouse and SKU embeddings.
-
-**Key characteristics:**
-
-- 21 engineered numeric features
-- Warehouse embeddings
-- SKU embeddings
-- Single output: the shortage probability. The risk score is a closed-form formula computed at scoring time, not a second head
-
-After training, the model is exported to ONNX and validated with ONNX Runtime before deployment.
+The shortage predictor is a PyTorch feed-forward network (MLP) with learned warehouse and SKU embeddings and one output, the shortage probability. After training, it is exported to ONNX and its output is checked against PyTorch's with ONNX Runtime.
 
 ### Training Data
 
