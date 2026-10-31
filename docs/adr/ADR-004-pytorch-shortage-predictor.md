@@ -31,6 +31,8 @@ The MLP is retained as the learning artifact and as the comparison row that docu
 
 The label `stockout_label_7d` is 1 if `quantity_after` reaches 0 at any point in (T, T+7d] for that pair.
 
+A 7-day warning leaves time to reorder only when the supplier lead time is 7 days or less: the 5 FMCG SKUs in the simulator (4–7 days). For the other 15 SKUs (10–45 days) it supports faster actions such as expediting or transferring stock; preventing those stockouts with a reorder would need a horizon tied to lead time.
+
 `stockout_risk_score` is not a model output. It is the closed-form Normal-approximation probability computed from current stock, average daily sales and their standard deviation. It is the baseline (Decision 6), and the scorer publishes it next to the model's probability. An earlier version trained a second head to regress this formula, which only approximated a function of three of the model's own inputs; that head was removed.
 
 ## Decision 3 — Labels from the event history, not from Silver
