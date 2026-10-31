@@ -34,13 +34,6 @@ The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
 SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
 method in all SDK versions. The gapic PATCH call is the canonical approach.
 
-Distribution-shift note (ADR-005 Decision 7)
---------------------------------------------
-A model trained on simulated data and then evaluated on real Bronze data WILL
-fail the PSI check in drift_monitor.py before reaching this promotion gate.
-The metrics comparison here is a secondary gate for ML quality, not a substitute
-for the distribution-shift check.
-
 Required packages:
     google-cloud-aiplatform>=1.38.0
     google-cloud-storage>=2.16.0
