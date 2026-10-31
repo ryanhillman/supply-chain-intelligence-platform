@@ -149,11 +149,9 @@ The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, abou
 
 ### Training Configuration
 
-- Temporal train / validation / test split
-- 7-day shortage prediction horizon
+- Time-based 70 / 15 / 15 train / validation / test split, with a 7-day gap before each cutoff
 - AdamW optimizer
-- Early stopping on validation performance
-- ONNX export for production inference
+- Early stopping on validation AUPRC
 
 ### Test Results
 
