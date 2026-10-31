@@ -171,7 +171,7 @@ The simulator generates 365 days of history across 6 warehouses and 20 SKUs, pro
 
 ## Model Serving Pipeline
 
-1. Feature snapshots are read from Bigtable.
+1. Feature snapshots are read from Bigtable; rows whose last Silver write is older than 48 hours are skipped rather than scored on stale features.
 2. The batch scorer constructs feature vectors and invokes a Vertex AI endpoint.
 3. The serving container performs inference using ONNX Runtime.
 4. Prediction results are published to Pub/Sub.
@@ -202,6 +202,36 @@ The drift monitor compares the live feature distribution (read from Bigtable) ag
 Four features are monitored: `days_of_supply`, `sales_7d`, `avg_daily_sales_7d`, and `supplier_reliability`. Two additional triggers run alongside feature PSI: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of the three is sufficient to recommend retraining.
 
 The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the same metrics to Cloud Monitoring. All three triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
+
+---
+
+## Running Cost and Teardown
+
+Approximate idle run-rate at us-central1 list prices (October 2026):
+
+| Resource | Idle cost per month | Note |
+|---|---|---|
+| Bigtable, 1 node, SSD | ~$475 | ~$0.65 per node-hour; there is no free tier |
+| Vertex AI endpoint, n1-standard-2 | ~$80 per deployed model | Billed while deployed, even with no traffic; champion + challenger ≈ $160 |
+| GCS, Pub/Sub, Artifact Registry | a few dollars | |
+
+The model itself costs nothing to run. Between demo sessions:
+
+1. Undeploy the endpoint's models (the endpoint resource stays):
+
+   ```
+   python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <endpoint-resource-name>
+   ```
+
+2. Destroy the Bigtable instance. Silver is the durable source of truth, and the next Silver run rebuilds it:
+
+   ```
+   terraform -chdir=infrastructure/gcp destroy -target=google_bigtable_instance.feature_store
+   ```
+
+   A full `terraform destroy` also removes the data-lake bucket in the `dev` environment (`force_destroy = true`), including Bronze, Silver and the registered model artifacts.
+
+3. Before the next session: `terraform apply`, re-run the Silver job, redeploy, then score.
 
 ---
 
