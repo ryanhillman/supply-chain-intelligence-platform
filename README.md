@@ -91,7 +91,7 @@ Kafka ingests inventory, supplier, shipment, purchase order, and demand events g
 
 Spark Structured Streaming consumes Kafka topics and writes immutable raw events to the Bronze layer in Google Cloud Storage.
 
-A Silver batch job computes, as of a given date, a snapshot of 29 supply-chain features for each warehouse-SKU entity from Bronze.
+A Silver batch job computes, as of a given date, a feature snapshot for each warehouse-SKU entity from Bronze.
 
 Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for scoring and drift monitoring.
 
@@ -120,7 +120,7 @@ The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a sto
 
 ### Features
 
-Silver computes 29 features per warehouse-SKU entity across six domains:
+Silver writes 29 columns per warehouse-SKU entity in six groups:
 
 - Inventory position
 - Demand velocity
@@ -129,7 +129,7 @@ Silver computes 29 features per warehouse-SKU entity across six domains:
 - Risk metrics
 - Data lineage
 
-The model consumes 21 numeric features along with warehouse and SKU embeddings.
+Five are reserved and left empty: the three demand-forecast columns and the two prediction columns. The model takes 21 numeric features plus the warehouse and SKU IDs, for which it learns embeddings.
 
 ### Model
 
