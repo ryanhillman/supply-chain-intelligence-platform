@@ -1,0 +1,16 @@
+# Lint configuration. CI runs `ruff check .` (see .github/workflows/ci.yml).
+#
+# F = pyflakes (undefined names, unused imports/variables, bad f-strings)
+# B = flake8-bugbear (likely bugs: zip() without strict, mutable defaults, ...)
+# Style rules (E/W) are deliberately not selected: the codebase uses aligned
+# assignments and long docstring lines on purpose, and reformatting it would
+# bury real changes in noise.
+
+target-version = "py311"
+
+extend-exclude = [
+    ".terraform",
+]
+
+[lint]
+select = ["F", "B"]

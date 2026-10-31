@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: ruff + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # matches the project's container images
+          cache: pip
+          cache-dependency-path: |
+            ml_training/requirements.txt
+            model_serving/requirements.txt
+            requirements-dev.txt
+
+      # CPU-only torch first, from PyTorch's index, so the requirements files'
+      # "torch>=2.5,<3" constraint is already satisfied and pip does not pull
+      # the multi-GB CUDA build from PyPI (same approach as ml_training/Dockerfile).
+      #
+      # The serving container's requirements.txt is NOT installed here: it pins
+      # the image's exact versions (numpy 1.26.4, onnxruntime 1.19.2) for a
+      # separate environment, and the training stack's pyarrow needs numpy 2.
+      # The serving tests only import the container's FastAPI app, so
+      # requirements-dev.txt provides fastapi and pydantic unpinned.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install \
+            -r ml_training/requirements.txt \
+            -r model_serving/requirements.txt \
+            -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Tests (pytest)
+        run: pytest -q
+
+  terraform:
+    name: terraform fmt + validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infrastructure/gcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      # No credentials and no backend: this validates syntax, types and
+      # provider schemas only. The GCP project this configuration last managed
+      # was decommissioned after the June 2026 demo; the code is kept as the
+      # record of what ran there.
+      #
+      # The committed .terraform.lock.hcl records only windows_amd64 checksums
+      # for hashicorp/google, so init on this linux runner fails with a
+      # checksum mismatch (-upgrade does not help: it re-selects the same
+      # version and still checks the recorded hashes). Until the lock carries
+      # linux/darwin hashes (terraform providers lock -platform=...), this
+      # validate-only job drops the lock and resolves ~> 5.40 fresh.
+      - name: terraform init (no backend)
+        run: |
+          rm -f .terraform.lock.hcl
+          terraform init -backend=false -input=false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform validate
+        run: terraform validate -no-color

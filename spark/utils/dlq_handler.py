@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
-import pyspark.sql.types as T
 
 logger = logging.getLogger(__name__)
 

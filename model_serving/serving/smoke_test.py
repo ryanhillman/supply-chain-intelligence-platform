@@ -312,7 +312,7 @@ class SmokeTest:
         print(f"  {'-'*3} {'-'*8} {'-'*9} {'-'*10}  --")
 
         all_pass = True
-        for i, (inst, pred) in enumerate(zip(instances, predictions)):
+        for i, (inst, pred) in enumerate(zip(instances, predictions, strict=True)):
             prob = pred.get("shortage_prob_7d", float("nan"))
 
             ok = _is_valid_prob(prob)

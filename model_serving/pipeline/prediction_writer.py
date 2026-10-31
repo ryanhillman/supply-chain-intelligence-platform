@@ -55,7 +55,7 @@ Required packages:
 CLI usage
 ---------
     python model_serving/pipeline/prediction_writer.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --bigtable-instance scip-feature-store \\
         --subscription prediction-writer \\
         --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json
@@ -77,7 +77,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -394,7 +394,7 @@ class PredictionWriter:
         n_failed  = 0
         successful_ack_ids: list[str] = []
 
-        for i, (p, status) in enumerate(zip(parsed, failed_statuses)):
+        for i, (p, status) in enumerate(zip(parsed, failed_statuses, strict=True)):
             if status.code != 0:
                 n_failed += 1
                 logger.warning(

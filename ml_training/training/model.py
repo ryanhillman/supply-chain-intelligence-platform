@@ -90,7 +90,7 @@ class ShortagePredictor(nn.Module):
 
         in_dim = n_numeric + config.wh_embedding_dim + config.sku_embedding_dim
         layers: list[nn.Module] = []
-        for out_dim, drop in zip(config.hidden_dims, config.dropout_rates):
+        for out_dim, drop in zip(config.hidden_dims, config.dropout_rates, strict=True):
             layers.append(nn.Linear(in_dim, out_dim))
             layers.append(nn.BatchNorm1d(out_dim))
             layers.append(nn.ReLU())

@@ -34,7 +34,7 @@ pip install -r requirements.txt
 ### 1b. Set environment variables
 
 ```powershell
-$env:MODEL_GCS_PATH = "gs://supply-chain-platform-499920-scip-lake/models/shortage-predictor/v20260620_180918"
+$env:MODEL_GCS_PATH = "gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918"
 $env:GOOGLE_APPLICATION_CREDENTIALS = "infrastructure/gcp/keys/scip-vertex-sa.json"
 ```
 
@@ -154,7 +154,7 @@ docker build -t shortage-predictor-serving:local .
 
 # Run
 docker run --rm -p 8080:8080 `
-    -e MODEL_GCS_PATH="gs://supply-chain-platform-499920-scip-lake/models/shortage-predictor/v20260620_180918" `
+    -e MODEL_GCS_PATH="gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918" `
     -e GOOGLE_APPLICATION_CREDENTIALS="/tmp/key.json" `
     -v "${PWD}\infrastructure\gcp\keys\scip-vertex-sa.json:/tmp/key.json:ro" `
     shortage-predictor-serving:local

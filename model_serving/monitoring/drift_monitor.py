@@ -69,7 +69,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -802,7 +802,7 @@ class DriftMonitor:
         # Baseline divergence table
         if report.baseline_metrics:
             bm = report.baseline_metrics
-            print(f"\nBaseline Divergence  (vs. risk__reorder_urgency heuristic)")
+            print("\nBaseline Divergence  (vs. risk__reorder_urgency heuristic)")
             print(sep2)
             flag = "  [TRIGGER]" if bm.status == "trigger" else ""
             print(
@@ -822,10 +822,10 @@ class DriftMonitor:
             print("  Run model_serving/scripts/score.py first to populate predictions.")
 
         # Retraining recommendation
-        print(f"\nRetraining Recommendation")
+        print("\nRetraining Recommendation")
         print(sep2)
         if report.requires_retraining:
-            print(f"  ** RETRAINING REQUIRED **")
+            print("  ** RETRAINING REQUIRED **")
             for reason in report.trigger_reasons:
                 print(f"     - {reason}")
             print()
@@ -938,8 +938,6 @@ class DriftMonitor:
 
     def _do_emit_cloud_monitoring(self, monitoring_v3, report: DriftReport) -> None:
         """Internal: build and write time series to Cloud Monitoring."""
-        from google.api import metric_pb2 as ga_metric
-        from google.api import monitored_resource_pb2
 
         client_kwargs: dict = {"project": self.project_id}
         if self._creds:

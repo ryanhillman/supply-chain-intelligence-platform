@@ -25,8 +25,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, field_validator
 
 from predictor import ONNXPredictor

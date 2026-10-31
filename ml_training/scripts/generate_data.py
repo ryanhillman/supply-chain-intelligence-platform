@@ -117,7 +117,7 @@ def main() -> None:
     print()
     print("  Next step — build the dataset:")
     print("    python ml_training/scripts/build_dataset.py \\")
-    print(f"        --synthetic \\")
+    print("        --synthetic \\")
     print(f"        --total-days {args.total_days} \\")
     print(f"        --start-date {args.start_date} \\")
     print(f"        --seed {args.seed} \\")

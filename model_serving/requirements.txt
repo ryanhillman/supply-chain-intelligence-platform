@@ -17,7 +17,7 @@ google-cloud-storage>=2.18.0
 
 # ML / data
 numpy>=1.26.0
-pandas>=2.1.0
+pandas>=2.1.0,<3       # bronze_temporal_sampler's tz-aware ns-epoch arithmetic targets 2.x
 scipy>=1.11.0          # Normal-approx stockout_risk_score (ml_training.datasets.feature_engineer)
 scikit-learn>=1.4.0    # AUPRC/AUC/Brier via ml_training.evaluation.metrics (promote_model rescoring)
 onnxruntime>=1.17.0    # promote_model rescoring of both deployed models on one holdout

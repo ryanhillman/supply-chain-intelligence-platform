@@ -9,26 +9,26 @@ Usage
 -----
     # Full monitoring run (feature PSI + prediction variance):
     python model_serving/scripts/monitor.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --bigtable-instance scip-feature-store \\
         --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
     # Feature PSI only (no Bigtable predictions read):
     python model_serving/scripts/monitor.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --bigtable-instance scip-feature-store \\
         --no-predictions \\
         --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
     # Save JSON report for downstream tooling:
     python model_serving/scripts/monitor.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --bigtable-instance scip-feature-store \\
         --report-path model_serving/artifacts/drift_report.json
 
     # With Cloud Monitoring emission (requires google-cloud-monitoring):
     python model_serving/scripts/monitor.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --bigtable-instance scip-feature-store \\
         --emit-cloud-monitoring
 
@@ -221,7 +221,7 @@ def _preflight_check(artifacts_dir: Path, dataset_dir: Path) -> None:
         logger.error("Run ml_training/scripts/build_dataset.py and train.py to generate Phase 4 artifacts.")
         sys.exit(2)
 
-    for path, name in required:
+    for path, _ in required:
         logger.info("Artifact verified: %s  (%d bytes)", path, path.stat().st_size)
 
 
