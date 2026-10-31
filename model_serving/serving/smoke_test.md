@@ -74,8 +74,8 @@ Expected:
 
 ### 1e. Prediction request
 
-The 21 numeric features below are **pre-scaled zeros** — valid shape but not
-meaningful values. The check is: response has 2 instances, both `shortage_prob_7d`
+The 21 numeric features below are **all-zero raw values** (zero stock, zero sales)
+— valid shape, not a meaningful entity. The check is: response has 2 instances, both `shortage_prob_7d`
 and `stockout_risk_score` are finite floats in [0, 1].
 
 ```powershell

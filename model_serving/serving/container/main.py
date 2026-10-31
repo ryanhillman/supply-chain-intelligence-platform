@@ -14,8 +14,9 @@ Vertex AI deploy flags (set in model_serving/scripts/deploy.py):
   --predict-route  /predict
   --port           8080
 
-The container does NOT apply StandardScaler or vocab mapping — those are
-the caller's responsibility (see batch_scorer.py and ADR-005 Decision 3).
+The container does NOT apply vocab mapping — that is the caller's
+responsibility (see request_builder.py). Numeric features arrive in raw
+units; the ONNX graph standardizes them itself (ADR-005 Decision 3).
 """
 from __future__ import annotations
 
@@ -68,11 +69,10 @@ class Instance(BaseModel):
     Fields
     ------
     numeric_features:
-        Floats in the same order as NUMERIC_FEATURE_COLS, already
-        StandardScaler-transformed. The count must match the loaded model's
-        input width (reported by /health as n_numeric_features); a mismatch
-        is rejected with 422. Sending raw Silver values will produce wrong
-        predictions (see ADR-005 Decision 7 — distribution shift).
+        Raw feature values in the same order as NUMERIC_FEATURE_COLS. Do not
+        pre-scale: the ONNX graph standardizes with the training statistics.
+        The count must match the loaded model's input width (reported by
+        /health as n_numeric_features); a mismatch is rejected with 422.
     warehouse_id:
         Integer vocab index from feature_metadata.json["warehouse_vocab"].
         NOT the string ID "W-001".

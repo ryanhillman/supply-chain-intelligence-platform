@@ -166,10 +166,6 @@ def parse_args() -> argparse.Namespace:
         "--artifacts",
         default="ml_training/artifacts",
     )
-    smoke_p.add_argument(
-        "--dataset",
-        default="ml_training/artifacts/dataset",
-    )
 
     # ── promote subcommand ────────────────────────────────────────────────────
     promote_p = sub.add_parser(
@@ -244,7 +240,6 @@ def main() -> None:
             region                 = args.region,
             endpoint_resource_name = args.endpoint,
             artifacts_dir          = args.artifacts,
-            dataset_dir            = args.dataset,
             credentials_path       = args.sa_key,
         )
         passed = smoke.run(

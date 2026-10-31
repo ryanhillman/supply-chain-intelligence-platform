@@ -2,9 +2,10 @@
 ONNXPredictor — loads model.onnx from GCS at container startup and runs
 inference via onnxruntime.
 
-Inputs received from batch_scorer.py (all scaling and vocab mapping is
-done client-side; see ADR-005 Decision 3):
-  numeric_features : float32 (batch, n)   — StandardScaler-transformed; n is
+Inputs received from batch_scorer.py (vocab mapping is done client-side;
+standardization happens inside the ONNX graph — see ADR-005 Decision 3):
+  numeric_features : float32 (batch, n)   — raw feature units in
+                                            NUMERIC_FEATURE_COLS order; n is
                                             read from the ONNX graph at startup
   warehouse_ids    : int64   (batch,)     — vocab int, NOT warehouse string ID
   sku_ids          : int64   (batch,)     — vocab int, NOT SKU string ID
@@ -84,12 +85,13 @@ class ONNXPredictor:
         sku_ids: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Run ONNX inference on a pre-scaled, pre-vocabbed batch.
+        Run ONNX inference on a raw-feature, pre-vocabbed batch.
 
         Parameters
         ----------
         numeric_features : float32, shape (batch, n_numeric_features)
-            Already StandardScaler-transformed. Do NOT pass raw Silver values.
+            Raw feature units in NUMERIC_FEATURE_COLS order. Do NOT pre-scale:
+            the graph's Standardize layer applies the training statistics.
         warehouse_ids : int64, shape (batch,)
             Vocab indices from feature_metadata.json["warehouse_vocab"].
         sku_ids : int64, shape (batch,)

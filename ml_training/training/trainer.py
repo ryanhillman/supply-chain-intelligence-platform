@@ -39,8 +39,8 @@ class ShortageDataset(Dataset):
     """
     Wraps a Parquet-split DataFrame for DataLoader consumption.
 
-    Numeric features are expected to already be scaled (StandardScaler applied
-    in DatasetBuilder). Categorical IDs are mapped to integer indices via the
+    Numeric features are passed through in raw units; the model's Standardize
+    layer scales them. Categorical IDs are mapped to integer indices via the
     vocabularies stored in feature_metadata.json.
     """
 
@@ -99,8 +99,8 @@ class Trainer:
     config:
         TrainingConfig with all hyperparameters.
     dataset_dir:
-        Path to the directory containing train.parquet, val.parquet,
-        feature_metadata.json, and preprocessor.pkl.
+        Path to the directory containing train.parquet, val.parquet and
+        feature_metadata.json.
     output_dir:
         Directory where model.pt and training_metrics.json are written.
     """
@@ -139,12 +139,7 @@ class Trainer:
             val_ds,   batch_size=self.config.batch_size, shuffle=False, drop_last=False
         )
 
-        model = ShortagePredictor(
-            n_numeric    = metadata["n_numeric_features"],
-            n_warehouses = metadata["n_warehouses"],
-            n_skus       = metadata["n_skus"],
-            config       = self.config,
-        )
+        model = ShortagePredictor.from_metadata(metadata, self.config)
 
         pos_weight = float(metadata.get("pos_weight", 1.0))
         criterion  = build_loss(self.config, pos_weight)

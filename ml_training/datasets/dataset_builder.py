@@ -6,19 +6,21 @@ Pipeline:
   2. generate_labels()               → labeled feature rows
   3. engineer_features()             → derived features added, leakage removed
   4. Time-based 70 / 15 / 15 split  → train / val / test
-  5. Fit StandardScaler on train     → saved to preprocessor.pkl
+  5. Fit per-feature mean/scale on train → stored in feature_metadata.json
   6. Compute baseline metrics        → saved to baseline_metrics.json
-  7. Write train/val/test Parquet    → artifacts/dataset/
+  7. Write train/val/test Parquet    → artifacts/dataset/ (raw feature units)
   8. Write feature_metadata.json     → artifacts/dataset/
 
-The scaler is fit only on train data and the fitted parameters are stored.
-Val and test data are transformed (not re-fit) to prevent data leakage.
+Standardization statistics are fit only on the train split and stored in
+feature_metadata.json as feature_mean / feature_scale. The parquet splits
+keep raw units; the model standardizes its own inputs (ShortagePredictor's
+Standardize layer), so training, evaluation, the ONNX graph, the drift
+monitor and the scorer all work in raw units (ADR-005 Decision 3).
 """
 from __future__ import annotations
 
 import json
 import logging
-import pickle
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,7 +55,6 @@ class DatasetManifest:
     val_path:              str
     test_path:             str
     metadata_path:         str
-    preprocessor_path:     str
     baseline_metrics_path: str
     n_train:               int
     n_val:                 int
@@ -191,11 +192,14 @@ class DatasetBuilder:
             self.horizon_days,
         )
 
-        # ── Step 5: Fit StandardScaler on train ───────────────────────────────
-        scaler = StandardScaler()
-        train[NUMERIC_FEATURE_COLS] = scaler.fit_transform(train[NUMERIC_FEATURE_COLS].values)
-        val[NUMERIC_FEATURE_COLS]   = scaler.transform(val[NUMERIC_FEATURE_COLS].values)
-        test[NUMERIC_FEATURE_COLS]  = scaler.transform(test[NUMERIC_FEATURE_COLS].values)
+        # ── Step 5: Fit standardization statistics on train ─────────────────
+        # sklearn's StandardScaler is used only to fit: it gives population
+        # std (ddof=0) and the zero-variance guard (scale_ = 1.0 where the
+        # std is 0). The splits are NOT transformed — they stay in raw units
+        # and the model applies (x - mean) / scale itself.
+        scaler        = StandardScaler().fit(train[NUMERIC_FEATURE_COLS].values)
+        feature_mean  = scaler.mean_.tolist()
+        feature_scale = scaler.scale_.tolist()
 
         # ── Step 6: Build vocabulary mappings ────────────────────────────────
         # Built from the full dataset so all entities appear in the vocabulary,
@@ -240,11 +244,6 @@ class DatasetBuilder:
         test[cols_to_save].to_parquet(test_path,  index=False)
         logger.info("Parquet splits written to %s", self.output_dir)
 
-        # ── Step 9: Save preprocessor ────────────────────────────────────────
-        preprocessor_path = self.output_dir / "preprocessor.pkl"
-        with open(preprocessor_path, "wb") as f:
-            pickle.dump(scaler, f)
-
         # ── Step 10: Save feature metadata ───────────────────────────────────
         pos_rate_train = float(train[TARGET_COL].mean())
         metadata = {
@@ -258,6 +257,10 @@ class DatasetBuilder:
             "n_warehouses":       len(wh_vocab),
             "n_skus":             len(sku_vocab),
             "n_numeric_features": len(NUMERIC_FEATURE_COLS),
+            # Train-split standardization statistics, in numeric_features order.
+            # The model registers them as fixed buffers (ADR-005 Decision 3).
+            "feature_mean":       feature_mean,
+            "feature_scale":      feature_scale,
             "horizon_days":       self.horizon_days,
             "split": {
                 "train_end": str(train_cutoff.date()),
@@ -292,7 +295,6 @@ class DatasetBuilder:
             val_path              = str(val_path),
             test_path             = str(test_path),
             metadata_path         = str(metadata_path),
-            preprocessor_path     = str(preprocessor_path),
             baseline_metrics_path = str(baseline_path),
             n_train               = len(train),
             n_val                 = len(val),

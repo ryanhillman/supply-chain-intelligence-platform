@@ -48,8 +48,8 @@ def run_evaluation(
     artifacts_dir:
         Directory containing model.pt (trained ShortagePredictor state dict).
     dataset_dir:
-        Directory containing {split}.parquet, feature_metadata.json,
-        preprocessor.pkl, and baseline_metrics.json.
+        Directory containing {split}.parquet, feature_metadata.json and
+        baseline_metrics.json.
     split:
         "train", "val", or "test".
 
@@ -69,12 +69,7 @@ def run_evaluation(
     checkpoint = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
     config     = checkpoint.get("config", TrainingConfig())
 
-    model = ShortagePredictor(
-        n_numeric    = metadata["n_numeric_features"],
-        n_warehouses = metadata["n_warehouses"],
-        n_skus       = metadata["n_skus"],
-        config       = config,
-    )
+    model = ShortagePredictor.from_metadata(metadata, config)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
 
