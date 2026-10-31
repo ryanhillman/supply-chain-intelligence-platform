@@ -75,8 +75,8 @@ Expected:
 ### 1e. Prediction request
 
 The 21 numeric features below are **all-zero raw values** (zero stock, zero sales)
-— valid shape, not a meaningful entity. The check is: response has 2 instances, both `shortage_prob_7d`
-and `stockout_risk_score` are finite floats in [0, 1].
+— valid shape, not a meaningful entity. The check is: response has 2 instances and
+each `shortage_prob_7d` is a finite float in [0, 1].
 
 ```powershell
 $body = @{
@@ -109,9 +109,9 @@ Expected response shape:
 ```json
 {
   "predictions": [
-    {"shortage_prob_7d": <float in [0,1]>, "stockout_risk_score": <float in [0,1]>},
-    {"shortage_prob_7d": <float in [0,1]>, "stockout_risk_score": <float in [0,1]>},
-    {"shortage_prob_7d": <float in [0,1]>, "stockout_risk_score": <float in [0,1]>}
+    {"shortage_prob_7d": <float in [0,1]>},
+    {"shortage_prob_7d": <float in [0,1]>},
+    {"shortage_prob_7d": <float in [0,1]>}
   ]
 }
 ```
@@ -184,12 +184,11 @@ docker run --rm shortage-predictor-serving:local python -c "import onnxruntime; 
 |---|---|
 | Server starts | Log: "Container ready" |
 | `/health` returns 200 | `{"status": "ok", ...}` |
-| `/predict` with 3 instances returns 3 predictions | All `shortage_prob_7d` and `stockout_risk_score` in [0.0, 1.0] |
+| `/predict` with 3 instances returns 3 predictions | All `shortage_prob_7d` in [0.0, 1.0] |
 | `/predict` with 20 features returns 422 | Error detail mentions "21 elements" |
 | Docker `whoami` returns `appuser` | Not root |
 | Docker onnxruntime import succeeds | No libgomp error |
 
-If `/predict` returns `shortage_prob_7d = 0.0` and `stockout_risk_score = 1.0`
-for all instances with zero input, this is expected — it reflects the same
-distribution shift documented in ADR-005 Decision 7. The pipeline is correct;
-the values reflect model saturation on out-of-distribution input.
+The all-zero instances above describe an entity with no stock and no sales, so
+the probabilities they produce are not meaningful; this check is about shape,
+range and the container contract, not model quality.

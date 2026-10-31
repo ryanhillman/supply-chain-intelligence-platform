@@ -21,7 +21,7 @@ Two targets are produced:
       Closed-form probability from a Normal approximation. It is the baseline
       the PyTorch model must outperform (see evaluation/metrics.py): if the
       network cannot beat a formula of three of its own inputs, it is not
-      adding value. It is also the regression target for the risk_score head.
+      adding value. It is also the stockout_risk_score the batch scorer publishes.
       Computed as:
 
           P(stockout ≤ horizon) ≈ Φ((horizon − μ) / σ)
@@ -37,13 +37,14 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pandas as pd
-from scipy.stats import norm
+
+from ml_training.datasets.feature_engineer import EPS, normal_stockout_prob
 
 logger = logging.getLogger(__name__)
 
 HORIZON_DAYS: int = 7
-EPS: float = 1e-6   # prevents division by zero in days_of_supply and σ
 
 
 def generate_labels(
@@ -157,21 +158,11 @@ def _normal_stockout_prob(
     horizon_days: int,
 ) -> float:
     """
-    P(days-to-zero ≤ horizon) under a Normal approximation.
-
-    Let T = time-to-stockout = Q / D where D ~ N(μ_D, σ_D²) per day.
-    By delta method: T ≈ N(Q/μ_D, (Q·σ_D/μ_D²)²) for μ_D > 0.
-
-    When avg_daily ≤ EPS (no demand), supply is effectively infinite → return 0.0.
-    When stddev_daily ≤ EPS (deterministic demand), degenerate to step function.
+    Scalar wrapper around feature_engineer.normal_stockout_prob — the one
+    definition of P(days-to-zero ≤ horizon) shared by this label column, the
+    evaluation baseline and the scorer's stockout_risk_score.
     """
-    if avg_daily <= EPS:
-        return 0.0
-
-    mu_t  = current_qty / avg_daily
-    sig_t = (current_qty * stddev_daily) / (avg_daily ** 2)
-
-    if sig_t <= EPS:
-        return 1.0 if mu_t < horizon_days else 0.0
-
-    return float(norm.cdf(horizon_days, loc=mu_t, scale=sig_t))
+    return float(normal_stockout_prob(
+        np.array([current_qty]), np.array([avg_daily]), np.array([stddev_daily]),
+        horizon_days,
+    )[0])

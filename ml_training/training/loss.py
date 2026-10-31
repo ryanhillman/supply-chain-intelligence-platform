@@ -1,10 +1,13 @@
 """
 Loss functions for ShortagePredictor.
 
-WeightedBCELoss — BCEWithLogitsLoss with class-imbalance pos_weight.
+WeightedBCELoss — BCEWithLogitsLoss with an optional class-imbalance pos_weight
+                  (pos_weight=1.0 is plain BCE, the default).
 FocalLoss       — down-weights easy examples; useful when positive rate > 85%.
-CombinedLoss    — binary_loss + risk_score_weight × MSELoss on continuous target.
-build_loss()    — factory that reads TrainingConfig and returns CombinedLoss.
+build_loss()    — factory that reads TrainingConfig.loss_type and returns the
+                  binary loss module. The model has a single logit output;
+                  stockout_risk_score is a closed-form formula at scoring time,
+                  not a trained head, so there is no auxiliary regression term.
 """
 from __future__ import annotations
 
@@ -45,44 +48,16 @@ class FocalLoss(nn.Module):
         return (((1.0 - pt) ** self.gamma) * bce).mean()
 
 
-class CombinedLoss(nn.Module):
+def build_loss(config: TrainingConfig, pos_weight: float) -> nn.Module:
     """
-    total = binary_loss(logit_prob, stockout_label_7d)
-          + risk_score_weight × MSE(pred_score, continuous_risk_score)
-
-    Returns (total, binary_component, score_component) so callers can log
-    each term separately.
-    """
-    def __init__(self, binary_loss: nn.Module, risk_score_weight: float = 0.3) -> None:
-        super().__init__()
-        self.binary_loss       = binary_loss
-        self.risk_score_weight = risk_score_weight
-
-    def forward(
-        self,
-        logit_prob:   torch.Tensor,
-        pred_score:   torch.Tensor,
-        label_binary: torch.Tensor,
-        label_risk:   torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        loss_b = self.binary_loss(logit_prob, label_binary)
-        loss_s = F.mse_loss(pred_score, label_risk)
-        total  = loss_b + self.risk_score_weight * loss_s
-        return total, loss_b, loss_s
-
-
-def build_loss(config: TrainingConfig, pos_weight: float) -> CombinedLoss:
-    """
-    Construct the correct binary loss from config and wrap in CombinedLoss.
+    Construct the binary loss selected by config.loss_type.
 
     pos_weight is computed by DatasetBuilder from the training split:
         pos_weight = n_negative / n_positive
     It is applied only for loss_type "weighted_bce" or "focal".
     """
     if config.loss_type == "focal":
-        binary: nn.Module = FocalLoss(gamma=config.focal_gamma, pos_weight=pos_weight)
-    elif config.loss_type == "weighted_bce":
-        binary = WeightedBCELoss(pos_weight=pos_weight)
-    else:  # "bce" — unweighted; the dataset's pos_weight is ignored
-        binary = WeightedBCELoss(pos_weight=1.0)
-    return CombinedLoss(binary, risk_score_weight=config.risk_score_weight)
+        return FocalLoss(gamma=config.focal_gamma, pos_weight=pos_weight)
+    if config.loss_type == "weighted_bce":
+        return WeightedBCELoss(pos_weight=pos_weight)
+    return WeightedBCELoss(pos_weight=1.0)   # "bce" — unweighted; dataset pos_weight ignored

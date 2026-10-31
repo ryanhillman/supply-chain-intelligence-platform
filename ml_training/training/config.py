@@ -31,7 +31,6 @@ class TrainingConfig:
     # without improving ranking.
     loss_type:         str   = "bce"
     focal_gamma:       float = 2.0
-    risk_score_weight: float = 0.3   # coefficient on the MSE risk-score term
 
     # ── LR scheduler ─────────────────────────────────────────────────────────
     # "cosine"  — CosineAnnealingLR over T_max epochs; None means max_epochs,

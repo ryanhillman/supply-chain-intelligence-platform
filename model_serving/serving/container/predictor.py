@@ -10,9 +10,10 @@ standardization happens inside the ONNX graph — see ADR-005 Decision 3):
   warehouse_ids    : int64   (batch,)     — vocab int, NOT warehouse string ID
   sku_ids          : int64   (batch,)     — vocab int, NOT SKU string ID
 
-Outputs returned to caller:
-  shortage_prob_7d    : float32 (batch,)  — sigmoid(logit_prob), P(stockout<=7d)
-  stockout_risk_score : float32 (batch,)  — direct risk_score ONNX output in [0,1]
+Output returned to caller:
+  shortage_prob_7d : float32 (batch,)  — sigmoid(logit_prob), P(stockout<=7d)
+  (stockout_risk_score is not a model output; the batch scorer computes it
+  with the closed-form Normal approximation from the raw features.)
 
 Environment variables:
   MODEL_GCS_PATH            — GCS URI to the versioned model directory,
@@ -83,7 +84,7 @@ class ONNXPredictor:
         numeric_features: np.ndarray,
         warehouse_ids: np.ndarray,
         sku_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> np.ndarray:
         """
         Run ONNX inference on a raw-feature, pre-vocabbed batch.
 
@@ -100,25 +101,17 @@ class ONNXPredictor:
         Returns
         -------
         shortage_prob_7d : float32, shape (batch,), in [0, 1]
-        stockout_risk_score : float32, shape (batch,), in [0, 1]
         """
-        outputs = self._session.run(
-            output_names=["logit_prob", "risk_score"],
+        (logit_prob,) = self._session.run(
+            output_names=["logit_prob"],
             input_feed={
                 "numeric_features": numeric_features.astype(np.float32),
                 "warehouse_ids":    warehouse_ids.astype(np.int64),
                 "sku_ids":          sku_ids.astype(np.int64),
             },
         )
-        logit_prob, risk_score = outputs
-
-        # logit_prob shape: (batch, 1) — apply sigmoid to get probability
-        shortage_prob = _sigmoid(logit_prob[:, 0])
-
-        # risk_score shape: (batch, 1) — already sigmoid from model's score_head
-        stockout_risk = risk_score[:, 0]
-
-        return shortage_prob, stockout_risk
+        # logit_prob shape: (batch, 1) — apply sigmoid to get the probability
+        return _sigmoid(logit_prob[:, 0])
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
@@ -212,7 +205,7 @@ class ONNXPredictor:
             )
 
         output_names = {out.name for out in session.get_outputs()}
-        expected_outputs = {"logit_prob", "risk_score"}
+        expected_outputs = {"logit_prob"}
         if output_names != expected_outputs:
             raise ValueError(
                 f"ONNX output names mismatch. "

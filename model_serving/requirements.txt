@@ -18,6 +18,7 @@ google-cloud-storage>=2.18.0
 # ML / data
 numpy>=1.26.0
 pandas>=2.1.0
+scipy>=1.11.0          # Normal-approx stockout_risk_score (ml_training.datasets.feature_engineer)
 
 # Protobuf (required by gapic clients used in promote_model.py)
 protobuf>=4.21.0

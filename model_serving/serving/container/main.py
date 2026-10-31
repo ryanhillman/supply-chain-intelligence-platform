@@ -4,8 +4,7 @@ FastAPI serving container for the SCIP ShortagePredictor.
 Vertex AI contract:
   GET  /health  -> 200 {"status": "ok", "model_version": str}
                    503 if the model has not loaded yet
-  POST /predict -> 200 {"predictions": [{"shortage_prob_7d": float,
-                                          "stockout_risk_score": float}, ...]}
+  POST /predict -> 200 {"predictions": [{"shortage_prob_7d": float}, ...]}
                    422 if request schema is invalid
                    500 on inference error
 
@@ -105,7 +104,6 @@ class PredictRequest(BaseModel):
 
 class Prediction(BaseModel):
     shortage_prob_7d: float
-    stockout_risk_score: float
 
 
 class PredictResponse(BaseModel):
@@ -135,7 +133,7 @@ def predict(request: PredictRequest) -> dict[str, Any]:
       {"instances": [{...}, {...}]}
 
     Returns:
-      {"predictions": [{"shortage_prob_7d": float, "stockout_risk_score": float}]}
+      {"predictions": [{"shortage_prob_7d": float}]}
     """
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not yet loaded")
@@ -189,25 +187,18 @@ def predict(request: PredictRequest) -> dict[str, Any]:
     )
 
     try:
-        probs, scores = _predictor.predict(numeric_features, warehouse_ids, sku_ids)
+        probs = _predictor.predict(numeric_features, warehouse_ids, sku_ids)
     except Exception as exc:
         logger.exception("Inference failed for batch_size=%d", batch_size)
         raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
-        "Predicted batch_size=%d | prob_mean=%.3f | score_mean=%.3f | latency=%.1fms",
+        "Predicted batch_size=%d | prob_mean=%.3f | latency=%.1fms",
         batch_size,
         float(probs.mean()),
-        float(scores.mean()),
         elapsed_ms,
     )
 
-    predictions = [
-        Prediction(
-            shortage_prob_7d=float(p),
-            stockout_risk_score=float(s),
-        )
-        for p, s in zip(probs.tolist(), scores.tolist())
-    ]
+    predictions = [Prediction(shortage_prob_7d=float(p)) for p in probs.tolist()]
     return {"predictions": predictions}
