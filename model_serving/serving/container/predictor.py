@@ -3,7 +3,7 @@ ONNXPredictor — loads model.onnx at container startup (from a mounted
 directory, or downloaded from GCS) and runs inference via onnxruntime.
 
 Inputs received from batch_scorer.py (vocab mapping is done client-side;
-standardization happens inside the ONNX graph — see ADR-005 Decision 3):
+standardization happens inside the ONNX graph):
   numeric_features : float32 (batch, n)   — raw feature units in
                                             NUMERIC_FEATURE_COLS order; n is
                                             read from the ONNX graph at startup

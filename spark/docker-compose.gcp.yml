@@ -5,7 +5,7 @@
 #
 #   docker compose -f docker-compose.spark.yml -f docker-compose.gcp.yml up -d
 #
-# The key is created outside Terraform (ADR-003 Decision 7) and gitignored:
+# The key is created outside Terraform and gitignored:
 #   gcloud iam service-accounts keys create infrastructure/gcp/keys/scip-spark-sa.json \
 #       --iam-account scip-spark-sa@<project>.iam.gserviceaccount.com
 # It is kept out of the base file because a bind mount of a missing host file

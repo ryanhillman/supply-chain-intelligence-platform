@@ -14,7 +14,7 @@ Flow
    model_serving/serving/container/main.py). stockout_risk_score is the
    closed-form Normal-approximation P(stockout ≤ 7d) that RequestBuilder
    computes from the raw features — the same formula as the
-   continuous_risk_score training column (ADR-004 Decision 6).
+   continuous_risk_score training column.
 4. For each prediction: build a JSON Pub/Sub message and publish to the
    prediction-results topic.
 
@@ -374,7 +374,7 @@ class BatchScorer:
             logger.warning(
                 "DISTRIBUTION SHIFT ALERT: shortage_prob_7d std=%.4f < %.2f. "
                 "Model predictions have collapsed to a near-constant value. "
-                "Run monitor.py to check feature drift (ADR-005 Decision 7).",
+                "Run monitor.py to check feature drift.",
                 stats.prob_std, _VARIANCE_COLLAPSE_THRESHOLD,
             )
 

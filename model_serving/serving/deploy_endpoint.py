@@ -5,7 +5,7 @@ Design
 ------
 - Reads the model to deploy from local model_serving/artifacts/registration_info.json
   (written by register_model.py) or from --model-resource-name CLI arg.
-- Deploys at 0% traffic by default (challenger pattern per ADR-005 Decision 6).
+- Deploys at 0% traffic by default (challenger pattern).
 - Records the deployed model ID in model_serving/artifacts/deployment_info.json and
   in GCS for traceability.
 

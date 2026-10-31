@@ -58,7 +58,7 @@ resource "google_vertex_ai_endpoint" "shortage_predictor" {
   location     = var.region
   name         = "shortage-predictor-endpoint"
   display_name = "SCIP Shortage Predictor"
-  description  = "Serves the ShortagePredictor ONNX model for 7-day stockout risk scoring (ADR-005)"
+  description  = "Serves the ShortagePredictor ONNX model for 7-day stockout risk scoring"
 
   labels = local.common_labels
 

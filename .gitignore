@@ -6,11 +6,17 @@
 # =============================================================================
 
 
+# ── Architecture decision records ─────────────────────────────────────────────
+# Kept locally while they are being verified; not published.
+docs/adr/
+
+
 # ── Service account keys ──────────────────────────────────────────────────────
 # Created via: gcloud iam service-accounts keys create keys/<name>.json
-# Mounted read-only into containers. Never managed by Terraform (see ADR-003
-# Decision 7). Both key locations are excluded — the spark/keys/ path is a
-# Docker mount target and must remain blocked even when the file is empty.
+# Mounted read-only into containers. Never managed by Terraform, so the key
+# stays out of Terraform state. Both key locations are excluded — the
+# spark/keys/ path is a Docker mount target and must remain blocked even when
+# the file is empty.
 **/keys/*.json
 **/keys/*.p12
 **/keys/*.pem
