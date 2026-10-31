@@ -55,17 +55,17 @@ docker compose -f spark/docker-compose.spark.yml up -d spark-bronze
 ```
 
 Bronze writes Parquet under `spark/data/bronze/<topic>/...` every 30 seconds.
-After a few minutes, run Silver once over everything in Bronze (stop Bronze
-first if Docker Desktop is short on memory; the two jobs are 1.5 GB each):
+Once it has caught up, run Silver (stop Bronze first if Docker Desktop is short
+on memory; each job takes up to 1.5 GB):
 
 ```
 docker compose -f spark/docker-compose.spark.yml stop spark-bronze
 docker compose -f spark/docker-compose.spark.yml run --rm spark-silver-batch
 ```
 
-Silver writes `spark/data/silver/` and one feature row per (warehouse, SKU) into
-the Bigtable emulator. `spark-silver` (the streaming variant) is still there for
-`up -d`, as in the June deployment.
+Silver computes one feature row per (warehouse, SKU) as of the latest day in
+Bronze, writes it to `spark/data/silver/`, and writes the same rows into the
+Bigtable emulator. Pass `-e SILVER_AS_OF=YYYY-MM-DD` to compute an earlier date.
 
 ## 4. Build the dataset and train
 

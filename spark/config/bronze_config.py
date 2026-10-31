@@ -28,9 +28,6 @@ SILVER_BASE_PATH: str = os.environ.get("SILVER_BASE_PATH", "data/silver")
 CHECKPOINT_BASE_PATH: str = os.environ.get(
     "CHECKPOINT_BASE_PATH", "data/checkpoints/scip-spark-bronze"
 )
-SILVER_CHECKPOINT_BASE_PATH: str = os.environ.get(
-    "SILVER_CHECKPOINT_BASE_PATH", "data/checkpoints/scip-spark-silver"
-)
 DLQ_BASE_PATH: str = os.environ.get("DLQ_BASE_PATH", "data/dlq")
 
 # ── Bigtable ──────────────────────────────────────────────────────────────────
