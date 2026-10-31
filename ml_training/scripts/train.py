@@ -2,8 +2,8 @@
 train.py — CLI entry point for Phase 4 model training.
 
 Loads the dataset built by build_dataset.py, trains ShortagePredictor,
-evaluates on the test split, exports to ONNX, and optionally uploads
-all artifacts to GCS for Phase 5 readiness.
+evaluates on the test split and exports to ONNX. Uploading and registering
+a version is model_serving/scripts/register.py's job.
 
 Usage
 -----
@@ -12,15 +12,11 @@ Usage
         --artifacts ml_training/artifacts \\
         --epochs 100 \\
         --batch-size 64
-
-Optional GCS upload:
-    python ml_training/scripts/train.py ... --upload-bucket my-project-scip-lake
 """
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -58,16 +54,6 @@ def parse_args() -> argparse.Namespace:
         "--loss",
         choices=["bce", "weighted_bce"],
         default="bce",
-    )
-    p.add_argument(
-        "--upload-bucket",
-        default=None,
-        help="GCS bucket to upload artifacts to (optional). "
-             "Writes to gs://<bucket>/models/shortage-predictor/v<timestamp>/",
-    )
-    p.add_argument(
-        "--sa-key",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
     )
     return p.parse_args()
 
@@ -117,41 +103,11 @@ def main() -> None:
     onnx_path = export_to_onnx(artifacts_dir=output)
     logger.info("ONNX written to %s", onnx_path)
 
-    # Optional GCS upload
-    if args.upload_bucket:
-        _upload_to_gcs(output, args.upload_bucket, args.sa_key)
-
     training_status = "PASSED" if report.get("outperforms_baseline") else "FAILED"
     print(f"\nPhase 4 training complete — success criterion: {training_status}")
     if not report.get("outperforms_baseline"):
         print("  Model did not outperform baseline on all metrics.")
         print("  Consider: more data, longer training, hyperparameter tuning.")
-
-
-def _upload_to_gcs(artifacts_dir: Path, bucket: str, sa_key: str | None) -> None:
-    """Upload model artifacts to GCS at a timestamped version path."""
-    from datetime import datetime, timezone
-    import gcsfs
-
-    version    = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    gcs_prefix = f"{bucket}/models/shortage-predictor/v{version}"
-    fs         = gcsfs.GCSFileSystem(token=sa_key if sa_key else "google_default")
-
-    upload_files = [
-        "model.pt",
-        "model.onnx",
-        "feature_metadata.json",
-        "training_metrics.json",
-        "evaluation_test.json",
-    ]
-    for fname in upload_files:
-        src = artifacts_dir / fname
-        if src.exists():
-            dst = f"{gcs_prefix}/{fname}"
-            fs.put(str(src), dst)
-            logger.info("Uploaded %s → gs://%s", fname, dst)
-
-    logger.info("Artifacts uploaded to gs://%s/", gcs_prefix)
 
 
 if __name__ == "__main__":
