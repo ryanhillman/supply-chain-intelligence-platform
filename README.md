@@ -25,7 +25,7 @@ The video was recorded from the code tagged [`demo-2026-06`](https://github.com/
 
 ## Business Problem
 
-Inventory shortages and excess stock are two of the most operationally expensive failure modes in distribution-scale supply chains. 
+Inventory shortages and excess stock are two of the most expensive operational failures in large-scale supply chains.
 
 Inventory shortages create lost revenue while excess inventory increases carrying costs.
 
