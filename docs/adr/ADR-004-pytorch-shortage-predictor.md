@@ -143,7 +143,7 @@ until final evaluation — it is not used for hyperparameter tuning or early sto
 ```
 warehouse_id  → Embedding(6,  dim=3)  ┐
 sku_id        → Embedding(20, dim=5)  ┤ concatenated → [29]
-numeric (21)  → StandardScaler        ┘
+numeric (21)  → Standardize(μ, σ)    ┘
                       ↓
     Linear(29→64) + BatchNorm1d + ReLU + Dropout(0.30)
                       ↓
@@ -236,10 +236,10 @@ gs://{bucket}/models/shortage-predictor/v{YYYYMMDD_HHMMSS}/
 ```
 Timestamped versioning enables champion/challenger comparison in Phase 5.
 
-**StandardScaler** (`preprocessor.pkl`) is written to `ml_training/artifacts/dataset/`
-(the dataset directory, not the model directory) because it is a dataset-level
-artifact. The `ShortagePredictor` inference class accepts a `dataset_dir` parameter
-to locate it.
+**Standardization statistics** (`feature_mean`, `feature_scale`) are fit on the
+train split and written to `feature_metadata.json`; the model registers them as
+fixed buffers, so they ship inside `model.pt` and `model.onnx`. There is no
+separate preprocessor artifact (see ADR-005 Decision 3).
 
 ---
 

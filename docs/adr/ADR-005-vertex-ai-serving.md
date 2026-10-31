@@ -82,18 +82,28 @@ and the latest prediction.
 
 ---
 
-## Decision 3 — Client-Side Feature Scaling
+## Decision 3 — Standardization Lives Inside the Model Graph
 
-**Chosen:** `batch_scorer.py` applies `StandardScaler.transform()` (loaded from
-`preprocessor.pkl`) before calling the Vertex AI Endpoint. The endpoint receives
-already-scaled numeric features.
+**Chosen:** `ShortagePredictor` standardizes its own numeric inputs. The
+per-feature mean and scale are fit on the training split by `DatasetBuilder`,
+stored in `feature_metadata.json` (`feature_mean`, `feature_scale`), and
+registered as fixed buffers — not parameters — in the model. They are exported
+inside `model.onnx`, so the Vertex AI endpoint takes raw Silver-scale features
+and `batch_scorer.py` sends them unchanged.
 
-**Rejected:** Loading `preprocessor.pkl` inside the Vertex AI serving container.
+**Rejected:** Client-side scaling with a pickled `StandardScaler`
+(`preprocessor.pkl`) loaded from the operator's local dataset directory.
 
-**Rationale:** The scaler is a dataset artifact fit on the training split, not
-part of the model graph. Loading it into the serving container would couple a data
-preprocessing artifact to the model registry lifecycle. The endpoint's ONNX model
-expects pre-scaled inputs — this contract is explicit in `feature_metadata.json`.
+**Rationale:** The earlier version of this decision argued the scaler was "a
+dataset artifact, not part of the model graph" and should stay out of the
+container. That had it backwards. The scaler is fit on the training split and is
+part of the model: the weights are only meaningful for inputs standardized with
+exactly those statistics. Keeping it in a local pickle meant nothing tied the
+scaler a scorer used to the model version the endpoint served — retraining
+locally without redeploying would silently score every row with the wrong
+statistics. Folding it into the graph makes the ONNX file self-contained, removes
+`preprocessor.pkl` and the scikit-learn dependency from the serving side, and
+leaves the client with one job: map warehouse and SKU strings to vocab indices.
 
 ---
 
@@ -112,7 +122,7 @@ and exposes a Vertex AI-compatible `/predict` REST endpoint.
 | **Custom FastAPI + ONNX Runtime** | ~80 lines, portable, explicit `/health` + `/predict` contract, local smoke test via `curl`. |
 
 **Container inputs:**
-- `numeric_features`: float32, shape `[batch, 21]` (pre-scaled)
+- `numeric_features`: float32, shape `[batch, 21]` (raw feature units; standardized inside the graph)
 - `warehouse_ids`: int64, shape `[batch]`
 - `sku_ids`: int64, shape `[batch]`
 
@@ -252,8 +262,8 @@ detection is not yet wired into an automated block.
 
 ## Decision 8 — PSI-Based Retraining Trigger (Implementation)
 
-**Chosen:** `drift_monitor.py` computes PSI using the training distribution
-statistics stored in `preprocessor.pkl` as the reference. Current feature values
+**Chosen:** `drift_monitor.py` computes PSI using the raw training rows in
+`train.parquet` as the reference distribution. Current feature values
 are read from Bigtable rather than Silver, matching the exact feature values that
 were presented to the model at inference.
 
@@ -273,13 +283,13 @@ PSI = Σ (p_actual - p_expected) × ln(p_actual / p_expected)
 Bin edges are the training distribution's own (deduplicated) deciles, read
 directly from `train.parquet`, with `p_expected` set to each bin's *actual*
 training fraction rather than assumed to be a uniform 10%. An earlier version
-derived bin edges from normal quantiles of `preprocessor.pkl`'s
-(`mean_`, `scale_`) instead; that assumption badly misrepresents the skewed
+derived bin edges from normal quantiles of the training (`mean`, `scale`)
+instead; that assumption badly misrepresents the skewed
 features monitored here (`sales_7d`, `avg_daily_sales_7d`,
 `supplier_reliability`) and was confirmed to produce PSI ≥ 6 — a spurious
 TRIGGER — even when fed the training data against itself. Falls back to the
 normal-quantile approximation (with a logged warning) only if `train.parquet`
-isn't available alongside `preprocessor.pkl`. Bins with zero observed count
+isn't available in the dataset directory. Bins with zero observed count
 use a floor of 0.0001 to avoid log(0).
 
 **Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud

@@ -17,8 +17,9 @@ predictions today. A human has to act on the report.
 
 Flow
 ----
-1. Load StandardScaler (mean_, scale_) from preprocessor.pkl.
-   These encode the training distribution for all 21 NUMERIC_FEATURE_COLS.
+1. Load feature_metadata.json (feature_mean / feature_scale fit on the train
+   split, for the report and the normal-approximation fallback) and the raw
+   train.parquet rows (for the empirical PSI bins).
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
    - fill_defaults() + engineer_features() derive all 21 features.
@@ -51,7 +52,7 @@ PSI formula
               drift for skewed features (sales, supplier_reliability).
       E_i   = 0.10 (expected training fraction per bin, equal by construction)
       A_i   = actual fraction of current Bigtable values in bin i
-      μ, σ  = scaler.mean_[feature_idx], scaler.scale_[feature_idx]
+      μ, σ  = feature_mean[i], feature_scale[i] from feature_metadata.json
 
     Zero-count bins replaced with ε=1e-4 to avoid log(0).
 
@@ -59,7 +60,6 @@ Required packages:
     numpy>=1.26.0
     pandas>=2.1.0
     scipy>=1.11.0          (for normal quantile bins)
-    scikit-learn>=1.3.0
     google-cloud-bigtable>=2.22.0
 
 Optional:
@@ -70,7 +70,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -187,7 +186,7 @@ class DriftMonitor:
         Directory containing feature_metadata.json.
         Default: "ml_training/artifacts"
     dataset_dir:
-        Directory containing preprocessor.pkl.
+        Directory containing train.parquet (raw training rows for the PSI bins).
         Default: "ml_training/artifacts/dataset"
     table_id:
         Bigtable table ID (default "inventory_features").
@@ -211,8 +210,9 @@ class DriftMonitor:
         self._artifacts_dir = Path(artifacts_dir)
         self._dataset_dir   = Path(dataset_dir)
 
-        self._scaler   = self._load_scaler()
-        self._metadata = self._load_metadata()
+        self._metadata      = self._load_metadata()
+        self._feature_mean  = np.asarray(self._metadata["feature_mean"],  dtype=float)
+        self._feature_scale = np.asarray(self._metadata["feature_scale"], dtype=float)
         self._training_quantiles = self._load_training_quantiles()
 
         # Import from ml_training — sys.path must include the repo root.
@@ -257,7 +257,7 @@ class DriftMonitor:
         self._table     = self._bigtable_client.instance(instance_id).table(table_id)
 
         logger.info(
-            "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  scaler_features=%d",
+            "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
             instance_id, table_id, self._dataset_dir,
             len(self._NUMERIC_FEATURE_COLS),
         )
@@ -633,15 +633,13 @@ class DriftMonitor:
         """
         Compute PSI and status for one monitored feature.
 
-        The training distribution is approximated as N(μ, σ) where μ and σ
-        are taken from StandardScaler.mean_[i] and StandardScaler.scale_[i].
-        This is an approximation — actual training data is not needed at
-        inference time, but the scaler's fit statistics encode the same
-        distributional information.
+        μ and σ (training_mean / training_std in the report) come from
+        feature_metadata.json; the PSI bins themselves come from the raw
+        training rows loaded by _load_training_quantiles.
         """
         idx          = self._feature_to_idx[feature_name]
-        train_mean   = float(self._scaler.mean_[idx])
-        train_std    = float(self._scaler.scale_[idx])
+        train_mean   = float(self._feature_mean[idx])
+        train_std    = float(self._feature_scale[idx])
         bin_edges, expected = self._training_quantiles.get(feature_name, (None, None))
 
         if not current_values:
@@ -1054,21 +1052,6 @@ class DriftMonitor:
 
     # ── Artifact loading ───────────────────────────────────────────────────────
 
-    def _load_scaler(self):
-        path = self._dataset_dir / "preprocessor.pkl"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"preprocessor.pkl not found at {path}. "
-                "Run ml_training/scripts/build_dataset.py or download from GCS."
-            )
-        with open(path, "rb") as f:
-            scaler = pickle.load(f)
-        logger.info(
-            "Loaded StandardScaler: %d features, mean range [%.2f, %.2f]",
-            len(scaler.mean_), float(scaler.mean_.min()), float(scaler.mean_.max()),
-        )
-        return scaler
-
     def _load_metadata(self) -> dict:
         path = self._artifacts_dir / "feature_metadata.json"
         if not path.exists():
@@ -1083,7 +1066,7 @@ class DriftMonitor:
         """
         Empirical bin edges AND expected fractions for each monitored
         feature, computed from the real training distribution
-        (train.parquet, alongside preprocessor.pkl in dataset_dir).
+        (train.parquet in dataset_dir; raw feature units).
 
         These are the correct PSI bins regardless of the feature's shape
         — unlike bins derived from a normal-distribution assumption (the
@@ -1105,15 +1088,15 @@ class DriftMonitor:
 
         Returns {} (triggering the normal-distribution fallback, with a
         warning) if train.parquet isn't available — e.g. a deployment
-        that ships only preprocessor.pkl and feature_metadata.json.
+        that ships only feature_metadata.json.
         """
         train_path = self._dataset_dir / "train.parquet"
         if not train_path.exists():
             logger.warning(
                 "train.parquet not found at %s — PSI will fall back to a "
                 "normal-distribution approximation, which overstates drift "
-                "for skewed features. Copy train.parquet alongside "
-                "preprocessor.pkl to fix this.",
+                "for skewed features. Copy train.parquet into the dataset "
+                "directory to fix this.",
                 train_path,
             )
             return {}

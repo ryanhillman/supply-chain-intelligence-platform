@@ -3,7 +3,7 @@ SmokeTest — validates the deployed Vertex AI endpoint with real Bigtable rows.
 
 Flow
 ----
-1. Load preprocessor.pkl and feature_metadata.json (from GCS or local artifacts).
+1. Load feature_metadata.json (vocab maps) from the local artifacts directory.
 2. Try to read up to N rows from Bigtable inventory_features table.
    - If Bigtable is unavailable: fall back to synthetic zero-vector instances
      with a clear warning. See note below on expected outputs.
@@ -13,7 +13,6 @@ Flow
    - Fill missing raw features with safe domain defaults (_fill_defaults).
    - Compute derived features (days_of_supply, effective_supply, etc.) via
      engineer_features() from ml_training.datasets.feature_engineer.
-   - Apply StandardScaler.transform() to get scaled inputs.
    - Map warehouse_id / sku_id strings to vocab ints.
 4. POST to /predict via aiplatform.Endpoint.predict().
 5. Assert all shortage_prob_7d and stockout_risk_score values are:
@@ -38,7 +37,6 @@ Required packages:
     google-cloud-aiplatform>=1.38.0
     google-cloud-bigtable>=2.22.0
     google-cloud-storage>=2.16.0
-    scikit-learn>=1.3.0
     numpy>=1.26.0
     pandas>=2.1.0
 """
@@ -46,7 +44,6 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 import struct
 import sys
 from pathlib import Path
@@ -92,8 +89,6 @@ class SmokeTest:
     artifacts_dir:
         Local or GCS path to feature_metadata.json.
         If local, checked first; GCS used as fallback.
-    dataset_dir:
-        Local or GCS path to preprocessor.pkl.
     credentials_path:
         Path to SA key JSON. None = application default credentials.
     """
@@ -104,14 +99,12 @@ class SmokeTest:
         region: str,
         endpoint_resource_name: str,
         artifacts_dir: str | Path = "ml_training/artifacts",
-        dataset_dir: str | Path = "ml_training/artifacts/dataset",
         credentials_path: str | None = None,
     ) -> None:
         self.project_id             = project_id
         self.region                 = region
         self.endpoint_resource_name = endpoint_resource_name
         self.artifacts_dir          = Path(artifacts_dir)
-        self.dataset_dir            = Path(dataset_dir)
 
         if credentials_path:
             from google.oauth2 import service_account
@@ -129,7 +122,6 @@ class SmokeTest:
         aiplatform.init(**init_kwargs)
 
         self._metadata = self._load_feature_metadata()
-        self._scaler   = self._load_scaler()
         self._wh_vocab : dict[str, int] = self._metadata["warehouse_vocab"]
         self._sku_vocab: dict[str, int] = self._metadata["sku_vocab"]
 
@@ -260,7 +252,7 @@ class SmokeTest:
         warehouse_id: str,
         sku_id: str,
     ) -> dict | None:
-        """Apply fill_defaults → engineer_features → scaler → vocab mapping."""
+        """Apply fill_defaults → engineer_features → vocab mapping (raw units)."""
         wh_vocab_id  = self._wh_vocab.get(warehouse_id)
         sku_vocab_id = self._sku_vocab.get(sku_id)
 
@@ -281,12 +273,11 @@ class SmokeTest:
         # Compute derived features (days_of_supply, effective_supply, etc.)
         df = engineer_features(df)
 
-        # Scale numeric features
-        x_raw    = df[NUMERIC_FEATURE_COLS].values.astype(np.float32)
-        x_scaled = self._scaler.transform(x_raw).squeeze(0).tolist()
+        # Raw numeric features; the ONNX graph standardizes (ADR-005 Decision 3).
+        x_raw = df[NUMERIC_FEATURE_COLS].values.astype(np.float32).squeeze(0).tolist()
 
         return {
-            "numeric_features": x_scaled,
+            "numeric_features": x_raw,
             "warehouse_id":     wh_vocab_id,
             "sku_id":           sku_vocab_id,
         }
@@ -375,16 +366,6 @@ class SmokeTest:
         raise FileNotFoundError(
             f"feature_metadata.json not found at {local}. "
             "Run ml_training/scripts/train.py or download from GCS artifact path."
-        )
-
-    def _load_scaler(self):
-        local = self.dataset_dir / "preprocessor.pkl"
-        if local.exists():
-            with open(local, "rb") as f:
-                return pickle.load(f)
-        raise FileNotFoundError(
-            f"preprocessor.pkl not found at {local}. "
-            "Run ml_training/scripts/build_dataset.py or download from GCS artifact path."
         )
 
 
