@@ -21,6 +21,8 @@ Partition columns (warehouse_id, sku_id, year, month, day) appended last.
 """
 from __future__ import annotations
 
+import pyspark.sql.functions as F
+from pyspark.sql import DataFrame
 from pyspark.sql.types import (
     DoubleType,
     IntegerType,
@@ -137,3 +139,25 @@ SILVER_PARTITION_COLS: list[str] = ["warehouse_id", "year", "month", "day"]
 # Columns that uniquely identify a feature snapshot row.
 # Used for deduplication via dropDuplicates() before Silver write.
 SILVER_DEDUP_COLS: list[str] = ["warehouse_id", "sku_id", "window_end"]
+
+
+def conform_to_silver_schema(df: DataFrame) -> DataFrame:
+    """
+    Exactly SILVER_FEATURE_SCHEMA's columns, in order, cast to its types.
+
+    Raises ValueError if a schema column is missing from `df` or a
+    non-nullable column holds nulls, so a feature change that breaks the
+    Silver contract fails the job instead of writing a different layout.
+    """
+    fields  = SILVER_FEATURE_SCHEMA.fields
+    missing = [f.name for f in fields if f.name not in df.columns]
+    if missing:
+        raise ValueError(f"Silver output is missing schema columns: {missing}")
+
+    out = df.select([F.col(f.name).cast(f.dataType).alias(f.name) for f in fields])
+    required = [f.name for f in fields if not f.nullable]
+    nulls = out.select([F.sum(F.col(c).isNull().cast("int")).alias(c) for c in required]).first().asDict()
+    bad = {c: n for c, n in nulls.items() if n}
+    if bad:
+        raise ValueError(f"Null values in non-nullable Silver columns: {bad}")
+    return out
