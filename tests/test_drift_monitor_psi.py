@@ -20,9 +20,9 @@ monitor's baseline travels with the model artifacts. There is no approximate
 fallback: a missing reference is an error.
 
 supplier_reliability is computed per warehouse, so it is checked per
-warehouse against its training p1-p99 instead of with PSI; the last tests pin
-why (PSI over six live values trips on unchanged data) and how the range
-check behaves.
+warehouse against its training p1-p99 instead of with PSI, as an informational
+warning; the last tests pin why (PSI over six live values trips on unchanged
+data) and how the range check behaves.
 
 DriftMonitor.__init__ needs a live Bigtable client, so these tests build an
 instance via __new__ and call the pure methods directly.
@@ -206,7 +206,7 @@ def test_psi_over_six_warehouse_values_trips_on_unchanged_data():
     assert _monitor()._compute_psi(live, edges, expected) >= dm._PSI_WARNING_THRESHOLD
 
 
-def test_range_check_passes_unchanged_warehouses_and_flags_shifted_ones(tmp_path):
+def test_range_check_passes_unchanged_warehouses_and_warns_on_shifted_ones(tmp_path):
     train_df = _raw_training_frame()
     path = write_drift_reference(build_drift_reference(train_df), tmp_path / "drift_reference.json")
     monitor = _monitor(tmp_path)
@@ -219,7 +219,7 @@ def test_range_check_passes_unchanged_warehouses_and_flags_shifted_ones(tmp_path
 
     live.loc[live.warehouse_id == "W-003", "supplier_reliability"] -= 0.2
     bad = monitor._check_warehouse_range("supplier__supplier_reliability", "supplier_reliability", live)
-    assert bad.status == "trigger" and bad.out_of_range == ["W-003"]
+    assert bad.status == "warning" and bad.out_of_range == ["W-003"]
 
 
 def test_a_warehouse_without_a_training_range_is_flagged():
