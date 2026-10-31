@@ -127,12 +127,17 @@ def write_bronze(df: DataFrame, topic: str, epoch_id: int) -> None:
 
     Partition layout: {BRONZE_BASE_PATH}/{topic}/event_type={t}/year={y}/month={m}/day={d}/
     Mode: append — Bronze is immutable; duplicates are expected and tolerated.
+
+    Rows are repartitioned by the partition columns first, so each directory
+    gets one file from one task. A replay batch spans weeks of simulated days;
+    without this every input task writes a file into every date directory.
     """
     output_path = f"{BRONZE_BASE_PATH}/{topic}"
     row_count = df.count()
 
     (
         df
+        .repartition("event_type", "year", "month", "day")
         .write
         .mode("append")
         .partitionBy("event_type", "year", "month", "day")
