@@ -18,8 +18,8 @@ TRIGGER_INTERVAL: str = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
 GCP_PROJECT_ID: str = os.environ.get("GCP_PROJECT_ID", "")
 
 # ── Storage paths ─────────────────────────────────────────────────────────────
-# Phase 2+: gs://... paths written to GCS.
-# Phase 1 fallback: local data/ paths (for unit tests / no-GCP dev).
+# Local filesystem by default (spark/data/ through the /opt/spark-app mount;
+# see .env.example). The June 2026 GCP deployment set these to gs:// URIs.
 BRONZE_BASE_PATH: str = os.environ.get("BRONZE_BASE_PATH", "data/bronze")
 SILVER_BASE_PATH: str = os.environ.get("SILVER_BASE_PATH", "data/silver")
 CHECKPOINT_BASE_PATH: str = os.environ.get(

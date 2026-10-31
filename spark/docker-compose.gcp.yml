@@ -1,0 +1,23 @@
+# Override for the GCP deployment (June 2026): mounts the Spark service-account
+# key that the GCS connector reads through the keyfile --conf in
+# docker-compose.spark.yml. Use it with gs:// storage paths in .env and no
+# BIGTABLE_EMULATOR_HOST:
+#
+#   docker compose -f docker-compose.spark.yml -f docker-compose.gcp.yml up -d
+#
+# The key is created outside Terraform (ADR-003 Decision 7) and gitignored:
+#   gcloud iam service-accounts keys create infrastructure/gcp/keys/scip-spark-sa.json \
+#       --iam-account scip-spark-sa@<project>.iam.gserviceaccount.com
+# It is kept out of the base file because a bind mount of a missing host file
+# makes Docker create a directory in its place.
+
+x-key: &key
+  - ../infrastructure/gcp/keys/scip-spark-sa.json:/opt/spark-app/keys/scip-spark-sa.json:ro
+
+services:
+  spark-bronze:
+    volumes: *key
+  spark-silver:
+    volumes: *key
+  spark-silver-batch:
+    volumes: *key
