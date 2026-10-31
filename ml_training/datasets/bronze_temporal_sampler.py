@@ -77,7 +77,7 @@ class BronzeTemporalSampler:
         Default Credentials (bucket mode only).
     min_lookback_days:
         Days of history required before the first sample date (default 30,
-        matches the 30d velocity window in silver_feature_engineering.py).
+        matches the 30d velocity window in spark/jobs/silver_features.py).
     min_lookahead_days:
         Days of future data required after the last sample date (default 7,
         matches the shortage prediction horizon).
@@ -313,7 +313,7 @@ class BronzeTemporalSampler:
         pair with sparse or late-starting history can still be sampled
         during its individual cold start). Dividing by a fixed constant in
         that case manufactures a velocity_trend artifact exactly like the
-        one fixed in spark/jobs/silver_feature_engineering.py's
+        one fixed in spark/jobs/silver_features.py's
         _compute_velocity: when sales_7d == sales_30d (no sales before the
         last 7 days), trend becomes a numeric artifact of the window-length
         ratio rather than a real trend. This matters more here than in the
@@ -385,7 +385,7 @@ class BronzeTemporalSampler:
     ) -> pd.DataFrame:
         """
         90-day rolling supplier lead time and reliability per (warehouse, date).
-        Aggregated at warehouse level, matching silver_feature_engineering.py.
+        Aggregated at warehouse level, matching spark/jobs/silver_features.py.
         """
         sup_sorted = sup.sort_values("ts")
         rows: list[dict] = []

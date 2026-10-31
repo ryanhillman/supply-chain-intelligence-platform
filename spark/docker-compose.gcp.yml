@@ -17,7 +17,5 @@ x-key: &key
 services:
   spark-bronze:
     volumes: *key
-  spark-silver:
-    volumes: *key
   spark-silver-batch:
     volumes: *key
