@@ -3,14 +3,12 @@ drift_monitor.py — feature distribution shift and prediction variance monitori
 
 Background (ADR-005 Decision 7)
 ---------------------------------
-The Phase 4 model was trained on 60x-tiled Bronze data:
-  avg_daily_sales_7d (training) ≈ 2,785  units/day
-  avg_daily_sales_7d (real)     ≈   207  units/day
-  deviation                     ≈ -9.5 σ
-
-This 13× velocity inflation collapses model predictions to prob≈0, score≈1 for all
-120 entities. PSI monitoring detects this shift and flags it in the printed
-report / drift_report.json. This is advisory only -- per ADR-005 Decision 7's
+The June 2026 model was trained on tiled events whose velocity features sat
+far outside the live ones (days_of_supply +46σ), and every prediction
+collapsed to the same value. This monitor detects that kind of shift: feature
+PSI against the training split, prediction spread, and agreement with the
+reorder-urgency rule, flagged in the printed report / drift_report.json.
+This is advisory only -- per ADR-005 Decision 7's
 implementation note, nothing in score.py, batch_scorer.py, or promote_model.py
 reads requires_retraining back, so it does not actually block or reject
 predictions today. A human has to act on the report.
@@ -659,9 +657,9 @@ class DriftMonitor:
 
             if pm.prob_variance_collapsed or pm.score_variance_collapsed:
                 print(
-                    "\n  [NOTE] Variance collapse with prob~0 + score~1 is expected given the\n"
-                    "         current model's training/inference distribution mismatch\n"
-                    "         (ADR-005 Decision 7). This confirms retraining is required."
+                    "\n  [NOTE] Near-constant predictions mean the model no longer separates\n"
+                    "         entities. Check the feature PSI above and retrain\n"
+                    "         (ADR-005 Decision 7)."
                 )
         else:
             print("\nPrediction Variance  — no predictions in Bigtable yet")
@@ -699,14 +697,13 @@ class DriftMonitor:
                 print(f"     - {reason}")
             print()
             print(
-                "  Retraining gate (ADR-005 Decision 7):\n"
-                "    1. Accumulate >= 38 real Bronze days (no --simulate-days flag)\n"
+                "  Retraining (ADR-005 Decision 7):\n"
+                "    1. Rebuild:  python ml_training/scripts/build_dataset.py --bronze-path ...\n"
                 "    2. Retrain:  python ml_training/scripts/train.py\n"
-                "    3. Register: python model_serving/scripts/register.py ...\n"
-                "    4. Deploy:   python model_serving/scripts/deploy.py deploy --traffic 0\n"
-                "    5. Promote:  python model_serving/scripts/deploy.py promote\n"
-                "    6. Re-score: python model_serving/scripts/score.py ...\n"
-                "    7. Re-monitor (this script): PSI should drop below 0.10"
+                "    3. Gate:     python model_serving/scripts/deploy.py promote --local ...\n"
+                "                 (Vertex AI: register.py, deploy.py deploy --traffic 0, then promote)\n"
+                "    4. Re-score: python model_serving/scripts/score.py ...\n"
+                "    5. Re-monitor (this script): PSI should drop below 0.10"
             )
         else:
             print("  No retraining required. All PSI values within stable thresholds.")
