@@ -7,6 +7,7 @@ tests/test_spark_parity.py checks that the two implementations agree.
 """
 from datetime import timedelta
 
+import pandas as pd
 import pytest
 
 from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler
@@ -103,3 +104,39 @@ def test_open_orders_and_shipments_net_out_closed_ones(fixture):
     # The fixture must exercise both open and closed states to mean anything.
     assert saw_open_order and saw_in_transit
     assert any(row.active_po_qty == 0 for _, row in features.iterrows())
+
+
+def _label_window_receipt(topics, features):
+    """A (pair, D) where an order was open at the end of D and received during D's 7-day label window."""
+    po = topics["purchase.orders.events"]
+    received = {p["order_id"]: event_date(p) for p in po if p["event_type"] == "RECEIVED"}
+    sample_dates = set(features["sample_date"])
+    for p in po:
+        if p["event_type"] != "CREATED" or p["order_id"] not in received:
+            continue
+        for d in sorted(sample_dates)[1:]:   # day 31+: a truncated history still passes the span check
+            if event_date(p) <= d < received[p["order_id"]] <= d + timedelta(days=7):
+                return f"{p['warehouse_id']}#{p['sku_id']}", d, p["quantity_ordered"]
+    return None
+
+
+def test_features_on_a_date_use_no_event_after_it(fixture, tmp_path):
+    """
+    Leakage guard. Rebuild the features from only the events up to the end
+    of D: every feature on D must be identical to the full-history value.
+    D is chosen so an order placed before D is received inside D's label
+    window; on D that order must still count as open.
+    """
+    topics, features = fixture
+    found = _label_window_receipt(topics, features)
+    assert found, "fixture has no order received inside a label window"
+    key, d, qty = found
+
+    write_bronze_pandas(tmp_path, [e for e in world_events() if event_date(e.payload) <= d])
+    truncated, _ = BronzeTemporalSampler(bronze_path=tmp_path, min_lookahead_days=0).build()
+
+    cols = [c for c in features.columns if c not in ("warehouse_id", "sku_id", "sample_date")]
+    full_d  = features[features.sample_date == d].set_index(["warehouse_id", "sku_id"]).sort_index()[cols]
+    trunc_d = truncated[truncated.sample_date == d].set_index(["warehouse_id", "sku_id"]).sort_index()[cols]
+    pd.testing.assert_frame_equal(trunc_d, full_d)
+    assert _row(features, key, d).active_po_qty >= qty
