@@ -130,32 +130,6 @@ services:
           --replication-factor 1 \
           --config retention.ms=604800000
 
-        echo "=== Creating DLQ topics ==="
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic inventory.events.dlq \
-          --partitions 1 \
-          --replication-factor 1
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic purchase.orders.events.dlq \
-          --partitions 1 \
-          --replication-factor 1
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic shipments.events.dlq \
-          --partitions 1 \
-          --replication-factor 1
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic suppliers.events.dlq \
-          --partitions 1 \
-          --replication-factor 1
-
         echo "=== Verifying topics ==="
         kafka-topics --bootstrap-server kafka:29092 --list
 

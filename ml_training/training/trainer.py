@@ -23,6 +23,7 @@ from ml_training.datasets.feature_engineer import (
     NUMERIC_FEATURE_COLS,
     TARGET_COL,
 )
+from ml_training.evaluation.drift_reference import build_drift_reference, write_drift_reference
 from ml_training.evaluation.metrics import compute_metrics
 from ml_training.training.config import TrainingConfig
 from ml_training.training.loss import build_loss
@@ -96,7 +97,8 @@ class Trainer:
         Path to the directory containing train.parquet, val.parquet and
         feature_metadata.json.
     output_dir:
-        Directory where model.pt and training_metrics.json are written.
+        Directory where model.pt, training_metrics.json and drift_reference.json
+        are written.
     """
 
     def __init__(
@@ -198,6 +200,14 @@ class Trainer:
 
         # Save training metrics
         _save_training_metrics(history, self.output_dir / "training_metrics.json")
+
+        # Drift reference: PSI bins for the monitored features from the raw
+        # training split, written next to the model so the drift monitor's
+        # baseline travels with the artifacts (see evaluation/drift_reference.py).
+        write_drift_reference(
+            build_drift_reference(train_df),
+            self.output_dir / "drift_reference.json",
+        )
         logger.info(
             "Training complete — best epoch=%d, best val AUPRC=%.4f",
             history.best_epoch, history.best_val_auprc,

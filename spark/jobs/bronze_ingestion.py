@@ -8,7 +8,7 @@ Architecture:
   foreachBatch:
     ├── parse_and_validate()    — JSON parse + required-field check
     ├── valid records           → Bronze GCS Parquet (partitioned)
-    └── invalid records         → DLQ (file or Kafka, per DLQ_SINK)
+    └── invalid records         → DLQ (newline-delimited JSON under DLQ_BASE_PATH)
 
 Bronze contract:
   - Raw and immutable — no field transformations beyond type casting
@@ -31,6 +31,7 @@ sys.path.insert(0, "/opt/spark-app")
 from config.bronze_config import (
     BRONZE_BASE_PATH,
     CHECKPOINT_BASE_PATH,
+    DLQ_BASE_PATH,
     KAFKA_BOOTSTRAP_SERVERS,
     KAFKA_GROUP_ID,
     STARTING_OFFSETS,
@@ -43,8 +44,7 @@ from jobs.schemas.purchase_order_schema import PURCHASE_ORDER_EVENT_SCHEMA
 from jobs.schemas.demand_signal_schema import DEMAND_SIGNAL_SCHEMA
 from jobs.schemas.supplier_schema import SUPPLIER_EVENT_SCHEMA
 from utils.schema_validator import parse_and_validate
-from utils.dlq_handler import get_dlq_handler
-import config.bronze_config as _cfg
+from utils.dlq_handler import write_dlq
 
 logging.basicConfig(
     level=logging.INFO,
@@ -147,7 +147,7 @@ def write_bronze(df: DataFrame, topic: str, epoch_id: int) -> None:
 
 # ── Batch processor factory ────────────────────────────────────────────────────
 
-def make_batch_processor(topic: str, schema, dlq_handler):
+def make_batch_processor(topic: str, schema):
     """
     Return a foreachBatch function for the given topic.
 
@@ -183,7 +183,7 @@ def make_batch_processor(topic: str, schema, dlq_handler):
 
             # Route invalid records to DLQ
             if invalid_count > 0:
-                dlq_handler.write(invalid_df, topic, epoch_id)
+                write_dlq(invalid_df, topic, epoch_id, DLQ_BASE_PATH, KAFKA_GROUP_ID)
 
         finally:
             validated_df.unpersist()
@@ -193,7 +193,7 @@ def make_batch_processor(topic: str, schema, dlq_handler):
 
 # ── Streaming queries ──────────────────────────────────────────────────────────
 
-def build_streaming_queries(spark: SparkSession, dlq_handler) -> list:
+def build_streaming_queries(spark: SparkSession) -> list:
     """
     Build one streaming query per source topic.
 
@@ -220,7 +220,7 @@ def build_streaming_queries(spark: SparkSession, dlq_handler) -> list:
             .load()
         )
 
-        processor = make_batch_processor(topic, schema, dlq_handler)
+        processor = make_batch_processor(topic, schema)
 
         query = (
             kafka_df
@@ -262,14 +262,12 @@ def main() -> None:
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
 
-    dlq_handler = get_dlq_handler(_cfg)
-
     logger.info(
         "Bronze ingestion starting | topics=%s bootstrap=%s bronze=%s",
         SOURCE_TOPICS, KAFKA_BOOTSTRAP_SERVERS, BRONZE_BASE_PATH,
     )
 
-    queries = build_streaming_queries(spark, dlq_handler)
+    queries = build_streaming_queries(spark)
 
     try:
         while True:
