@@ -1,8 +1,9 @@
 # Supply Chain Intelligence Platform
 
-![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
-![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-3.x-black?logo=apachekafka)
-![GCP](https://img.shields.io/badge/GCP-Deployed-4285F4?logo=googlecloud&logoColor=white)
+<p align="center">
+  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white">
+  <img alt="GCP" src="https://img.shields.io/badge/GCP-Deployed-4285F4?logo=googlecloud&logoColor=white">
+</p>
 
 ---
 
@@ -12,21 +13,17 @@ This project demonstrates an end-to-end machine learning platform to predict the
 
 The historical training data is simulated to create realistic warehouse, inventory, supplier, and demand behavior. 
 
-The focus of the project is the platform architecture and MLOps lifecycle rather than validation of inventory data.
-
 ---
 
-## Demo Video
+## [Demo](https://www.youtube.com/watch?v=fpe3sHeRTNs)
 
-**https://www.youtube.com/watch?v=fpe3sHeRTNs**
-
-The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06), which also matches the model version currently deployed on the endpoint. `main` has moved on since (review remediation; see the ADRs and the cost section below). Check out that tag to reproduce the demo exactly.
+The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06).
 
 ---
 
 ## Business Problem
 
-Inventory shortages and excess stock are two of the most operationally expensive failure modes in distribution-scale supply chains. 
+Inventory shortages and excess stock are two of the most expensive operational failures in large-scale supply chains.
 
 Inventory shortages create lost revenue while excess inventory increases carrying costs.
 
@@ -205,54 +202,22 @@ The monitor produces a structured JSON report (`drift_report.json`) and can opti
 
 ---
 
-## Running Cost and Teardown
+## Teardown
 
-Approximate idle run-rate at us-central1 list prices (October 2026):
+Deployed models and the Bigtable node bill while idle. Between sessions, undeploy the endpoint's models (the endpoint resource stays):
 
-| Resource | Idle cost per month | Note |
-|---|---|---|
-| Bigtable, 1 node, SSD | ~$475 | ~$0.65 per node-hour; there is no free tier |
-| Vertex AI endpoint, n1-standard-2 | ~$80 per deployed model | Billed while deployed, even with no traffic; champion + challenger ≈ $160 |
-| GCS, Pub/Sub, Artifact Registry | a few dollars | |
+```
+python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <endpoint-resource-name>
+```
 
-The model itself costs nothing to run. Between demo sessions:
-
-1. Undeploy the endpoint's models (the endpoint resource stays):
-
-   ```
-   python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <endpoint-resource-name>
-   ```
-
-2. Destroy the Bigtable instance. Silver is the durable source of truth, and the next Silver run rebuilds it:
-
-   ```
-   terraform -chdir=infrastructure/gcp destroy -target=google_bigtable_instance.feature_store
-   ```
-
-   A full `terraform destroy` also removes the data-lake bucket in the `dev` environment (`force_destroy = true`), including Bronze, Silver and the registered model artifacts.
-
-3. Before the next session: `terraform apply`, re-run the Silver job, redeploy, then score.
+The Bigtable instance can also be destroyed. After `terraform apply` recreates it, re-running the Silver job repopulates it from Bronze.
 
 ---
 
 ## Key Design Decisions
 
-| Decision | Rationale |
-|-----------|-----------|
-| Bigtable Feature Store | Low-latency online serving and horizontal scalability |
-| ONNX Runtime | Smaller serving footprint and framework-independent deployment |
-| Vertex AI Endpoints | Managed model hosting and deployment lifecycle |
-| Batch Silver Processing | Simpler operations than stateful streaming aggregation |
-| Pub/Sub Prediction Pipeline | Decouples scoring from prediction persistence |
+The stack (Kafka, Spark, Bigtable, PyTorch, Vertex AI) was selected for hands-on experience with each technology, not because 6 warehouses and 20 SKUs require it. The system is sized for the stack, not the data: 120 feature rows fit in Postgres or a Parquet file, and the model could be scored inside the batch job instead of behind an endpoint. On the same test split, LightGBM matches the PyTorch model (AUPRC 0.740 vs 0.732, Brier 0.075 vs 0.076) and is the recommended production choice. The MLP is retained as the learning artifact and comparison row. The decision records document each choice, including designs that were later corrected:
 
-### ADR-003 — Bigtable as Online Feature Store
-
-[Full decision record →](docs/adr/ADR-003-bigtable-feature-store.md)
-
-### ADR-004 — PyTorch Shortage Predictor
-
-[Full decision record →](docs/adr/ADR-004-pytorch-shortage-predictor.md)
-
-### ADR-005 — Vertex AI Serving Architecture
-
-[Full decision record →](docs/adr/ADR-005-vertex-ai-serving.md)
+- [ADR-003 — Bigtable as the online feature store](docs/adr/ADR-003-bigtable-feature-store.md)
+- [ADR-004 — PyTorch shortage predictor](docs/adr/ADR-004-pytorch-shortage-predictor.md)
+- [ADR-005 — Vertex AI serving and prediction storage](docs/adr/ADR-005-vertex-ai-serving.md)
