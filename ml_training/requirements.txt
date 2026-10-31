@@ -11,9 +11,10 @@ scipy>=1.11.0
 # ── sklearn: fits the standardization statistics and computes metrics; not the model ──
 scikit-learn>=1.4.0
 
-# ── PyTorch (CPU-only — installed via --extra-index-url in Dockerfile) ────────
-# Do not install torch here directly; the Dockerfile pip command handles the
-# CPU wheel index. This line is a version constraint only.
+# ── PyTorch (CPU-only) ────────────────────────────────────────────────────────
+# Install the CPU wheel first so this constraint is already satisfied and pip
+# never pulls the multi-GB CUDA build (CI does the same):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
 # >= 2.5: first release with the dynamo= flag on torch.onnx.export, which
 # onnx_export.py uses to pin the TorchScript exporter.
 torch>=2.5.0,<3

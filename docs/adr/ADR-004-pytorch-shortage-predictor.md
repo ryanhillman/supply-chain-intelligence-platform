@@ -26,7 +26,7 @@ defensible business justification that the model improves on a rule-based baseli
 
 ## Decision 1 — Framework: PyTorch
 
-**Chosen:** PyTorch (`torch >= 2.2.0`, CPU-only training image)
+**Chosen:** PyTorch (`torch >= 2.5`, CPU-only wheels; trained on the developer machine or CI, no training image)
 
 **Rejected:**
 - XGBoost / LightGBM — no native ONNX embedding support; harder to extend to
