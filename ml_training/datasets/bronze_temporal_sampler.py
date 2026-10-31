@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Bronze partition columns injected by Parquet directory structure.
 # We keep them during read (PyArrow decodes them automatically) but they are
 # not used for feature computation — the `timestamp` string field is used instead.
-_PARTITION_COLS = {"year", "month", "day", "hour"}
+_PARTITION_COLS = {"year", "month", "day"}
 
 # Field subsets to load per topic (avoids reading unused columns from GCS).
 _INVENTORY_COLS = [
