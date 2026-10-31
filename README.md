@@ -163,7 +163,19 @@ The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, abou
 - AdamW optimizer
 - Early stopping on validation performance
 - ONNX export for production inference
-  
+
+### Test Results
+
+Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8% of them followed by a stockout within 7 days. The in-stock columns cover the 5,464 rows with `current_qty > 0`, leaving out rows that are already out of stock.
+
+| Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
+|---|---|---|---|---|---|---|
+| Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
+| PyTorch MLP (served model) | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
+| LightGBM (comparison, ADR-004) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
+
+The data is simulated, so these numbers describe the model on the simulated world, not on real inventory.
+
 ---
 
 ## Model Serving Pipeline
@@ -196,7 +208,7 @@ The drift monitor compares the live feature distribution (read from Bigtable) ag
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-PSI covers `days_of_supply`, `sales_7d` and `avg_daily_sales_7d`. `supplier_reliability` is computed per warehouse, so a snapshot holds only six values and PSI over them is meaningless; each warehouse's live value is instead checked against that warehouse's training p1–p99. Two more triggers run alongside: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of these is sufficient to recommend retraining.
+PSI covers `days_of_supply`, `sales_7d` and `avg_daily_sales_7d`. `supplier_reliability` is computed per warehouse, so a snapshot holds only six values and PSI over them is meaningless; each warehouse's live value is instead checked against that warehouse's training p1–p99 and an out-of-range warehouse is reported as an informational warning, not a retraining trigger. Two more triggers run alongside: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of these is sufficient to recommend retraining.
 
 The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the PSI, variance and divergence metrics to Cloud Monitoring. All triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
 
@@ -216,7 +228,7 @@ The Bigtable instance can also be destroyed. After `terraform apply` recreates i
 
 ## Key Design Decisions
 
-The stack (Kafka, Spark, Bigtable, PyTorch, Vertex AI) was selected for hands-on experience with each technology, not because 6 warehouses and 20 SKUs require it. The system is sized for the stack, not the data: 120 feature rows fit in Postgres or a Parquet file, and the model could be scored inside the batch job instead of behind an endpoint. On the same test split, LightGBM matches the PyTorch model (AUPRC 0.740 vs 0.732, Brier 0.075 vs 0.076) and is the recommended production choice. The MLP is retained as the learning artifact and comparison row. The decision records document each choice, including designs that were later corrected:
+The stack (Kafka, Spark, Bigtable, PyTorch, Vertex AI) was selected for hands-on experience with each technology, not because 6 warehouses and 20 SKUs require it. The system is sized for the stack, not the data: 120 feature rows fit in Postgres or a Parquet file, and the model could be scored inside the batch job instead of behind an endpoint. On the same test split, LightGBM matches the PyTorch model (AUPRC 0.849 vs 0.839, Brier 0.076 vs 0.078) and is the recommended production choice. The MLP is retained as the learning artifact and comparison row. The decision records document each choice, including designs that were later corrected:
 
 - [ADR-003 — Bigtable as the online feature store](docs/adr/ADR-003-bigtable-feature-store.md)
 - [ADR-004 — PyTorch shortage predictor](docs/adr/ADR-004-pytorch-shortage-predictor.md)

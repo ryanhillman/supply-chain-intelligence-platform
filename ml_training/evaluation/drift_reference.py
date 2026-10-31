@@ -33,7 +33,8 @@ MONITORED_FEATURES: list[tuple[str, str]] = [
 ]
 
 # Features computed per warehouse, checked per warehouse against the training
-# range instead of with PSI (see the drift monitor's docstring).
+# range instead of with PSI and reported as a warning, not a retraining
+# trigger (see the drift monitor's docstring).
 WAREHOUSE_RANGE_FEATURES: list[tuple[str, str]] = [
     ("supplier__supplier_reliability", "supplier_reliability"),
 ]

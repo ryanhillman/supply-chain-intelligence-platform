@@ -170,6 +170,8 @@ Two earlier implementations were incorrect:
 
 The splits are now stored in raw units, so bins and live values share units by construction, and the monitor refuses to run without `drift_reference.json` rather than fall back to an approximation.
 
+`supplier_reliability` is computed per warehouse, so a live snapshot holds six values and decile PSI over them trips on unchanged data (3.96 on the replayed world). It is checked instead per warehouse against that warehouse's training p1–p99, which the same file stores, and an out-of-range warehouse is reported as an informational warning rather than a retraining trigger: it usually reflects seasonality outside the training window.
+
 With `--emit-cloud-monitoring`, the monitor also writes PSI, prediction spread, baseline agreement and the retraining flag as custom Cloud Monitoring metrics. No alert policy is defined in Terraform, so nothing alerts on them.
 
 ## Consequences
