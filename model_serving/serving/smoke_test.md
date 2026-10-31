@@ -12,10 +12,11 @@ Run the uvicorn method first to verify the Python code before building the image
    - `model.onnx.data`
    - `feature_metadata.json`
 
-2. These artifacts have been uploaded to GCS by `model_serving/scripts/register.py`
-   (Phase 5.3). Until then, use a local path override for the uvicorn method.
-
-3. `scip-vertex-sa.json` exists at `infrastructure/gcp/keys/scip-vertex-sa.json`.
+2. Nothing else for the local run: the container reads that directory through
+   `MODEL_LOCAL_PATH`. The GCS variant (`MODEL_GCS_PATH`, how Vertex AI ran the
+   container in June 2026) additionally needs the artifacts uploaded by
+   `model_serving/scripts/register.py` and the key at
+   `infrastructure/gcp/keys/scip-vertex-sa.json`.
 
 ---
 
@@ -34,8 +35,13 @@ pip install -r requirements.txt
 ### 1b. Set environment variables
 
 ```powershell
-$env:MODEL_GCS_PATH = "gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918"
-$env:GOOGLE_APPLICATION_CREDENTIALS = "infrastructure/gcp/keys/scip-vertex-sa.json"
+# Local artifacts (default):
+$env:MODEL_LOCAL_PATH = (Resolve-Path ..\..\..\ml_training\artifacts).Path
+$env:MODEL_VERSION    = "local-dev"
+
+# Or a model registered in GCS (June 2026 deployment):
+# $env:MODEL_GCS_PATH = "gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918"
+# $env:GOOGLE_APPLICATION_CREDENTIALS = "infrastructure/gcp/keys/scip-vertex-sa.json"
 ```
 
 ### 1c. Start the server
@@ -48,13 +54,14 @@ uvicorn main:app --host 0.0.0.0 --port 8080
 
 Expected startup log:
 ```
-INFO  scip.serving — Container startup — loading ONNX model from GCS
-INFO  predictor   — Downloaded gs://.../model.onnx -> /tmp/model/model.onnx (...)
-INFO  predictor   — Downloaded gs://.../model.onnx.data -> /tmp/model/model.onnx.data (...)
-INFO  predictor   — ONNXPredictor ready | version=v20260620_180918 | inputs=[...]
+INFO  scip.serving — Container startup — loading ONNX model
+INFO  predictor   — ONNXPredictor ready | version=local-dev | from=... | inputs=[...]
 INFO  scip.serving — Container ready
 INFO  uvicorn     — Application startup complete.
 ```
+
+(With `MODEL_GCS_PATH`, `Downloaded gs://.../model.onnx -> /tmp/model/...` lines
+appear before the ready line.)
 
 ### 1d. Health check
 
@@ -67,7 +74,7 @@ Expected:
 ```json
 {
   "status": "ok",
-  "model_version": "v20260620_180918",
+  "model_version": "local-dev",
   "n_numeric_features": 21
 }
 ```
@@ -146,13 +153,19 @@ try {
 
 ## Method 2 — Docker (requires Docker build)
 
-Run after Method 1 passes. Do not build until Phase 5.2 is approved.
+Run after Method 1 passes. All commands from the repo root.
 
 ```powershell
-# Build (from model_serving/serving/container/)
-docker build -t shortage-predictor-serving:local .
+# Build
+docker build -t shortage-predictor-serving:local model_serving/serving/container
 
-# Run
+# Run with the local artifacts
+docker run --rm -p 8080:8080 `
+    -e MODEL_LOCAL_PATH=/model -e MODEL_VERSION=local-dev `
+    -v "${PWD}\ml_training\artifacts:/model:ro" `
+    shortage-predictor-serving:local
+
+# Or with a model registered in GCS (June 2026 deployment)
 docker run --rm -p 8080:8080 `
     -e MODEL_GCS_PATH="gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918" `
     -e GOOGLE_APPLICATION_CREDENTIALS="/tmp/key.json" `
