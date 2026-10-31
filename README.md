@@ -177,7 +177,7 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 
 ## Drift Monitoring
 
-The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw training split, written next to the model as `drift_reference.json` so the reference travels with the model, and both sides share units) using **Population Stability Index (PSI)**. PSI thresholds:
+The drift monitor compares live features in Bigtable with the training split using the Population Stability Index (PSI). Its reference bins (deciles of the raw training split) are written next to the model as `drift_reference.json`, so the reference travels with the model. PSI thresholds:
 
 | PSI | Interpretation |
 |---|---|
@@ -185,9 +185,15 @@ The drift monitor compares the live feature distribution (read from Bigtable) ag
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-PSI covers `days_of_supply`, `sales_7d` and `avg_daily_sales_7d`. `supplier_reliability` is computed per warehouse, so a snapshot holds only six values and PSI over them is meaningless; each warehouse's live value is instead checked against that warehouse's training p1–p99 and an out-of-range warehouse is reported as an informational warning, not a retraining trigger. Two more triggers run alongside: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of these is sufficient to recommend retraining.
+Retraining is recommended when any of these trips:
 
-The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the PSI, variance and divergence metrics to Cloud Monitoring. All triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
+- PSI ≥ 0.20 on `days_of_supply`, `sales_7d` or `avg_daily_sales_7d`
+- Prediction variance collapse: standard deviation of `shortage_prob_7d` or `stockout_risk_score` below 0.01 across scored entities
+- Baseline divergence: the model agrees with the `risk__reorder_urgency` rule on more than 95% of entities
+
+`supplier_reliability` is computed per warehouse, so a snapshot holds only six values, too few for PSI. Each warehouse's value is checked against its training p1–p99, and an out-of-range warehouse is reported as a warning, not a trigger.
+
+The monitor writes `drift_report.json` and can emit its metrics to Cloud Monitoring. The report is advisory: nothing reads it back to block scoring or promotion.
 
 ---
 
