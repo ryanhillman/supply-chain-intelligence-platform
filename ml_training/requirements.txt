@@ -4,7 +4,7 @@ pyarrow>=14.0.0
 fsspec>=2024.2.0
 
 # ── Data ──────────────────────────────────────────────────────────────────────
-pandas>=2.1.0
+pandas>=2.1.0,<3       # bronze_temporal_sampler's tz-aware ns-epoch arithmetic targets 2.x
 numpy>=1.26.0
 scipy>=1.11.0
 
