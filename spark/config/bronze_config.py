@@ -9,7 +9,10 @@ import os
 # ── Kafka ─────────────────────────────────────────────────────────────────────
 KAFKA_BOOTSTRAP_SERVERS: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 KAFKA_GROUP_ID: str = os.environ.get("KAFKA_GROUP_ID", "scip-spark-bronze")
-STARTING_OFFSETS: str = os.environ.get("KAFKA_STARTING_OFFSETS", "latest")
+# earliest: the producer replays a year of simulated history and exits, so Bronze
+# must read the topics from the start. Only the first run uses this; after that
+# Spark resumes from the offsets stored in each query's checkpoint.
+STARTING_OFFSETS: str = os.environ.get("KAFKA_STARTING_OFFSETS", "earliest")
 
 # ── Spark ─────────────────────────────────────────────────────────────────────
 TRIGGER_INTERVAL: str = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
