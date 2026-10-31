@@ -1,17 +1,15 @@
 """
 drift_monitor.py — feature distribution shift and prediction variance monitoring.
 
-Background (ADR-005 Decision 7)
----------------------------------
-The June 2026 model was trained on tiled events whose velocity features sat
-far outside the live ones (days_of_supply +46σ), and every prediction
-collapsed to the same value. This monitor detects that kind of shift: feature
+Background
+----------
+A model scored on features unlike its training data keeps returning
+predictions; nothing fails. This monitor detects that kind of shift: feature
 PSI against the training split, prediction spread, and agreement with the
 reorder-urgency rule, flagged in the printed report / drift_report.json.
-This is advisory only -- per ADR-005 Decision 7's
-implementation note, nothing in score.py, batch_scorer.py, or promote_model.py
-reads requires_retraining back, so it does not actually block or reject
-predictions today. A human has to act on the report.
+It is advisory only: nothing in score.py, batch_scorer.py or promote_model.py
+reads requires_retraining back, so it does not block or reject predictions.
+A human has to act on the report.
 
 Flow
 ----
