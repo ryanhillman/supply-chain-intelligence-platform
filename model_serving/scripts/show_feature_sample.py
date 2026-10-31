@@ -282,7 +282,7 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
         reorder   = _fv(rec, "reorder_point")
         safety    = _fv(rec, "safety_stock")
         lt        = _fv(rec, "lead_time_days")
-        print(f"  Inventory")
+        print("  Inventory")
         print(f"    Current Qty        : {cur_qty:>8}    Reorder Point : {reorder:>8}")
         print(f"    Safety Stock       : {safety:>8}    Lead Time     : {lt:>5} days")
 
@@ -291,7 +291,7 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
         s30d  = _fv(rec, "sales_30d")
         ads   = _fv(rec, "avg_daily_sales_7d", fmt=".1f")
         sigs  = _fv(rec, "demand_signal_count_24h")
-        print(f"  Demand & Velocity")
+        print("  Demand & Velocity")
         print(f"    Sales 7d           : {s7d:>8}    Sales 30d     : {s30d:>8}")
         print(f"    Avg Daily Sales    : {ads:>8}    Demand Sigs   : {sigs:>8}")
 
@@ -299,7 +299,7 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
         rel     = _fv(rec, "supplier_reliability", fmt=".3f")
         po_qty  = _fv(rec, "active_po_qty")
         transit = _fv(rec, "in_transit_qty")
-        print(f"  Supply")
+        print("  Supply")
         print(f"    Reliability        : {rel:>8}    Active PO Qty : {po_qty:>8}")
         print(f"    In-Transit Qty     : {transit:>8}")
 
@@ -308,10 +308,10 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
             prob  = rec.get("shortage_prob_7d")
             score = rec.get("stockout_risk_score")
             if prob is not None:
-                print(f"  Model Output")
+                print("  Model Output")
                 print(f"    Shortage Prob 7d   : {prob:>8.3f}    Risk Score    : {score:>8.3f}")
             else:
-                print(f"  Model Output       : (not yet scored)")
+                print("  Model Output       : (not yet scored)")
 
         if i < len(records) - 1:
             print()

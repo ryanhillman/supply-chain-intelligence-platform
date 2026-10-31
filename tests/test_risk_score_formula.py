@@ -31,7 +31,7 @@ def test_matches_independent_scipy_formula_and_scalar_wrapper():
     got = normal_stockout_prob(q, mu, sd, 7)
     np.testing.assert_allclose(got, expected, atol=1e-12)
 
-    scalar = np.array([_normal_stockout_prob(a, b, c, 7) for a, b, c in zip(q, mu, sd)])
+    scalar = np.array([_normal_stockout_prob(a, b, c, 7) for a, b, c in zip(q, mu, sd, strict=True)])
     np.testing.assert_allclose(scalar, expected, atol=1e-12)
 
 

@@ -23,7 +23,7 @@ feature_engineer.py):
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 
 import gcsfs
 import numpy as np
