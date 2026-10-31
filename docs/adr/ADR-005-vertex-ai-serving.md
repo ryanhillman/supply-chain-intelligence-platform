@@ -126,9 +126,13 @@ and exposes a Vertex AI-compatible `/predict` REST endpoint.
 - `warehouse_ids`: int64, shape `[batch]`
 - `sku_ids`: int64, shape `[batch]`
 
-**Container outputs:**
-- `logit_prob`: float32 logit, shape `[batch, 1]` — sigmoidd client-side to `shortage_prob_7d`
-- `risk_score`: float32 sigmoid output, shape `[batch, 1]` — used directly as `stockout_risk_score`
+**Container output:**
+- `logit_prob`: float32 logit, shape `[batch, 1]` — sigmoid applied in the container, returned as `shortage_prob_7d`
+
+`stockout_risk_score` is not a model output: `batch_scorer.py` publishes the
+closed-form Normal approximation (`feature_engineer.normal_stockout_prob`) that
+`RequestBuilder` computes from the raw features, so the Pub/Sub message, the
+Bigtable `predictions` cells and the dashboards are unchanged.
 
 ---
 

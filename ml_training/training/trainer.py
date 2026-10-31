@@ -20,9 +20,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
 from ml_training.datasets.feature_engineer import (
-    BASELINE_COL,
     NUMERIC_FEATURE_COLS,
-    RISK_SCORE_COL,
     TARGET_COL,
 )
 from ml_training.evaluation.metrics import compute_metrics
@@ -60,9 +58,6 @@ class ShortageDataset(Dataset):
         self.y_binary = torch.tensor(
             df[TARGET_COL].values.astype(float), dtype=torch.float32
         ).unsqueeze(1)
-        self.y_risk   = torch.tensor(
-            df[RISK_SCORE_COL].values.astype(float), dtype=torch.float32
-        ).unsqueeze(1)
 
     def __len__(self) -> int:
         return len(self.x_num)
@@ -73,7 +68,6 @@ class ShortageDataset(Dataset):
             self.wh_ids[idx],
             self.sku_ids[idx],
             self.y_binary[idx],
-            self.y_risk[idx],
         )
 
 
@@ -222,10 +216,10 @@ class Trainer:
         model.train()
         total_loss = 0.0
 
-        for x_num, wh_ids, sku_ids, y_binary, y_risk in loader:
+        for x_num, wh_ids, sku_ids, y_binary in loader:
             optimizer.zero_grad()
-            logit_prob, pred_score = model(x_num, wh_ids, sku_ids)
-            loss, _, _ = criterion(logit_prob, pred_score, y_binary, y_risk)
+            logit_prob = model(x_num, wh_ids, sku_ids)
+            loss = criterion(logit_prob, y_binary)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -245,9 +239,9 @@ class Trainer:
         all_probs:  list[float] = []
         all_labels: list[float] = []
 
-        for x_num, wh_ids, sku_ids, y_binary, y_risk in loader:
-            logit_prob, pred_score = model(x_num, wh_ids, sku_ids)
-            loss, _, _ = criterion(logit_prob, pred_score, y_binary, y_risk)
+        for x_num, wh_ids, sku_ids, y_binary in loader:
+            logit_prob = model(x_num, wh_ids, sku_ids)
+            loss = criterion(logit_prob, y_binary)
             total_loss += loss.item()
             all_probs.extend(torch.sigmoid(logit_prob).squeeze(1).tolist())
             all_labels.extend(y_binary.squeeze(1).tolist())

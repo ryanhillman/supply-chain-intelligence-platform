@@ -88,13 +88,12 @@ def export_to_onnx(
         dynamo           = False,
         opset_version    = 17,
         input_names      = ["numeric_features", "warehouse_ids", "sku_ids"],
-        output_names     = ["logit_prob", "risk_score"],
+        output_names     = ["logit_prob"],
         dynamic_axes     = {
             "numeric_features": {0: "batch"},
             "warehouse_ids":    {0: "batch"},
             "sku_ids":          {0: "batch"},
             "logit_prob":       {0: "batch"},
-            "risk_score":       {0: "batch"},
         },
         do_constant_folding = True,
     )
@@ -114,18 +113,15 @@ def export_to_onnx(
         "warehouse_ids":    dummy_wh.numpy(),
         "sku_ids":          dummy_sku.numpy(),
     }
-    outputs = sess.run(None, inputs)
-    logit_out, score_out = outputs
+    (logit_out,) = sess.run(None, inputs)
 
     if logit_out.shape != (batch_size, 1):
         raise ValueError(f"Unexpected logit shape: {logit_out.shape}")
-    if score_out.shape != (batch_size, 1):
-        raise ValueError(f"Unexpected score shape: {score_out.shape}")
 
     # With the two rows now distinct, outputs should differ across the
     # batch — if they didn't, that would indicate a broadcast/transpose bug
     # collapsing the batch dimension that identical dummy rows would hide.
-    if np.allclose(logit_out[0], logit_out[1]) and np.allclose(score_out[0], score_out[1]):
+    if np.allclose(logit_out[0], logit_out[1]):
         raise ValueError(
             "ONNX outputs are identical across distinct batch rows — "
             "possible batch-dimension handling bug in the exported graph."
@@ -133,7 +129,7 @@ def export_to_onnx(
 
     # Cross-check: onnxruntime logit → sigmoid should match PyTorch predict()
     with torch.no_grad():
-        pt_prob, pt_score = model.predict(dummy_numeric, dummy_wh, dummy_sku)
+        pt_prob = model.predict(dummy_numeric, dummy_wh, dummy_sku)
 
     np.testing.assert_allclose(
         1.0 / (1.0 + np.exp(-logit_out)),   # sigmoid of ONNX logit output

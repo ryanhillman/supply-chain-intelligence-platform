@@ -79,7 +79,7 @@ def run_evaluation(
     sku_ids = torch.tensor([sku_vocab[s] for s in df["sku_id"]],       dtype=torch.long)
 
     with torch.no_grad():
-        prob, score = model.predict(x_num, wh_ids, sku_ids)
+        prob = model.predict(x_num, wh_ids, sku_ids)
 
     y_prob_model = prob.squeeze(1).numpy()
     y_true       = df[TARGET_COL].values.astype(float)

@@ -8,19 +8,21 @@ Architecture:
                          ↓
           MLP trunk: [Linear → BatchNorm1d → ReLU → Dropout] × N layers
                          ↓
-          prob_head  → logit  (BCEWithLogitsLoss during training)
-          score_head → sigmoid (MSELoss against continuous_risk_score)
+          prob_head → logit  (BCEWithLogitsLoss during training)
 
 The model owns standardization. μ and σ are registered buffers — saved in the
 checkpoint and exported inside the ONNX graph — so every consumer (trainer,
 evaluator, ONNX export, serving container, batch scorer) feeds raw feature
 units. See ADR-005 Decision 3.
 
-forward() returns (logit_prob, score):
-  logit_prob — raw logit, feed directly to BCEWithLogitsLoss
-  score      — sigmoid output ∈ [0, 1], feed to MSELoss
+There is one output. stockout_risk_score, the second value the pipeline
+publishes, is the closed-form Normal-approximation P(stockout ≤ 7d) computed
+from three raw features (feature_engineer.normal_stockout_prob); an earlier
+version trained a second head to regress that formula, which only ever
+approximated something the code can evaluate exactly.
 
-predict() returns (prob, score) — both ∈ [0, 1], for inference use.
+forward() returns logit_prob: raw logit, feed directly to BCEWithLogitsLoss.
+predict() returns prob ∈ [0, 1], for inference use.
 """
 from __future__ import annotations
 
@@ -96,9 +98,8 @@ class ShortagePredictor(nn.Module):
                 layers.append(nn.Dropout(p=drop))
             in_dim = out_dim
 
-        self.trunk      = nn.Sequential(*layers)
-        self.prob_head  = nn.Linear(in_dim, 1)
-        self.score_head = nn.Linear(in_dim, 1)
+        self.trunk     = nn.Sequential(*layers)
+        self.prob_head = nn.Linear(in_dim, 1)
 
         self._init_weights()
 
@@ -120,15 +121,12 @@ class ShortagePredictor(nn.Module):
         )
 
     def _init_weights(self) -> None:
-        # prob_head and score_head are final linear outputs with no
-        # following ReLU (prob_head feeds BCEWithLogitsLoss on the raw
-        # logit; score_head's sigmoid is applied in forward(), not ReLU) —
-        # Kaiming's relu gain (sqrt(2)) doesn't apply to them, so they're
-        # initialized separately with the linear gain (1.0).
-        output_heads = {self.prob_head, self.score_head}
+        # prob_head is a final linear output with no following ReLU (it feeds
+        # BCEWithLogitsLoss on the raw logit), so Kaiming's relu gain (sqrt(2))
+        # doesn't apply to it; it is initialized with the linear gain (1.0).
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nonlinearity = "linear" if m in output_heads else "relu"
+                nonlinearity = "linear" if m is self.prob_head else "relu"
                 nn.init.kaiming_normal_(m.weight, nonlinearity=nonlinearity)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
@@ -140,7 +138,7 @@ class ShortagePredictor(nn.Module):
         x_numeric: torch.Tensor,
         wh_ids:    torch.Tensor,
         sku_ids:   torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Parameters
         ----------
@@ -151,14 +149,12 @@ class ShortagePredictor(nn.Module):
         Returns
         -------
         logit_prob : (batch, 1) — raw logit for BCEWithLogitsLoss
-        score      : (batch, 1) — sigmoid risk score for MSELoss
         """
         x = torch.cat(
             [self.standardize(x_numeric), self.wh_embedding(wh_ids), self.sku_embedding(sku_ids)],
             dim=1,
         )
-        h = self.trunk(x)
-        return self.prob_head(h), torch.sigmoid(self.score_head(h))
+        return self.prob_head(self.trunk(x))
 
     @torch.no_grad()
     def predict(
@@ -166,8 +162,7 @@ class ShortagePredictor(nn.Module):
         x_numeric: torch.Tensor,
         wh_ids:    torch.Tensor,
         sku_ids:   torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Inference-mode forward. Returns (prob, score) both ∈ [0, 1]."""
+    ) -> torch.Tensor:
+        """Inference-mode forward. Returns prob ∈ [0, 1], shape (batch, 1)."""
         self.eval()
-        logit, score = self.forward(x_numeric, wh_ids, sku_ids)
-        return torch.sigmoid(logit), score
+        return torch.sigmoid(self.forward(x_numeric, wh_ids, sku_ids))

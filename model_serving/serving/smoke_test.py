@@ -15,23 +15,16 @@ Flow
      engineer_features() from ml_training.datasets.feature_engineer.
    - Map warehouse_id / sku_id strings to vocab ints.
 4. POST to /predict via aiplatform.Endpoint.predict().
-5. Assert all shortage_prob_7d and stockout_risk_score values are:
+5. Assert all shortage_prob_7d values are:
    - finite (not NaN, not inf)
    - in [0.0, 1.0]
 6. Print a per-instance results table.
 
-Expected outputs with current Phase 4 model (trained on simulated data)
------------------------------------------------------------------------
-Because the model was trained on tiled Bronze data (avg_daily_sales_7d ~2785)
-and the real Silver/Bigtable data has avg_daily_sales_7d ~207, the model is
-46 sigma outside its training distribution. Expected results:
-  shortage_prob_7d    = ~0.0  (model sees low-risk on heavily over-stocked entities)
-  stockout_risk_score = ~1.0  (score_head saturates on OOD input)
-
-These values confirm the pipeline is working correctly — the distribution-shift
-warning in ADR-005 Decision 7 describes exactly this behaviour. The smoke test
-PASSES as long as outputs are finite floats in [0, 1]. It does not assert
-meaningful probability values.
+Pass criterion
+--------------
+The smoke test PASSES as long as every shortage_prob_7d is a finite float in
+[0, 1]. It does not assert meaningful probability values; use evaluate.py and
+the drift monitor for that.
 
 Required packages:
     google-cloud-aiplatform>=1.38.0
@@ -286,13 +279,12 @@ class SmokeTest:
         """
         Generate zero-vector instances as a minimal connectivity check.
 
-        Note: with the current simulated-data model, zero-vector inputs are
-        out-of-distribution and will produce saturation outputs (prob~0, score~1).
-        This is expected — the smoke test only checks shape and range validity.
+        Note: an all-zero raw feature vector (no stock, no sales) is a
+        degenerate entity; the smoke test only checks shape and range validity.
         """
         logger.warning(
             "Using synthetic zero-vector instances. "
-            "Outputs will be out-of-distribution (see ADR-005 Decision 7). "
+            "The resulting probabilities are not meaningful. "
             "Provide --bigtable-instance for real data."
         )
         return [
@@ -316,24 +308,21 @@ class SmokeTest:
         print(f"\n{sep}")
         print(f"  Smoke Test Results  (source: {source})")
         print(sep)
-        print(f"  {'#':<3} {'WH-vocab':>8} {'SKU-vocab':>9} {'prob_7d':>10} {'risk_score':>11}  OK")
-        print(f"  {'-'*3} {'-'*8} {'-'*9} {'-'*10} {'-'*11}  --")
+        print(f"  {'#':<3} {'WH-vocab':>8} {'SKU-vocab':>9} {'prob_7d':>10}  OK")
+        print(f"  {'-'*3} {'-'*8} {'-'*9} {'-'*10}  --")
 
         all_pass = True
         for i, (inst, pred) in enumerate(zip(instances, predictions)):
-            prob  = pred.get("shortage_prob_7d",    float("nan"))
-            score = pred.get("stockout_risk_score", float("nan"))
+            prob = pred.get("shortage_prob_7d", float("nan"))
 
-            ok = (
-                _is_valid_prob(prob) and _is_valid_prob(score)
-            )
+            ok = _is_valid_prob(prob)
             if not ok:
                 all_pass = False
 
             status = "YES" if ok else "NO "
             print(
                 f"  {i:<3} {inst['warehouse_id']:>8} {inst['sku_id']:>9} "
-                f"{prob:>10.4f} {score:>11.4f}  {status}"
+                f"{prob:>10.4f}  {status}"
             )
 
         print()
@@ -343,16 +332,8 @@ class SmokeTest:
             print("  FAILED — one or more predictions are NaN, inf, or out of [0, 1]")
 
         if source == "bigtable" and predictions:
-            prob_mean  = float(np.mean([p.get("shortage_prob_7d",    0) for p in predictions]))
-            score_mean = float(np.mean([p.get("stockout_risk_score", 0) for p in predictions]))
-            print(f"\n  mean shortage_prob_7d    = {prob_mean:.4f}")
-            print(f"  mean stockout_risk_score = {score_mean:.4f}")
-            if prob_mean < 0.01 and score_mean > 0.99:
-                print(
-                    "\n  [distribution-shift expected] prob~0 + score~1 confirms the model\n"
-                    "  is 46-sigma outside its training distribution (ADR-005 Decision 7).\n"
-                    "  The pipeline is correct; retrain with real Bronze data to fix."
-                )
+            prob_mean = float(np.mean([p.get("shortage_prob_7d", 0) for p in predictions]))
+            print(f"\n  mean shortage_prob_7d = {prob_mean:.4f}")
         print(sep)
         return all_pass
 

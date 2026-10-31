@@ -15,12 +15,19 @@ Derived features added (all deterministic formulas, no data-distribution fitting
 Leakage columns explicitly absent from NUMERIC_FEATURE_COLS:
   risk__reorder_urgency      — derived from the same threshold logic as the label
   All lineage__* columns     — pipeline metadata with no predictive value
+
+Also home to normal_stockout_prob(): the closed-form P(stockout ≤ horizon)
+used as the continuous_risk_score label column, the baseline the model must
+beat, and the stockout_risk_score the batch scorer publishes — one definition
+for all three (ADR-004 Decision 6).
 """
 from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 logger = logging.getLogger(__name__)
 
@@ -128,3 +135,32 @@ def fill_defaults(df: pd.DataFrame) -> None:
     for col, val in defaults.items():
         if col in df.columns:
             df[col] = df[col].fillna(val)
+
+
+def normal_stockout_prob(
+    current_qty:  np.ndarray,
+    avg_daily:    np.ndarray,
+    stddev_daily: np.ndarray,
+    horizon_days: int,
+) -> np.ndarray:
+    """
+    P(stockout within horizon_days) under a Normal approximation, vectorised.
+
+    T = days to zero = Q / D with daily demand D ~ N(μ_D, σ_D²). By the delta
+    method T ≈ N(Q/μ_D, (Q·σ_D/μ_D²)²) for μ_D > 0, so P(T ≤ h) = Φ((h − μ_T)/σ_T).
+    Edge cases match the original scalar label code: no demand (μ_D ≤ EPS) →
+    0.0 (supply is effectively infinite); deterministic demand (σ_T ≤ EPS) →
+    step function on μ_T < h, which also gives 1.0 for zero stock.
+    """
+    q  = np.asarray(current_qty,  dtype=float)
+    mu = np.asarray(avg_daily,    dtype=float)
+    sd = np.asarray(stddev_daily, dtype=float)
+
+    has_demand = mu > EPS
+    safe_mu    = np.where(has_demand, mu, 1.0)
+    mu_t       = q / safe_mu
+    sig_t      = q * sd / safe_mu ** 2
+    step       = (mu_t < horizon_days).astype(float)
+    cdf        = norm.cdf(horizon_days, loc=mu_t, scale=np.where(sig_t > EPS, sig_t, 1.0))
+
+    return np.where(~has_demand, 0.0, np.where(sig_t <= EPS, step, cdf))

@@ -6,8 +6,11 @@ Flow
 1. FeatureClient.scan_all() — scan all rows from Bigtable inventory_features.
 2. RequestBuilder.build()   — fill defaults, engineer features, scale, map vocab.
 3. endpoint.predict()       — call the Vertex AI endpoint in batches of `batch_size`.
-   The endpoint returns {"shortage_prob_7d": float, "stockout_risk_score": float}
-   per instance (see model_serving/serving/container/main.py).
+   The endpoint returns {"shortage_prob_7d": float} per instance (see
+   model_serving/serving/container/main.py). stockout_risk_score is the
+   closed-form Normal-approximation P(stockout ≤ 7d) that RequestBuilder
+   computes from the raw features — the same formula as the
+   continuous_risk_score training column (ADR-004 Decision 6).
 4. For each prediction: build a JSON Pub/Sub message and publish to the
    prediction-results topic.
 
@@ -202,7 +205,8 @@ class BatchScorer:
         all_scores: list[float] = []
 
         for batch in _chunks(requests, batch_size):
-            batch_probs, batch_scores, latency_ms = self._score_batch(batch)
+            batch_probs, latency_ms = self._score_batch(batch)
+            batch_scores = [req.stockout_risk_score for req in batch]
             all_probs.extend(batch_probs)
             all_scores.extend(batch_scores)
             stats.batches_sent          += 1
@@ -236,11 +240,11 @@ class BatchScorer:
     def _score_batch(
         self,
         batch: list[ScoringRequest],
-    ) -> tuple[list[float], list[float], float]:
+    ) -> tuple[list[float], float]:
         """
         Call endpoint.predict() for a single batch.
 
-        Returns (shortage_probs, risk_scores, latency_ms). model_version is
+        Returns (shortage_probs, latency_ms). model_version is
         not needed here — the endpoint already routes to whichever model
         version currently has traffic; it's only needed by _publish_batch()
         to stamp the published record for lineage.
@@ -251,12 +255,7 @@ class BatchScorer:
         response = self._endpoint.predict(instances=instances)
         latency  = (time.perf_counter() - t0) * 1000.0
 
-        probs:  list[float] = []
-        scores: list[float] = []
-
-        for pred in response.predictions:
-            probs.append(float(pred.get("shortage_prob_7d",    0.0)))
-            scores.append(float(pred.get("stockout_risk_score", 0.0)))
+        probs: list[float] = [float(pred["shortage_prob_7d"]) for pred in response.predictions]
 
         if len(probs) != len(batch):
             raise RuntimeError(
@@ -264,7 +263,7 @@ class BatchScorer:
                 "cannot safely align results"
             )
 
-        return probs, scores, latency
+        return probs, latency
 
     def _publish_batch(
         self,

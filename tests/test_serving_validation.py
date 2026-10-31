@@ -34,11 +34,7 @@ def client():
         n_numeric_features = 21
 
         def predict(self, numeric_features, warehouse_ids, sku_ids):
-            n = len(warehouse_ids)
-            return (
-                np.full(n, 0.5, dtype="float32"),
-                np.full(n, 0.5, dtype="float32"),
-            )
+            return np.full(len(warehouse_ids), 0.5, dtype="float32")
 
     main_module._predictor = FakePredictor()
     return TestClient(main_module.app)

@@ -117,7 +117,7 @@ GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were 
 The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a stockout within the next 7 days. Predictions are returned as:
 
 - **shortage_prob_7d** — probability of a shortage event
-- **stockout_risk_score** — normalized inventory risk score
+- **stockout_risk_score** — closed-form P(stockout ≤ 7d) under a Normal approximation of days-to-zero, computed from current stock, 7-day average sales and their spread
 
 ### Features
 
@@ -141,7 +141,7 @@ The shortage predictor is implemented in PyTorch as a feed-forward neural networ
 - 21 engineered numeric features
 - Warehouse embeddings
 - SKU embeddings
-- Dual prediction outputs
+- Single output: the shortage probability. The risk score is a closed-form formula computed at scoring time, not a second head
 
 After training, the model is exported to ONNX and validated with ONNX Runtime before deployment.
 

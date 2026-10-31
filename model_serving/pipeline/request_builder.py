@@ -9,7 +9,10 @@ Pipeline per entity
    NUMERIC_FEATURE_COLS expected by the ONNX model.
 4. Map warehouse_id / sku_id strings to integer vocab indices. Numeric features
    are sent in raw units — the ONNX graph standardizes them (ADR-005 Decision 3).
-5. Return a ScoringRequest containing the endpoint instance dict and entity metadata.
+5. Compute stockout_risk_score with feature_engineer.normal_stockout_prob —
+   the closed-form Normal approximation, not a model output.
+6. Return a ScoringRequest containing the endpoint instance dict, the risk
+   score and entity metadata.
 
 All 15 raw feature names and their defaults mirror
 ml_training/datasets/feature_engineer.fill_defaults().
@@ -70,12 +73,18 @@ class ScoringRequest:
           {"numeric_features": [21 raw floats],
            "warehouse_id": int,
            "sku_id": int}
+    stockout_risk_score:
+        Closed-form Normal-approximation P(stockout ≤ horizon) from the raw
+        current_qty / avg_daily_sales_7d / stddev_daily_7d — the same formula
+        as the continuous_risk_score training column. Published next to the
+        endpoint's shortage_prob_7d; not a model output.
     """
 
-    warehouse_id: str
-    sku_id:       str
-    row_key:      str
-    instance:     dict
+    warehouse_id:        str
+    sku_id:              str
+    row_key:             str
+    instance:            dict
+    stockout_risk_score: float
 
 
 class RequestBuilder:
@@ -104,10 +113,13 @@ class RequestBuilder:
             NUMERIC_FEATURE_COLS,
             engineer_features,
             fill_defaults,
+            normal_stockout_prob,
         )
-        self._NUMERIC_FEATURE_COLS = NUMERIC_FEATURE_COLS
-        self._engineer_features    = engineer_features
-        self._fill_defaults        = fill_defaults
+        self._NUMERIC_FEATURE_COLS  = NUMERIC_FEATURE_COLS
+        self._engineer_features     = engineer_features
+        self._fill_defaults         = fill_defaults
+        self._normal_stockout_prob  = normal_stockout_prob
+        self._horizon_days: int     = int(self._metadata["horizon_days"])
 
         logger.info(
             "RequestBuilder ready: %d numeric features, %d warehouses, %d SKUs",
@@ -190,6 +202,14 @@ class RequestBuilder:
         # the ONNX graph carries the training mean/scale (ADR-005 Decision 3).
         x_raw = df[self._NUMERIC_FEATURE_COLS].values.astype(np.float32)
 
+        # Closed-form risk score from the raw features (ADR-004 Decision 6).
+        risk_scores = self._normal_stockout_prob(
+            df["current_qty"].values,
+            df["avg_daily_sales_7d"].values,
+            df["stddev_daily_7d"].values,
+            self._horizon_days,
+        )
+
         # Assemble ScoringRequest objects.
         requests: list[ScoringRequest] = []
         for i, (fr, wh_id, sku_id) in enumerate(zip(valid_rows, wh_vocab_ids, sku_vocab_ids)):
@@ -203,6 +223,7 @@ class RequestBuilder:
                 sku_id=fr.sku_id,
                 row_key=fr.row_key,
                 instance=instance,
+                stockout_risk_score=float(risk_scores[i]),
             ))
 
         logger.info("Built %d scoring requests", len(requests))
