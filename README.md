@@ -223,13 +223,3 @@ python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <
 ```
 
 The Bigtable instance can also be destroyed. After `terraform apply` recreates it, re-running the Silver job repopulates it from Bronze.
-
----
-
-## Key Design Decisions
-
-The stack (Kafka, Spark, Bigtable, PyTorch, Vertex AI) was selected for hands-on experience with each technology, not because 6 warehouses and 20 SKUs require it. The system is sized for the stack, not the data: 120 feature rows fit in Postgres or a Parquet file, and the model could be scored inside the batch job instead of behind an endpoint. On the same test split, LightGBM matches the PyTorch model (AUPRC 0.849 vs 0.839, Brier 0.076 vs 0.078) and is the recommended production choice. The MLP is retained as the learning artifact and comparison row. The decision records document each choice, including designs that were later corrected:
-
-- [ADR-003 — Bigtable as the online feature store](docs/adr/ADR-003-bigtable-feature-store.md)
-- [ADR-004 — PyTorch shortage predictor](docs/adr/ADR-004-pytorch-shortage-predictor.md)
-- [ADR-005 — Vertex AI serving and prediction storage](docs/adr/ADR-005-vertex-ai-serving.md)
