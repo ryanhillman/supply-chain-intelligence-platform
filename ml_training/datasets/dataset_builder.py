@@ -15,7 +15,7 @@ Standardization statistics are fit only on the train split and stored in
 feature_metadata.json as feature_mean / feature_scale. The parquet splits
 keep raw units; the model standardizes its own inputs (ShortagePredictor's
 Standardize layer), so training, evaluation, the ONNX graph, the drift
-monitor and the scorer all work in raw units (ADR-005 Decision 3).
+monitor and the scorer all work in raw units.
 """
 from __future__ import annotations
 
@@ -241,7 +241,7 @@ class DatasetBuilder:
             "n_skus":             len(sku_vocab),
             "n_numeric_features": len(NUMERIC_FEATURE_COLS),
             # Train-split standardization statistics, in numeric_features order.
-            # The model registers them as fixed buffers (ADR-005 Decision 3).
+            # The model registers them as fixed buffers.
             "feature_mean":       feature_mean,
             "feature_scale":      feature_scale,
             "horizon_days":       self.horizon_days,

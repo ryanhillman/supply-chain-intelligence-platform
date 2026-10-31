@@ -8,7 +8,7 @@ Pipeline per entity
 3. Call engineer_features() to compute 6 derived features, yielding all 21
    NUMERIC_FEATURE_COLS expected by the ONNX model.
 4. Map warehouse_id / sku_id strings to integer vocab indices. Numeric features
-   are sent in raw units — the ONNX graph standardizes them (ADR-005 Decision 3).
+   are sent in raw units — the ONNX graph standardizes them.
 5. Compute stockout_risk_score with feature_engineer.normal_stockout_prob —
    the closed-form Normal approximation, not a model output.
 6. Return a ScoringRequest containing the endpoint instance dict, the risk
@@ -199,10 +199,10 @@ class RequestBuilder:
         df = self._engineer_features(df)
 
         # Raw numeric features in NUMERIC_FEATURE_COLS order. No scaling here:
-        # the ONNX graph carries the training mean/scale (ADR-005 Decision 3).
+        # the ONNX graph carries the training mean/scale.
         x_raw = df[self._NUMERIC_FEATURE_COLS].values.astype(np.float32)
 
-        # Closed-form risk score from the raw features (ADR-004 Decision 6).
+        # Closed-form risk score from the raw features.
         risk_scores = self._normal_stockout_prob(
             df["current_qty"].values,
             df["avg_daily_sales_7d"].values,

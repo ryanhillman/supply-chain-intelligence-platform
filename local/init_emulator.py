@@ -41,7 +41,7 @@ TOPIC_ID        = "prediction-results"
 SUBSCRIPTION_ID = "prediction-writer"
 
 PREDICTIONS_FAMILY   = "predictions"
-PREDICTIONS_VERSIONS = 3     # current + 2 prior rounds (ADR-005 Decision 2)
+PREDICTIONS_VERSIONS = 3     # current + 2 prior rounds
 ACK_DEADLINE_SECONDS = 60
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

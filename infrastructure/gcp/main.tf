@@ -167,8 +167,7 @@ resource "google_bigtable_table" "inventory_features" {
 
 ###############################################################################
 # Bigtable GC Policies
-# One policy per column family. Mirrors the feature store design in
-# docs/adr/ADR-003-bigtable-feature-store.md (Decision 3).
+# One policy per column family.
 #
 # Every feature family keeps exactly the latest cell (max_version = 1): Silver
 # rewrites the whole row on each run and every reader takes the newest cell
@@ -180,7 +179,7 @@ resource "google_bigtable_table" "inventory_features" {
 # model_serving/pipeline/feature_client.py split_fresh()).
 #
 #   predictions — max 3 versions: current + 2 prior rounds for rollback
-#                 inspection (ADR-005 Decision 2)
+#                 inspection
 ###############################################################################
 
 resource "google_bigtable_gc_policy" "inventory" {
@@ -257,7 +256,6 @@ resource "google_bigtable_gc_policy" "lineage" {
 
 # Phase 5 — Keep 3 versions: current prediction + 2 prior rounds.
 # Allows champion/challenger rollback inspection without unbounded growth.
-# See ADR-005, Decision 2.
 resource "google_bigtable_gc_policy" "predictions" {
   project         = var.project_id
   instance_name   = google_bigtable_instance.feature_store.name
