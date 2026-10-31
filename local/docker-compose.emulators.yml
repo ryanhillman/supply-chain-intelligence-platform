@@ -1,0 +1,43 @@
+# Local stand-ins for the two Google Cloud services the pipeline writes to, so
+# the whole system runs without a GCP project. See local/README.md for the
+# full runbook.
+#
+#   bigtable-emulator  online feature store: Spark writer, scorer, monitor,
+#                      dashboards all connect here when BIGTABLE_EMULATOR_HOST
+#                      is set (the client libraries switch to an insecure
+#                      channel and anonymous credentials automatically).
+#   pubsub-emulator    prediction-results topic + prediction-writer subscription
+#                      for the scorer -> writer path (PUBSUB_EMULATOR_HOST).
+#
+# Both run from Google's official gcloud emulators image. State is in memory
+# and lost on restart; `python local/init_emulator.py` recreates the table,
+# column families, topic and subscription that Terraform created in GCP.
+#
+# Joins kafka_scip-net (created by kafka/docker-compose.yml) so the Spark
+# containers reach bigtable-emulator:8086. Start the Kafka stack first.
+#
+#   docker compose -f local/docker-compose.emulators.yml up -d
+#   python local/init_emulator.py
+
+services:
+  bigtable-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    container_name: scip-bigtable-emulator
+    command: ["gcloud", "beta", "emulators", "bigtable", "start", "--host-port=0.0.0.0:8086"]
+    ports:
+      - "8086:8086"
+    networks:
+      - kafka_scip-net
+
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    container_name: scip-pubsub-emulator
+    command: ["gcloud", "beta", "emulators", "pubsub", "start", "--host-port=0.0.0.0:8085", "--project=local-scip"]
+    ports:
+      - "8085:8085"
+    networks:
+      - kafka_scip-net
+
+networks:
+  kafka_scip-net:
+    external: true
