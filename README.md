@@ -113,10 +113,10 @@ GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were 
 
 ### Problem Formulation
 
-The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a stockout within the next 7 days. Predictions are returned as:
+The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a stockout within the next 7 days. The scorer publishes two values per entity:
 
-- **shortage_prob_7d** — probability of a shortage event
-- **stockout_risk_score** — closed-form P(stockout ≤ 7d) under a Normal approximation of days-to-zero, computed from current stock, 7-day average sales and their spread
+- **shortage_prob_7d** — the model's probability of a stockout within 7 days
+- **stockout_risk_score** — the baseline: closed-form P(stockout ≤ 7d) under a Normal approximation, computed from current stock and the 7-day mean and standard deviation of daily sales. It is not a model output.
 
 ### Features
 
