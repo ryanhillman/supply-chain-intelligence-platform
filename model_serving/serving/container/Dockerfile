@@ -3,7 +3,14 @@
 # Build:
 #   docker build -t shortage-predictor-serving:local .
 #
-# Run locally (see smoke-test instructions in model_serving/serving/smoke_test.md):
+# Run with a mounted model directory (no GCP; see local/README.md and
+# model_serving/serving/smoke_test.md):
+#   docker run -p 8080:8080 \
+#     -e MODEL_LOCAL_PATH=/model -e MODEL_VERSION=local-dev \
+#     -v "$PWD/ml_training/artifacts:/model:ro" \
+#     shortage-predictor-serving:local
+#
+# Run with a model downloaded from GCS (how Vertex AI ran it in June 2026):
 #   docker run -p 8080:8080 \
 #     -e MODEL_GCS_PATH=gs://<bucket>/models/shortage-predictor/<version> \
 #     -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/key.json \
@@ -16,8 +23,9 @@
 #   docker push \
 #     us-central1-docker.pkg.dev/<project>/scip-serving/shortage-predictor-serving:<version>
 #
-# This container does NOT embed model.onnx. The model is downloaded from GCS
-# at startup using MODEL_GCS_PATH. The same image serves any model version.
+# This container does NOT embed model.onnx. The model comes from a mounted
+# directory (MODEL_LOCAL_PATH) or is downloaded from GCS at startup
+# (MODEL_GCS_PATH). The same image serves any model version.
 
 FROM python:3.11-slim
 

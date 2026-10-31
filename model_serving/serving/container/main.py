@@ -42,9 +42,9 @@ _predictor: ONNXPredictor | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Download model from GCS and create onnxruntime session on startup."""
+    """Load the model (MODEL_LOCAL_PATH or MODEL_GCS_PATH) into an onnxruntime session."""
     global _predictor
-    logger.info("Container startup — loading ONNX model from GCS")
+    logger.info("Container startup — loading ONNX model")
     _predictor = ONNXPredictor()
     logger.info("Container ready")
     yield

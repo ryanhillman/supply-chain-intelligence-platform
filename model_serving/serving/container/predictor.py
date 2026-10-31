@@ -1,6 +1,6 @@
 """
-ONNXPredictor — loads model.onnx from GCS at container startup and runs
-inference via onnxruntime.
+ONNXPredictor — loads model.onnx at container startup (from a mounted
+directory, or downloaded from GCS) and runs inference via onnxruntime.
 
 Inputs received from batch_scorer.py (vocab mapping is done client-side;
 standardization happens inside the ONNX graph — see ADR-005 Decision 3):
@@ -15,11 +15,18 @@ Output returned to caller:
   (stockout_risk_score is not a model output; the batch scorer computes it
   with the closed-form Normal approximation from the raw features.)
 
-Environment variables:
+Environment variables (set exactly one of the first two):
+  MODEL_LOCAL_PATH          — directory holding model.onnx (+ model.onnx.data)
+                              and feature_metadata.json, e.g. a bind-mounted
+                              ml_training/artifacts. The zero-cost local run.
   MODEL_GCS_PATH            — GCS URI to the versioned model directory,
                               e.g. gs://bucket/models/shortage-predictor/v20260620_180918
-  GOOGLE_APPLICATION_CREDENTIALS — path to SA key JSON (not needed on Vertex AI;
-                              the container SA is injected automatically)
+                              (how Vertex AI ran the container, June 2026)
+  MODEL_VERSION             — optional version label for /health and the
+                              prediction records; defaults to the last path
+                              segment of whichever path is set
+  GOOGLE_APPLICATION_CREDENTIALS — SA key JSON for MODEL_GCS_PATH outside
+                              Vertex AI (on Vertex AI the container SA is injected)
 """
 from __future__ import annotations
 
@@ -34,9 +41,9 @@ from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
-# Model files are downloaded here at startup. /tmp is world-writable so
-# this works under both root and the non-root appuser.
-_MODEL_DIR: Path = Path("/tmp/model")
+# MODEL_GCS_PATH mode downloads the model files here at startup. /tmp is
+# world-writable so this works under both root and the non-root appuser.
+_DOWNLOAD_DIR: Path = Path("/tmp/model")
 
 # Uploaded by register.py alongside model.onnx (see register_model.py's
 # _ARTIFACTS_TO_UPLOAD) — gives us the embedding vocab sizes so main.py can
@@ -55,22 +62,40 @@ class ONNXPredictor:
         GCS URI to the model directory, e.g.
         gs://bucket/models/shortage-predictor/v20260620_180918
         Defaults to the MODEL_GCS_PATH environment variable.
+    local_path:
+        Directory that already holds the model files (nothing is downloaded).
+        Defaults to the MODEL_LOCAL_PATH environment variable.
+    Exactly one of the two must be set.
     """
 
-    def __init__(self, gcs_path: str | None = None) -> None:
-        self._gcs_path = gcs_path or os.environ["MODEL_GCS_PATH"]
-        self.model_version: str = self._parse_version(self._gcs_path)
+    def __init__(self, gcs_path: str | None = None, local_path: str | None = None) -> None:
+        gcs_path   = gcs_path   or os.environ.get("MODEL_GCS_PATH")
+        local_path = local_path or os.environ.get("MODEL_LOCAL_PATH")
+        if bool(gcs_path) == bool(local_path):
+            raise ValueError(
+                "Set exactly one of MODEL_LOCAL_PATH (directory with the model files) "
+                "or MODEL_GCS_PATH (download from GCS)."
+            )
+        source = local_path or gcs_path
+        self.model_version: str = os.environ.get("MODEL_VERSION") or self._parse_version(source)
 
-        _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        self._download_model_files()
+        if local_path:
+            self._model_dir = Path(local_path)
+            self._check_local_files()
+        else:
+            self._gcs_path  = gcs_path
+            self._model_dir = _DOWNLOAD_DIR
+            self._model_dir.mkdir(parents=True, exist_ok=True)
+            self._download_model_files()
         self._session = self._create_session()
         self.n_numeric_features: int = self._read_numeric_width()
         self.n_warehouses, self.n_skus = self._load_vocab_sizes()
 
         logger.info(
-            "ONNXPredictor ready | version=%s | inputs=%s | n_numeric=%d "
+            "ONNXPredictor ready | version=%s | from=%s | inputs=%s | n_numeric=%d "
             "| n_warehouses=%d | n_skus=%d",
             self.model_version,
+            source,
             [inp.name for inp in self._session.get_inputs()],
             self.n_numeric_features,
             self.n_warehouses,
@@ -136,9 +161,19 @@ class ONNXPredictor:
         return width
 
     @staticmethod
-    def _parse_version(gcs_path: str) -> str:
-        """Extract version tag from the last non-empty path segment."""
-        return gcs_path.rstrip("/").rsplit("/", 1)[-1]
+    def _parse_version(path: str) -> str:
+        """Version tag = last non-empty path segment (gs://.../v2026 -> v2026)."""
+        return Path(path.rstrip("/")).name
+
+    def _check_local_files(self) -> None:
+        """MODEL_LOCAL_PATH mode: the files must already be in place."""
+        for fname in ("model.onnx", _METADATA_FILENAME):
+            if not (self._model_dir / fname).is_file():
+                raise FileNotFoundError(
+                    f"{fname} not found in MODEL_LOCAL_PATH={self._model_dir}. "
+                    "Point it at a training run's artifacts directory "
+                    "(ml_training/scripts/train.py writes both files)."
+                )
 
     def _download_model_files(self) -> None:
         """
@@ -166,7 +201,7 @@ class ONNXPredictor:
         for blob in blobs:
             filename = blob.name.rsplit("/", 1)[-1]
             if filename in ("model.onnx", "model.onnx.data", _METADATA_FILENAME):
-                dest = _MODEL_DIR / filename
+                dest = self._model_dir / filename
                 blob.download_to_filename(str(dest))
                 downloaded.append(filename)
                 logger.info(
@@ -186,7 +221,7 @@ class ONNXPredictor:
             )
 
     def _create_session(self) -> ort.InferenceSession:
-        model_path = _MODEL_DIR / "model.onnx"
+        model_path = self._model_dir / "model.onnx"
         session_options = ort.SessionOptions()
         session_options.log_severity_level = 3  # suppress onnxruntime INFO spam
         session = ort.InferenceSession(
@@ -215,8 +250,8 @@ class ONNXPredictor:
         return session
 
     def _load_vocab_sizes(self) -> tuple[int, int]:
-        """Read n_warehouses/n_skus from the downloaded feature_metadata.json."""
-        path = _MODEL_DIR / _METADATA_FILENAME
+        """Read n_warehouses/n_skus from the feature_metadata.json next to the model."""
+        path = self._model_dir / _METADATA_FILENAME
         with open(path) as f:
             metadata = json.load(f)
 
@@ -225,7 +260,7 @@ class ONNXPredictor:
         except KeyError as exc:
             raise ValueError(
                 f"{_METADATA_FILENAME} is missing required key {exc}. "
-                "Re-run register.py against a freshly built feature_metadata.json."
+                "Re-run train.py (and register.py for GCS) for a current feature_metadata.json."
             ) from exc
 
 
