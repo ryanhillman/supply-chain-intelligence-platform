@@ -21,6 +21,12 @@ The video was recorded from the code tagged [`demo-2026-06`](https://github.com/
 
 ---
 
+## Run It Locally
+
+The full pipeline runs on one machine with Docker and Python, with no GCP project: Kafka, Spark, the Bigtable and Pub/Sub emulators, and the serving container. [local/README.md](local/README.md) has the steps, from the replay through training, scoring and monitoring.
+
+---
+
 ## Business Problem
 
 Inventory shortages and excess stock are two of the most expensive operational failures in large-scale supply chains.
