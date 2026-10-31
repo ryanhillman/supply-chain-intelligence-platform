@@ -93,9 +93,9 @@ Spark Structured Streaming consumes Kafka topics and writes immutable raw events
 
 A Silver batch job computes, as of a given date, a snapshot of 29 supply-chain features for each warehouse-SKU entity from Bronze.
 
-Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for model training and inference.
+Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for scoring and drift monitoring.
 
-A PyTorch shortage prediction model is trained on historical feature data and exported to ONNX for portable deployment.
+A PyTorch shortage prediction model is trained on rows the training sampler builds from Bronze and exported to ONNX for portable deployment.
 
 The model is deployed to Vertex AI Endpoints using a containerized FastAPI application powered by ONNX Runtime.
 
@@ -103,7 +103,7 @@ The batch scoring pipeline reads features from Bigtable, generates predictions t
 
 A prediction writer consumes Pub/Sub messages and stores shortage-risk predictions back into Bigtable for downstream consumers.
 
-A drift monitoring service evaluates live feature distributions against training baselines and reports potential model degradation.
+A drift monitor compares live feature distributions with the training data and reports potential model degradation.
 
 GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were provisioned with Terraform.
 
@@ -120,11 +120,11 @@ The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a sto
 
 ### Features
 
-The training dataset is built from Silver-layer snapshots containing 29 engineered supply chain features across six domains:
+Silver computes 29 features per warehouse-SKU entity across six domains:
 
 - Inventory position
 - Demand velocity
-- Demand forecasts
+- Demand signals
 - Supplier performance
 - Risk metrics
 - Data lineage
@@ -154,7 +154,7 @@ Training and scoring data come from one simulated supply chain (`simulation/worl
 - Demand spikes
 - Inventory replenishment behavior
 
-The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. The training sampler builds 39,360 labeled rows from Bronze, one per warehouse-SKU-day after a 30-day warm-up, with the same feature windows Silver uses for scoring (ADR-006).
+The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. The training sampler builds 39,360 labeled rows from Bronze, one per warehouse-SKU-day, leaving out the first 30 days (feature warm-up) and the last 7 (no outcome yet), with the same feature windows Silver uses for scoring.
 
 ### Training Configuration
 
@@ -172,7 +172,7 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 |---|---|---|---|---|---|---|
 | Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
 | PyTorch MLP (served model) | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
-| LightGBM (comparison, ADR-004) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
+| LightGBM (comparison only) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
 
 The data is simulated, so these numbers describe the model on the simulated world, not on real inventory.
 
@@ -200,7 +200,7 @@ The data is simulated, so these numbers describe the model on the simulated worl
 
 ## Drift Monitoring
 
-The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw training split, written next to the model as `drift_reference.json` so the reference travels with the model, and both sides share units) using **Population Stability Index (PSI)**. PSI thresholds follow industry convention:
+The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw training split, written next to the model as `drift_reference.json` so the reference travels with the model, and both sides share units) using **Population Stability Index (PSI)**. PSI thresholds:
 
 | PSI | Interpretation |
 |---|---|
