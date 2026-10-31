@@ -191,7 +191,7 @@ The simulator generates 365 days of history across 6 warehouses and 20 SKUs, pro
 
 ## Drift Monitoring
 
-The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw `train.parquet` rows, so both sides share units) using **Population Stability Index (PSI)**. PSI thresholds follow industry convention:
+The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw training split, written next to the model as `drift_reference.json` so the reference travels with the model, and both sides share units) using **Population Stability Index (PSI)**. PSI thresholds follow industry convention:
 
 | PSI | Interpretation |
 |---|---|
