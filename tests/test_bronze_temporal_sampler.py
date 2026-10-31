@@ -6,12 +6,15 @@ regardless of how much real history existed, so a pair with only a few
 days of sales got velocity_trend == 30/7 (~4.29) as a pure divisor
 artifact instead of a real trend.
 
-BronzeTemporalSampler.__init__ needs a live GCS client, so these tests
-build an instance via __new__ and call _velocity_features directly --
-it only touches its DataFrame arguments, no GCS/network access.
+The velocity tests build an instance via __new__ and call
+_velocity_features directly -- it only touches its DataFrame arguments.
+The local-directory tests below construct the sampler normally with
+bronze_path, which needs no GCS client.
 """
 import pandas as pd
+import pytest
 
+from ml_training.datasets import bronze_temporal_sampler as bts
 from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler
 
 
@@ -80,3 +83,54 @@ def test_real_trend_is_still_detected_once_mature():
 
     row = result.iloc[0]
     assert row["velocity_trend"] > 1.0  # genuine upward trend, correctly detected
+
+
+# ── Local Bronze directory (--bronze-path) ────────────────────────────────────
+
+def _inventory_frame() -> pd.DataFrame:
+    return pd.DataFrame({
+        "warehouse_id":   ["W-001", "W-001", "W-002"],
+        "sku_id":         ["SKU-001", "SKU-001", "SKU-002"],
+        "event_type":     ["SALE", "RESTOCK", "SALE"],
+        "quantity_after": [90.0, 140.0, 10.0],
+        "quantity_delta": [-10.0, 50.0, -5.0],
+        "reorder_point":  [50.0, 50.0, 20.0],
+        "safety_stock":   [20.0, 20.0, 10.0],
+        "timestamp":      ["2026-01-01T10:00:00+00:00"] * 3,
+        "year": [2026] * 3, "month": [1] * 3, "day": [1] * 3, "hour": [10] * 3,
+    })
+
+
+def test_local_bronze_reads_hive_partitions_and_skips_uncommitted_output(tmp_path):
+    """Lay the frame out the way bronze_ingestion.py does (hive partitions
+    event_type=/year=/month=/day=/hour= under <root>/<topic>/), plus a file
+    under _temporary/ the way Spark leaves in-flight task output. The
+    partition columns must come back (event_type drives the SALE filter) and
+    the uncommitted file must not."""
+    df = _inventory_frame()
+    df.to_parquet(tmp_path / "inventory.events",
+                  partition_cols=["event_type", "year", "month", "day", "hour"])
+    junk = tmp_path / "inventory.events" / "_temporary" / "0"
+    junk.mkdir(parents=True)
+    df.head(1).to_parquet(junk / "part-0.parquet")
+
+    out = BronzeTemporalSampler(bronze_path=tmp_path)._read_topic(
+        "inventory.events", bts._INVENTORY_COLS
+    )
+
+    assert len(out) == 3
+    assert set(bts._INVENTORY_COLS) <= set(out.columns)
+    assert sorted(out["event_type"].astype(str)) == ["RESTOCK", "SALE", "SALE"]
+    assert out["quantity_after"].sum() == 240.0
+
+
+def test_local_bronze_missing_topic_is_a_clear_error(tmp_path):
+    with pytest.raises(FileNotFoundError, match="demand.signals"):
+        BronzeTemporalSampler(bronze_path=tmp_path)._read_topic("demand.signals", bts._DEMAND_COLS)
+
+
+def test_sampler_takes_exactly_one_bronze_source(tmp_path):
+    with pytest.raises(ValueError, match="exactly one"):
+        BronzeTemporalSampler()
+    with pytest.raises(ValueError, match="exactly one"):
+        BronzeTemporalSampler(bucket="some-bucket", bronze_path=tmp_path)
