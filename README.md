@@ -20,6 +20,8 @@ The focus of the project is the platform architecture and MLOps lifecycle rather
 
 **https://www.youtube.com/watch?v=fpe3sHeRTNs**
 
+The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06), which also matches the model version currently deployed on the endpoint. `main` has moved on since (review remediation; see the ADRs and the cost section below). Check out that tag to reproduce the demo exactly.
+
 ---
 
 ## Business Problem
