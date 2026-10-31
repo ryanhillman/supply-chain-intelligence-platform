@@ -169,7 +169,7 @@ The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, abou
 
 ### Test Results
 
-Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8% of them followed by a stockout within 7 days. The in-stock columns cover the 5,464 rows with `current_qty > 0`, where the outcome is not already decided.
+Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8% of them followed by a stockout within 7 days. The in-stock columns cover the 5,464 rows with `current_qty > 0`, leaving out rows that are already out of stock.
 
 | Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
 |---|---|---|---|---|---|---|
