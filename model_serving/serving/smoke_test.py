@@ -7,9 +7,8 @@ Flow
 2. Try to read up to N rows from Bigtable inventory_features table.
    - If Bigtable is unavailable: fall back to synthetic zero-vector instances
      with a clear warning. See note below on expected outputs.
-3. For each Bigtable row:
-   - Decode big-endian double values (struct.unpack(">d", ...)).
-   - Map abbreviated column qualifiers to flat feature names.
+3. For each Bigtable row (read through FeatureClient.scan_all, the same
+   decoder the batch scorer uses):
    - Fill missing raw features with safe domain defaults (_fill_defaults).
    - Compute derived features (days_of_supply, effective_supply, etc.) via
      engineer_features() from ml_training.datasets.feature_engineer.
@@ -37,7 +36,6 @@ from __future__ import annotations
 
 import json
 import logging
-import struct
 import sys
 from pathlib import Path
 
@@ -54,20 +52,9 @@ from ml_training.datasets.feature_engineer import (
     engineer_features,
     fill_defaults,
 )
-from model_serving.pipeline.feature_client import _BIGTABLE_TO_FEATURE
+from model_serving.pipeline.feature_client import FeatureClient
 
 logger = logging.getLogger(__name__)
-
-# Column families written by bigtable_writer.py that contain string values
-# (stored as UTF-8, not big-endian double). We skip these for feature extraction.
-_STRING_FAMILIES_QUALIFIERS: frozenset[tuple[str, str]] = frozenset({
-    ("inventory", "last_evt"),
-    ("inventory", "last_upd"),
-    ("demand",    "last_sig"),
-    ("lineage",   "silver_ts"),
-    ("lineage",   "pipeline_ver"),
-})
-
 
 class SmokeTest:
     """
@@ -99,6 +86,7 @@ class SmokeTest:
         self.endpoint_resource_name = endpoint_resource_name
         self.artifacts_dir          = Path(artifacts_dir)
 
+        self._credentials_path = credentials_path
         if credentials_path:
             from google.oauth2 import service_account
             self._creds = service_account.Credentials.from_service_account_file(
@@ -191,52 +179,22 @@ class SmokeTest:
         table_id: str,
         n_samples: int,
     ) -> list[dict]:
-        from google.cloud import bigtable
+        """Sample n rows through FeatureClient and turn them into endpoint instances."""
+        with FeatureClient(
+            project_id=self.project_id,
+            instance_id=instance_id,
+            table_id=table_id,
+            credentials_path=self._credentials_path,
+        ) as client:
+            rows = client.scan_all(limit=n_samples)
 
-        client_kwargs: dict = {"project": self.project_id, "admin": False}
-        if self._creds:
-            client_kwargs["credentials"] = self._creds
-
-        client = bigtable.Client(**client_kwargs)
-        table  = client.instance(instance_id).table(table_id)
-
-        rows = table.read_rows(limit=n_samples)
         instances: list[dict] = []
-
-        for row_data in rows:
-            row_key    = row_data.row_key.decode("utf-8")
-            parts      = row_key.split("#")
-            if len(parts) != 2:
-                logger.warning("Unexpected row key format: %s — skipping", row_key)
-                continue
-
-            warehouse_id, sku_id = parts[0], parts[1]
-            raw_features: dict[str, float] = {}
-
-            for cf_name, cf_data in row_data.cells.items():
-                for col_qualifier_bytes, cells in cf_data.items():
-                    col_qualifier = col_qualifier_bytes.decode("utf-8")
-                    key = (cf_name, col_qualifier)
-
-                    if key in _STRING_FAMILIES_QUALIFIERS:
-                        continue
-
-                    feature_name = _BIGTABLE_TO_FEATURE.get(key)
-                    if feature_name is None:
-                        continue
-
-                    cell_value = cells[0].value
-                    raw_features[feature_name] = _decode_double(cell_value)
-
-            instance = self._features_to_instance(raw_features, warehouse_id, sku_id)
+        for fr in rows:
+            instance = self._features_to_instance(fr.features, fr.warehouse_id, fr.sku_id)
             if instance is not None:
                 instances.append(instance)
                 logger.info("  Row %-20s -> wh_vocab=%d  sku_vocab=%d",
-                            row_key,
-                            instance["warehouse_id"],
-                            instance["sku_id"])
-
-        client.close()
+                            fr.row_key, instance["warehouse_id"], instance["sku_id"])
         return instances
 
     def _features_to_instance(
@@ -351,18 +309,6 @@ class SmokeTest:
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
-
-def _decode_double(value: bytes) -> float:
-    """Decode a Bigtable cell value to float64 (big-endian double)."""
-    if len(value) == 8:
-        return struct.unpack(">d", value)[0]
-    # Graceful fallback for cells written as UTF-8 strings (non-standard)
-    try:
-        return float(value.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        logger.debug("Could not decode cell value as double or UTF-8: %r", value)
-        return 0.0
-
 
 def _is_valid_prob(value) -> bool:
     """Return True iff value is a finite float in [0.0, 1.0]."""

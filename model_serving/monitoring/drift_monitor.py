@@ -91,8 +91,6 @@ _PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
 # risk call agrees with the rule-based risk__reorder_urgency heuristic more
 # than this fraction of the time, the model adds no signal over the heuristic.
 _BASELINE_DIVERGENCE_THRESHOLD = 0.95
-_BASELINE_RISK_FAMILY          = "risk"
-_BASELINE_URGENCY_COL          = b"urgency"
 _BASELINE_PROB_THRESHOLD       = 0.5   # shortage_prob_7d >= this → model says "at risk"
 _BASELINE_AT_RISK_URGENCY_MIN  = 2     # urgency >= REORDER(2) → heuristic says "at risk"
 
@@ -106,11 +104,6 @@ _MONITORED_FEATURES: list[tuple[str, str]] = [
     ("velocity__avg_daily_sales_7d",    "avg_daily_sales_7d"),
     ("supplier__supplier_reliability",  "supplier_reliability"),
 ]
-
-# Column families to skip in predictions read (only read "predictions" family).
-_PREDICTIONS_FAMILY = "predictions"
-_PREDICTIONS_PROB_COL   = b"shortage_prob_7d"
-_PREDICTIONS_SCORE_COL  = b"stockout_risk_score"
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -247,12 +240,12 @@ class DriftMonitor:
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
             )
 
-        from google.cloud import bigtable
-        bigtable_kwargs: dict = {"project": project_id, "admin": False}
-        if self._creds:
-            bigtable_kwargs["credentials"] = self._creds
-        self._bigtable_client = bigtable.Client(**bigtable_kwargs)
-        self._table     = self._bigtable_client.instance(instance_id).table(table_id)
+        from model_serving.pipeline.feature_client import FeatureClient
+        self._feature_client = FeatureClient(
+            project_id=project_id, instance_id=instance_id,
+            table_id=table_id, credentials_path=credentials_path,
+        )
+        self._prediction_rows_cache = None
 
         logger.info(
             "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
@@ -289,6 +282,7 @@ class DriftMonitor:
         DriftReport
         """
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._prediction_rows_cache = None   # one Bigtable prediction read per run
         logger.info("=== SCIP Drift Monitor — %s ===", run_ts)
 
         # Step 1: collect current feature values from Bigtable.
@@ -392,7 +386,7 @@ class DriftMonitor:
         return report
 
     def close(self) -> None:
-        self._bigtable_client.close()
+        self._feature_client.close()
 
     def __enter__(self) -> "DriftMonitor":
         return self
@@ -404,65 +398,18 @@ class DriftMonitor:
 
     def _collect_feature_values(self) -> dict[str, list[float]]:
         """
-        Scan all feature rows from Bigtable, run engineer_features(), and
-        return a dict of {flat_feature_name: [float, ...]} for monitored features.
-
-        Scans self._table directly (the shared Bigtable client set up in __init__)
-        rather than instantiating a separate FeatureClient, to avoid closing the
-        shared client when a context manager exits.
+        Scan all feature rows via FeatureClient, run engineer_features(), and
+        return {flat_feature_name: [float, ...]} for the monitored features.
+        Same read path and derivation as RequestBuilder.build(), so the
+        monitor sees exactly what the scorer scores.
         """
-        from google.cloud.bigtable import row_filters as bigtable_filters
-        from model_serving.pipeline.feature_client import (
-            _BIGTABLE_TO_FEATURE,
-            _FEATURE_FAMILIES,
-            _decode_double,
-            FeatureRow,
-        )
         from model_serving.pipeline.request_builder import _RAW_FEATURES
 
-        filter_ = bigtable_filters.RowFilterChain(filters=[
-            bigtable_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES))),
-            bigtable_filters.CellsColumnLimitFilter(1),
-        ])
-
-        feature_rows: list[FeatureRow] = []
-        n_skipped = 0
-
-        for row_data in self._table.read_rows(filter_=filter_):
-            row_key = row_data.row_key.decode("utf-8")
-            parts   = row_key.split("#")
-            if len(parts) != 2:
-                n_skipped += 1
-                continue
-            warehouse_id, sku_id = parts[0], parts[1]
-            raw_features: dict[str, float] = {}
-
-            for cf_name, cf_data in row_data.cells.items():
-                if cf_name not in _FEATURE_FAMILIES:
-                    continue
-                for col_qualifier_bytes, cells in cf_data.items():
-                    col_qualifier = col_qualifier_bytes.decode("utf-8")
-                    feature_name  = _BIGTABLE_TO_FEATURE.get((cf_name, col_qualifier))
-                    if feature_name is None:
-                        continue
-                    decoded = _decode_double(cells[0].value, cf_name, col_qualifier)
-                    if decoded is not None:
-                        raw_features[feature_name] = decoded
-
-            feature_rows.append(FeatureRow(
-                row_key=row_key, warehouse_id=warehouse_id,
-                sku_id=sku_id, features=raw_features,
-            ))
-
-        logger.info(
-            "Bigtable scan complete: %d rows, %d skipped", len(feature_rows), n_skipped
-        )
-
+        feature_rows = self._feature_client.scan_all()
         if not feature_rows:
             logger.warning("No feature rows returned from Bigtable")
             return {}
 
-        # Build DataFrame and apply feature engineering (same as RequestBuilder.build()).
         records = []
         for fr in feature_rows:
             row = {col: fr.features.get(col, np.nan) for col in _RAW_FEATURES}
@@ -474,150 +421,73 @@ class DriftMonitor:
         self._fill_defaults(df)
         df = self._engineer_features(df)
 
-        # Extract only the monitored features.
         result: dict[str, list[float]] = {}
         for _, feature_name in _MONITORED_FEATURES:
-            if feature_name in df.columns:
-                vals = df[feature_name].dropna().tolist()
-                result[feature_name] = [float(v) for v in vals]
-            else:
-                result[feature_name] = []
+            vals = df[feature_name].dropna().tolist() if feature_name in df.columns else []
+            result[feature_name] = [float(v) for v in vals]
 
         logger.info(
             "Feature values collected: %d entities, %d monitored features",
-            len(feature_rows),
-            sum(1 for v in result.values() if v),
+            len(feature_rows), sum(1 for v in result.values() if v),
         )
         return result
 
+    def _prediction_rows(self):
+        """One read of the predictions family and risk:urgency per run, shared
+        by the variance-collapse and baseline-divergence checks."""
+        if self._prediction_rows_cache is None:
+            self._prediction_rows_cache = self._feature_client.read_predictions()
+        return self._prediction_rows_cache
+
     def _collect_prediction_values(self) -> PredictionMetrics | None:
-        """
-        Read shortage_prob_7d and stockout_risk_score from the Bigtable
-        predictions column family. Values are stored as UTF-8 strings by
-        prediction_writer.py.
-
-        Returns None if no prediction rows are found.
-        """
-        from google.cloud.bigtable import row_filters
-
-        filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter(_PREDICTIONS_FAMILY),
-            row_filters.CellsColumnLimitFilter(1),
-        ])
-
-        probs:  list[float] = []
-        scores: list[float] = []
-
-        for row_data in self._table.read_rows(filter_=filter_):
-            cells = row_data.cells.get(_PREDICTIONS_FAMILY, {})
-
-            prob_cells  = cells.get(_PREDICTIONS_PROB_COL,  [])
-            score_cells = cells.get(_PREDICTIONS_SCORE_COL, [])
-
-            if prob_cells:
-                try:
-                    probs.append(float(prob_cells[0].value.decode("utf-8")))
-                except (ValueError, UnicodeDecodeError):
-                    pass
-
-            if score_cells:
-                try:
-                    scores.append(float(score_cells[0].value.decode("utf-8")))
-                except (ValueError, UnicodeDecodeError):
-                    pass
-
-        if not probs and not scores:
+        """Variance statistics of shortage_prob_7d and stockout_risk_score.
+        Returns None if no prediction rows are found."""
+        rows   = self._prediction_rows()
+        probs  = np.array([r.shortage_prob_7d    for r in rows if r.shortage_prob_7d    is not None], dtype=float)
+        scores = np.array([r.stockout_risk_score for r in rows if r.stockout_risk_score is not None], dtype=float)
+        if len(probs) == 0 and len(scores) == 0:
             return None
 
-        n = max(len(probs), len(scores))
-        prob_arr  = np.array(probs,  dtype=float)
-        score_arr = np.array(scores, dtype=float)
-
-        prob_std  = float(np.std(prob_arr))  if len(prob_arr)  > 1 else 0.0
-        score_std = float(np.std(score_arr)) if len(score_arr) > 1 else 0.0
-
+        prob_std  = float(np.std(probs))  if len(probs)  > 1 else 0.0
+        score_std = float(np.std(scores)) if len(scores) > 1 else 0.0
         return PredictionMetrics(
-            prob_mean               = float(np.mean(prob_arr))  if len(prob_arr)  > 0 else 0.0,
-            prob_std                = prob_std,
-            score_mean              = float(np.mean(score_arr)) if len(score_arr) > 0 else 0.0,
-            score_std               = score_std,
+            prob_mean                = float(np.mean(probs))  if len(probs)  else 0.0,
+            prob_std                 = prob_std,
+            score_mean               = float(np.mean(scores)) if len(scores) else 0.0,
+            score_std                = score_std,
             prob_variance_collapsed  = prob_std  < _VARIANCE_COLLAPSE_THRESHOLD,
             score_variance_collapsed = score_std < _VARIANCE_COLLAPSE_THRESHOLD,
-            n_entities              = n,
+            n_entities               = max(len(probs), len(scores)),
         )
 
     def _collect_baseline_divergence(self) -> BaselineDivergenceMetrics | None:
         """
         Compare the model's binary risk call against the rule-based
-        risk__reorder_urgency heuristic for every entity that has both a
-        prediction and an urgency value.
+        risk__reorder_urgency heuristic for every entity that has both.
 
         model_at_risk     = shortage_prob_7d >= _BASELINE_PROB_THRESHOLD
         heuristic_at_risk = reorder_urgency  >= _BASELINE_AT_RISK_URGENCY_MIN
 
-        risk__reorder_urgency is written to Bigtable in the "risk" column
-        family as a big-endian double (same encoding as every other numeric
-        feature — see spark/utils/bigtable_writer.py), so it's decoded with
-        feature_client's _decode_double rather than the UTF-8 decode used
-        for the predictions family.
-
         Returns None if no entity has both values present.
         """
-        from google.cloud.bigtable import row_filters
-        from model_serving.pipeline.feature_client import _decode_double
-
-        filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter(
-                f"{_PREDICTIONS_FAMILY}|{_BASELINE_RISK_FAMILY}"
-            ),
-            row_filters.CellsColumnLimitFilter(1),
-        ])
-
-        n_compared = 0
-        n_agree    = 0
-
-        for row_data in self._table.read_rows(filter_=filter_):
-            pred_cells = row_data.cells.get(_PREDICTIONS_FAMILY, {})
-            risk_cells = row_data.cells.get(_BASELINE_RISK_FAMILY, {})
-
-            prob_cells    = pred_cells.get(_PREDICTIONS_PROB_COL, [])
-            urgency_cells = risk_cells.get(_BASELINE_URGENCY_COL, [])
-
-            if not prob_cells or not urgency_cells:
-                continue
-
-            try:
-                prob = float(prob_cells[0].value.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                continue
-
-            urgency = _decode_double(
-                urgency_cells[0].value, _BASELINE_RISK_FAMILY, "urgency"
-            )
-            if urgency is None:
-                continue
-
-            model_at_risk     = prob    >= _BASELINE_PROB_THRESHOLD
-            heuristic_at_risk = urgency >= _BASELINE_AT_RISK_URGENCY_MIN
-
-            n_compared += 1
-            if model_at_risk == heuristic_at_risk:
-                n_agree += 1
-
-        if n_compared == 0:
+        pairs = [
+            (r.shortage_prob_7d, r.reorder_urgency)
+            for r in self._prediction_rows()
+            if r.shortage_prob_7d is not None and r.reorder_urgency is not None
+        ]
+        if not pairs:
             return None
 
-        agreement_rate = n_agree / n_compared
-        status = (
-            "trigger" if agreement_rate > _BASELINE_DIVERGENCE_THRESHOLD
-            else "stable"
+        n_agree = sum(
+            1 for prob, urgency in pairs
+            if (prob >= _BASELINE_PROB_THRESHOLD) == (urgency >= _BASELINE_AT_RISK_URGENCY_MIN)
         )
-
+        agreement_rate = n_agree / len(pairs)
         return BaselineDivergenceMetrics(
-            n_compared     = n_compared,
+            n_compared     = len(pairs),
             n_agree        = n_agree,
             agreement_rate = agreement_rate,
-            status         = status,
+            status         = "trigger" if agreement_rate > _BASELINE_DIVERGENCE_THRESHOLD else "stable",
         )
 
     # ── PSI computation ────────────────────────────────────────────────────────
