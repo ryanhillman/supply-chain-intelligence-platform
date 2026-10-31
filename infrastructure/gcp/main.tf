@@ -55,7 +55,7 @@ resource "google_project_service" "iam" {
 #                Bronze query restarted from "latest" and silently skipped the
 #                Kafka data produced in between. Remove abandoned checkpoint
 #                directories by hand.
-#   dlq/       — dead-letter queue (Kafka DLQ is primary in Phase 3)
+#   dlq/       — dead-letter queue (newline-delimited JSON envelopes)
 ###############################################################################
 
 resource "google_storage_bucket" "data_lake" {

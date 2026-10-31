@@ -30,11 +30,6 @@ SILVER_CHECKPOINT_BASE_PATH: str = os.environ.get(
 )
 DLQ_BASE_PATH: str = os.environ.get("DLQ_BASE_PATH", "data/dlq")
 
-# ── DLQ ───────────────────────────────────────────────────────────────────────
-# "file"  → FileDlqHandler  (Phase 2)
-# "kafka" → KafkaDlqHandler (Phase 3 Step 3)
-DLQ_SINK: str = os.environ.get("DLQ_SINK", "file")
-
 # ── Bigtable ──────────────────────────────────────────────────────────────────
 BIGTABLE_INSTANCE_ID: str = os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store")
 BIGTABLE_TABLE_ID: str = os.environ.get("BIGTABLE_TABLE_ID", "inventory_features")
