@@ -14,8 +14,8 @@ RUN curl -fsSL \
     -o "/opt/spark/jars/gcs-connector-hadoop3-${GCS_CONNECTOR_VERSION}.jar"
 
 # ── App directories ───────────────────────────────────────────────────────────
-# Local data dirs kept for dev/fallback when GCS_BUCKET_NAME is not set.
-# SA key dir mounted at runtime from infrastructure/gcp/keys/.
+# data/ is where the default local run writes (spark/data/ on the host via
+# the bind mount). keys/ is the mount target for docker-compose.gcp.yml.
 RUN mkdir -p /opt/spark-app/data/bronze \
              /opt/spark-app/data/checkpoints \
              /opt/spark-app/data/dlq \

@@ -7,10 +7,14 @@ Subcommands:
                  Reads model_resource_name from model_serving/artifacts/registration_info.json.
                  Defaults to 0% traffic (challenger pattern).
 
-    smoke-test — score a few Bigtable entities through the endpoint.
+    smoke-test — score a few Bigtable entities through the endpoint: the Vertex
+                 AI endpoint (--endpoint) or the serving container run locally
+                 (--endpoint-url, see local/README.md).
 
     promote    — compare champion vs challenger and promote the challenger if it
                  beats the champion on AUPRC, AUC-ROC, and Brier score.
+                 With --local, the same gate between two training runs' artifact
+                 directories, nothing deployed (the local run).
 
     undeploy   — undeploy every model from the endpoint (the endpoint resource
                  stays). Deployed replicas bill by the hour with or without
@@ -42,6 +46,13 @@ Usage
         --bigtable-instance scip-feature-store \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json
 
+    # Smoke test against the serving container run locally (no Vertex AI;
+    # Bigtable rows come from the emulator via BIGTABLE_EMULATOR_HOST):
+    python model_serving/scripts/deploy.py smoke-test \\
+        --project local-scip \\
+        --endpoint-url http://localhost:8080 \\
+        --bigtable-instance scip-feature-store
+
     # Promote challenger to champion:
     python model_serving/scripts/deploy.py promote \\
         --project your-gcp-project-id \\
@@ -49,6 +60,12 @@ Usage
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
         --dry-run   # preview the comparison before committing
+
+    # Promotion gate offline, between two training runs (no Vertex AI):
+    python model_serving/scripts/deploy.py promote --local \\
+        --champion-dir   ml_training/artifacts_v1 \\
+        --challenger-dir ml_training/artifacts \\
+        --dataset        ml_training/artifacts/dataset
 
     # Between demo sessions — stop paying for idle replicas:
     python model_serving/scripts/deploy.py undeploy \\
@@ -76,7 +93,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from model_serving.serving.deploy_endpoint import EndpointDeployer
-from model_serving.registry.promote_model  import ModelPromoter
+from model_serving.registry.promote_model  import ModelPromoter, promote_local
 from model_serving.serving.smoke_test      import SmokeTest
 
 logging.basicConfig(
@@ -165,6 +182,14 @@ def parse_args() -> argparse.Namespace:
     smoke_p = sub.add_parser("smoke-test", help="Smoke-test the deployed endpoint")
     _add_common(smoke_p)
     smoke_p.add_argument(
+        "--endpoint-url",
+        default=os.environ.get("ENDPOINT_URL", ""),
+        help=(
+            "Base URL of the serving container run locally, e.g. http://localhost:8080. "
+            "Alternative to --endpoint."
+        ),
+    )
+    smoke_p.add_argument(
         "--bigtable-instance",
         default=os.environ.get("BIGTABLE_INSTANCE_ID", ""),
         help="Bigtable instance ID (e.g. scip-feature-store). Optional; uses synthetic data if omitted.",
@@ -200,6 +225,17 @@ def parse_args() -> argparse.Namespace:
             "(default: ml_training/artifacts/dataset)"
         ),
     )
+    promote_p.add_argument(
+        "--local",
+        action="store_true",
+        help=(
+            "Compare two training runs' artifact directories instead of the models "
+            "deployed on a Vertex AI endpoint; nothing is deployed. Needs "
+            "--champion-dir and --challenger-dir."
+        ),
+    )
+    promote_p.add_argument("--champion-dir",   default=None, help="Artifacts directory of the current model (--local)")
+    promote_p.add_argument("--challenger-dir", default=None, help="Artifacts directory of the candidate model (--local)")
 
     # ── undeploy subcommand ───────────────────────────────────────────────────
     undeploy_p = sub.add_parser(
@@ -221,9 +257,14 @@ def _require(args: argparse.Namespace, flag: str, env: str) -> None:
 def main() -> None:
     args = parse_args()
 
-    # Validate required args shared by all subcommands
-    _require(args, "project",  "GCP_PROJECT_ID")
-    _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
+    # Validate required args. The two local modes need no GCP identity:
+    # smoke-test --endpoint-url and promote --local.
+    local_promote = args.command == "promote" and args.local
+    local_smoke   = args.command == "smoke-test" and bool(args.endpoint_url)
+    if not local_promote:
+        _require(args, "project", "GCP_PROJECT_ID")
+    if not (local_promote or local_smoke):
+        _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     if args.command == "deploy":
         if not getattr(args, "service_account", None):
@@ -267,7 +308,8 @@ def main() -> None:
         smoke = SmokeTest(
             project_id             = args.project,
             region                 = args.region,
-            endpoint_resource_name = args.endpoint,
+            endpoint_resource_name = None if args.endpoint_url else args.endpoint,
+            endpoint_url           = args.endpoint_url or None,
             artifacts_dir          = args.artifacts,
             credentials_path       = args.sa_key,
         )
@@ -278,6 +320,15 @@ def main() -> None:
         sys.exit(0 if passed else 1)
 
     elif args.command == "promote":
+        if args.local:
+            if not (args.champion_dir and args.challenger_dir):
+                logger.error("promote --local needs --champion-dir and --challenger-dir")
+                sys.exit(1)
+            if args.dry_run:
+                logger.info("--dry-run has no effect with --local: nothing is deployed either way")
+            promoted = promote_local(args.champion_dir, args.challenger_dir, args.dataset)
+            sys.exit(0 if promoted else 1)
+
         promoter = ModelPromoter(
             project_id             = args.project,
             region                 = args.region,

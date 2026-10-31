@@ -1,18 +1,24 @@
 """
 build_dataset.py — CLI entry point for Step 4.1.
 
-Reads Bronze GCS Parquet -> engineers features -> generates labels ->
+Reads Bronze Parquet -> engineers features -> generates labels ->
 splits 70/15/15 by time -> writes train/val/test Parquet + metadata.
 
 Usage
 -----
+    # Local Bronze written by the Spark job (the default local run):
+    python ml_training/scripts/build_dataset.py \\
+        --bronze-path spark/data/bronze \\
+        --output-dir ml_training/artifacts/dataset
+
+    # GCS Bronze (June 2026 deployment):
     python ml_training/scripts/build_dataset.py \\
         --bucket my-project-scip-lake \\
         --sa-key infrastructure/gcp/keys/scip-spark-sa.json \\
         --output-dir ml_training/artifacts/dataset
 
 Environment variables (alternative to flags):
-    GCS_BUCKET_NAME            overrides --bucket
+    GCS_BUCKET_NAME                 overrides --bucket
     GOOGLE_APPLICATION_CREDENTIALS  overrides --sa-key
 """
 from __future__ import annotations
@@ -37,7 +43,7 @@ logger = logging.getLogger("build_dataset")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Build Phase 4 training dataset from Bronze GCS or synthetic generator"
+        description="Build the training dataset from Bronze (local directory or GCS) or the synthetic generator"
     )
 
     # ── Data source ───────────────────────────────────────────────────────────
@@ -45,8 +51,8 @@ def parse_args() -> argparse.Namespace:
         "--synthetic",
         action="store_true",
         help=(
-            "Use the SyntheticDataGenerator instead of GCS Bronze. "
-            "When set, --bucket is not required. "
+            "Use the SyntheticDataGenerator instead of Bronze. "
+            "When set, neither --bronze-path nor --bucket is required. "
             "The existing Bronze pipeline is unchanged and remains the "
             "production data path."
         ),
@@ -72,11 +78,22 @@ def parse_args() -> argparse.Namespace:
         help="RNG seed for --synthetic mode (default: 42)",
     )
 
-    # ── GCS Bronze path (unchanged) ───────────────────────────────────────────
+    # ── Bronze source ─────────────────────────────────────────────────────────
+    p.add_argument(
+        "--bronze-path",
+        default=None,
+        help=(
+            "Local Bronze directory written by spark/jobs/bronze_ingestion.py "
+            "(e.g. spark/data/bronze). Takes precedence over --bucket."
+        ),
+    )
     p.add_argument(
         "--bucket",
         default=os.environ.get("GCS_BUCKET_NAME", ""),
-        help="GCS bucket name (e.g. my-project-scip-lake). Required unless --synthetic.",
+        help=(
+            "GCS bucket name (e.g. my-project-scip-lake) for Bronze on GCS. "
+            "One of --bronze-path / --bucket is required unless --synthetic."
+        ),
     )
     p.add_argument(
         "--sa-key",
@@ -113,7 +130,8 @@ def main() -> None:
     args = parse_args()
 
     builder = DatasetBuilder(
-        bucket           = args.bucket,
+        bucket           = None if args.bronze_path else args.bucket,
+        bronze_path      = args.bronze_path,
         credentials_path = args.sa_key,
         output_dir       = args.output_dir,
         horizon_days     = args.horizon,
@@ -124,7 +142,7 @@ def main() -> None:
         # ── Synthetic data path (additive — does not affect existing pipeline) ─
         from ml_training.datasets.synthetic_generator import SyntheticConfig, SyntheticDataGenerator
 
-        logger.info("Dataset build mode : SYNTHETIC (GCS Bronze pipeline unchanged)")
+        logger.info("Dataset build mode : SYNTHETIC")
         logger.info("  start_date   : %s", args.start_date)
         logger.info("  total_days   : %d", args.total_days)
         logger.info("  seed         : %d", args.seed)
@@ -140,17 +158,22 @@ def main() -> None:
         manifest  = builder.build_from_synthetic(generator)
 
     else:
-        # ── Existing GCS Bronze path (unchanged) ──────────────────────────────
-        if not args.bucket:
+        # ── Bronze (local directory or GCS) ───────────────────────────────────
+        if not args.bronze_path and not args.bucket:
             logger.error(
-                "GCS bucket name is required. Pass --bucket or set GCS_BUCKET_NAME. "
+                "A Bronze source is required: --bronze-path <dir> (local Spark output) "
+                "or --bucket <name> / GCS_BUCKET_NAME (GCS). "
                 "To use synthetic data instead, pass --synthetic."
             )
             sys.exit(1)
 
-        logger.info("Dataset build mode : GCS BRONZE")
-        logger.info("  Bucket        : %s", args.bucket)
-        logger.info("  SA key        : %s", args.sa_key or "Application Default Credentials")
+        if args.bronze_path:
+            logger.info("Dataset build mode : LOCAL BRONZE")
+            logger.info("  Bronze path   : %s", args.bronze_path)
+        else:
+            logger.info("Dataset build mode : GCS BRONZE")
+            logger.info("  Bucket        : %s", args.bucket)
+            logger.info("  SA key        : %s", args.sa_key or "Application Default Credentials")
         logger.info("  Output        : %s", args.output_dir)
         logger.info("  Horizon       : %d days", args.horizon)
         logger.info("  Simulate days : %d", args.simulate_days)

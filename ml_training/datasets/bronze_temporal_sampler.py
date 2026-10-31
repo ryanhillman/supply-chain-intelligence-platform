@@ -1,6 +1,7 @@
 """
-BronzeTemporalSampler — reads all five Bronze GCS topics and builds a
-feature DataFrame of (warehouse_id, sku_id, sample_date) rows.
+BronzeTemporalSampler — reads all five Bronze topics (a local directory
+written by the Spark job, or the GCS bucket of the June 2026 deployment) and
+builds a feature DataFrame of (warehouse_id, sku_id, sample_date) rows.
 
 One row per (warehouse, sku, calendar day) within the usable date range:
   start = first_inventory_event_date + min_lookback_days
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from pathlib import Path
 
 import gcsfs
 import numpy as np
@@ -60,15 +62,19 @@ _DEMAND_COLS = [
 
 class BronzeTemporalSampler:
     """
-    Reads Bronze GCS Parquet and builds a feature row per (warehouse, sku, day).
+    Reads Bronze Parquet and builds a feature row per (warehouse, sku, day).
 
     Parameters
     ----------
     bucket:
-        GCS bucket name, e.g. "my-project-scip-lake".
+        GCS bucket name, e.g. "my-project-scip-lake" (Bronze under
+        gs://<bucket>/bronze/). Mutually exclusive with bronze_path.
+    bronze_path:
+        Local Bronze directory as written by spark/jobs/bronze_ingestion.py,
+        e.g. "spark/data/bronze". Mutually exclusive with bucket.
     credentials_path:
         Path to a service account JSON key, or None to use Application
-        Default Credentials.
+        Default Credentials (bucket mode only).
     min_lookback_days:
         Days of history required before the first sample date (default 30,
         matches the 30d velocity window in silver_feature_engineering.py).
@@ -79,20 +85,29 @@ class BronzeTemporalSampler:
 
     def __init__(
         self,
-        bucket: str,
+        bucket: str | None = None,
         credentials_path: str | None = None,
         min_lookback_days: int = 30,
         min_lookahead_days: int = 7,
         simulate_days: int = 0,
+        bronze_path: str | Path | None = None,
     ) -> None:
+        if bool(bucket) == bool(bronze_path):
+            raise ValueError(
+                "Pass exactly one of bucket (GCS) or bronze_path (local directory)"
+            )
         self._bucket = bucket
+        self._bronze_path = Path(bronze_path) if bronze_path else None
         self._credentials_path = credentials_path
         self._min_lookback = min_lookback_days
         self._min_lookahead = min_lookahead_days
         self._simulate_days = simulate_days
-        self._fs = gcsfs.GCSFileSystem(
-            token=credentials_path if credentials_path else "google_default"
-        )
+        self._fs = None
+        if bucket:
+            self._fs = gcsfs.GCSFileSystem(
+                token=credentials_path if credentials_path else "google_default"
+            )
+        self.source = f"gs://{bucket}/bronze/" if bucket else str(self._bronze_path)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -109,7 +124,7 @@ class BronzeTemporalSampler:
             Full inventory event log with parsed timestamps.
             Passed to label_generator.py to avoid re-reading from GCS.
         """
-        logger.info("Loading Bronze inventory events from gs://%s/bronze/", self._bucket)
+        logger.info("Loading Bronze inventory events from %s", self.source)
         inv = self._read_topic("inventory.events", _INVENTORY_COLS)
         inv = self._parse_ts(inv)
 
@@ -186,28 +201,40 @@ class BronzeTemporalSampler:
         logger.info("Feature DataFrame built: %d rows, %d columns", len(features), len(features.columns))
         return features, inv
 
-    # ── GCS I/O ───────────────────────────────────────────────────────────────
+    # ── Bronze I/O ────────────────────────────────────────────────────────────
+
+    def _open_dataset(self, topic: str) -> pads.Dataset:
+        """One hive-partitioned PyArrow dataset over the topic's committed files."""
+        if self._bronze_path is not None:
+            topic_dir = self._bronze_path / topic
+            if not any(topic_dir.rglob("*.parquet")):
+                raise FileNotFoundError(f"No Parquet files under {topic_dir}")
+            logger.info("Reading local Bronze topic %s from %s", topic, topic_dir)
+            # Directory discovery skips _temporary/ (uncommitted Spark output)
+            # and .crc sidecars through pyarrow's default ignore_prefixes ['.', '_'].
+            return pads.dataset(str(topic_dir), format="parquet", partitioning="hive")
+
+        # gcsfs.ls() returns the directory itself as the first entry, which
+        # confuses pyarrow's file-discovery walk (it tries to open_input_file
+        # on a directory path and raises FileNotFoundError). Glob for explicit
+        # file paths instead so pyarrow never has to walk the directory.
+        all_paths = self._fs.glob(f"{self._bucket}/bronze/{topic}/**/*.parquet")
+        file_paths = [p for p in all_paths if "_temporary" not in p]
+        if not file_paths:
+            raise FileNotFoundError(
+                f"No committed Parquet files found for Bronze topic {topic}"
+            )
+        logger.info("Discovered %d files for topic %s", len(file_paths), topic)
+        return pads.dataset(
+            file_paths,
+            filesystem=PyFileSystem(FSSpecHandler(self._fs)),
+            format="parquet",
+            partitioning="hive",
+        )
 
     def _read_topic(self, topic: str, columns: list[str]) -> pd.DataFrame:
         try:
-            # gcsfs.ls() returns the directory itself as the first entry, which
-            # confuses pyarrow's file-discovery walk (it tries to open_input_file
-            # on a directory path and raises FileNotFoundError). Glob for explicit
-            # file paths instead so pyarrow never has to walk the directory.
-            all_paths = self._fs.glob(f"{self._bucket}/bronze/{topic}/**/*.parquet")
-            file_paths = [p for p in all_paths if "_temporary" not in p]
-            if not file_paths:
-                raise FileNotFoundError(
-                    f"No committed Parquet files found for Bronze topic {topic}"
-                )
-            logger.info("Discovered %d files for topic %s", len(file_paths), topic)
-            pa_fs = PyFileSystem(FSSpecHandler(self._fs))
-            dataset = pads.dataset(
-                file_paths,
-                filesystem=pa_fs,
-                format="parquet",
-                partitioning="hive",
-            )
+            dataset = self._open_dataset(topic)
             available = {f.name for f in dataset.schema}
             requested = [c for c in columns if c in available]
             table = dataset.to_table(columns=requested)
