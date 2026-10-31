@@ -3,7 +3,7 @@ ONNX export — prepares the trained ShortagePredictor for Vertex AI serving.
 
 Exports to ONNX opset 17 with dynamic batch axis. The model's Standardize
 buffers (train-split mean/scale) are exported inside the graph, so the ONNX
-model takes raw feature units (ADR-005 Decision 3).
+model takes raw feature units.
 Validates the exported graph with onnxruntime before reporting success.
 
 Phase 5 will consume model.onnx from GCS to register with Vertex AI

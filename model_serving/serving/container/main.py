@@ -15,7 +15,7 @@ Vertex AI deploy flags (set in model_serving/scripts/deploy.py):
 
 The container does NOT apply vocab mapping — that is the caller's
 responsibility (see request_builder.py). Numeric features arrive in raw
-units; the ONNX graph standardizes them itself (ADR-005 Decision 3).
+units; the ONNX graph standardizes them itself.
 """
 from __future__ import annotations
 

@@ -14,7 +14,6 @@ Design:
   - Batch size controlled by BIGTABLE_BATCH_SIZE (default 500)
 
 Row key format: {warehouse_id}#{sku_id}
-  Key design documented in docs/adr/ADR-003-bigtable-feature-store.md.
   Bigtable splits tablets automatically; the table has no pre-split points.
 """
 from __future__ import annotations

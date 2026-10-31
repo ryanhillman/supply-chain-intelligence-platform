@@ -3,7 +3,7 @@ Tests for model_serving/pipeline/request_builder.py.
 
 RequestBuilder turns Bigtable FeatureRows into endpoint instances. Two
 contracts are pinned: numeric features are passed through in raw units
-(the ONNX graph standardizes them — ADR-005 Decision 3), and
+(the ONNX graph standardizes them), and
 stockout_risk_score is the closed-form Normal approximation computed here,
 not a model output.
 """

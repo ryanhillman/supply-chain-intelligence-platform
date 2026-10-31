@@ -32,7 +32,7 @@ Flow
    p1-p99 and reported as an informational warning, because out-of-range
    values usually reflect seasonality outside the training window, which the
    test metrics show the model handles.
-5. Classify PSI per ADR-005 thresholds:
+5. Classify PSI:
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
      PSI ≥ 0.20  → retraining trigger
@@ -40,8 +40,7 @@ Flow
 7. Compare the model's binary risk call (shortage_prob_7d >= 0.5) against
    the rule-based risk__reorder_urgency heuristic (urgency >= REORDER) for
    every entity with both values present. Agreement > 95% means the model
-   adds no signal over the heuristic — retraining trigger (ADR-005
-   Decision 7, trigger 3).
+   adds no signal over the heuristic — retraining trigger.
 8. Print a tabular report. Optionally emit Cloud Monitoring metrics.
 
 PSI formula
@@ -98,7 +97,7 @@ _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
 _PSI_STABLE_THRESHOLD  = 0.10
 _PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
 
-# Baseline divergence (ADR-005 Decision 7, trigger 3): if the model's binary
+# Baseline divergence: if the model's binary
 # risk call agrees with the rule-based risk__reorder_urgency heuristic more
 # than this fraction of the time, the model adds no signal over the heuristic.
 _BASELINE_DIVERGENCE_THRESHOLD = 0.95
@@ -143,7 +142,7 @@ class PredictionMetrics:
 class BaselineDivergenceMetrics:
     """
     Agreement between the model's binary risk call and the rule-based
-    risk__reorder_urgency heuristic (ADR-005 Decision 7, trigger 3).
+    risk__reorder_urgency heuristic.
     """
 
     n_compared:     int
@@ -723,8 +722,7 @@ class DriftMonitor:
             if pm.prob_variance_collapsed or pm.score_variance_collapsed:
                 print(
                     "\n  [NOTE] Near-constant predictions mean the model no longer separates\n"
-                    "         entities. Check the feature PSI above and retrain\n"
-                    "         (ADR-005 Decision 7)."
+                    "         entities. Check the feature PSI above and retrain."
                 )
         else:
             print("\nPrediction Variance  — no predictions in Bigtable yet")
@@ -745,8 +743,7 @@ class DriftMonitor:
                 print(
                     "\n  [NOTE] The model agrees with the rule-based heuristic on\n"
                     "         almost every entity — it is not adding predictive signal\n"
-                    "         over the simple days-of-supply threshold (ADR-005\n"
-                    "         Decision 7, trigger 3)."
+                    "         over the simple days-of-supply threshold."
                 )
         else:
             print("\nBaseline Divergence  — no entities with both a prediction and urgency value")
@@ -769,7 +766,7 @@ class DriftMonitor:
                 print(f"     - {reason}")
             print()
             print(
-                "  Retraining (ADR-005 Decision 7):\n"
+                "  Retraining:\n"
                 "    1. Rebuild:  python ml_training/scripts/build_dataset.py --bronze-path ...\n"
                 "    2. Retrain:  python ml_training/scripts/train.py\n"
                 "    3. Gate:     python model_serving/scripts/deploy.py promote --local ...\n"
