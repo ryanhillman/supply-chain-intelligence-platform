@@ -172,16 +172,6 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 3. The serving container performs inference using ONNX Runtime.
 4. Prediction results are published to Pub/Sub.
 5. The prediction writer stores predictions back into Bigtable.
-6. Drift monitoring evaluates live feature distributions against training baselines.
-
-### Serving Components
-
-- Vertex AI Model Registry
-- Vertex AI Endpoint
-- FastAPI Serving Container
-- ONNX Runtime
-- Pub/Sub Prediction Pipeline
-- Bigtable Prediction Store
 
 ---
 
