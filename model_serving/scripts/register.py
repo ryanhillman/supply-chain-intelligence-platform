@@ -7,10 +7,10 @@ in Vertex AI Model Registry. Does NOT deploy to the endpoint.
 Usage
 -----
     python model_serving/scripts/register.py \\
-        --bucket  supply-chain-platform-499920-scip-lake \\
-        --project supply-chain-platform-499920 \\
+        --bucket  your-gcp-project-id-scip-lake \\
+        --project your-gcp-project-id \\
         --region  us-central1 \\
-        --image-uri us-central1-docker.pkg.dev/supply-chain-platform-499920/scip-serving/shortage-predictor-serving:latest \\
+        --image-uri us-central1-docker.pkg.dev/your-gcp-project-id/scip-serving/shortage-predictor-serving:latest \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json
 
     # Dry-run (no uploads, no Vertex AI calls):

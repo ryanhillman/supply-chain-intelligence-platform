@@ -20,7 +20,7 @@ Usage
 -----
     # First deployment (no champion yet):
     python model_serving/scripts/deploy.py deploy \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --region  us-central1 \\
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
@@ -28,7 +28,7 @@ Usage
 
     # Challenger deployment (run smoke test first):
     python model_serving/scripts/deploy.py deploy \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --region  us-central1 \\
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
@@ -36,7 +36,7 @@ Usage
 
     # Smoke test after challenger deployment:
     python model_serving/scripts/deploy.py smoke-test \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --region  us-central1 \\
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --bigtable-instance scip-feature-store \\
@@ -44,7 +44,7 @@ Usage
 
     # Promote challenger to champion:
     python model_serving/scripts/deploy.py promote \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --region  us-central1 \\
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\

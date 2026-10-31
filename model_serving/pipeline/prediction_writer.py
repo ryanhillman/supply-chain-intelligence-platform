@@ -55,7 +55,7 @@ Required packages:
 CLI usage
 ---------
     python model_serving/pipeline/prediction_writer.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --bigtable-instance scip-feature-store \\
         --subscription prediction-writer \\
         --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json

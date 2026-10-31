@@ -15,7 +15,7 @@ Usage
 -----
     # Score only (batch_scorer publishes to Pub/Sub; writer runs separately):
     python model_serving/scripts/score.py \\
-        --project supply-chain-platform-499920 \\
+        --project your-gcp-project-id \\
         --region  us-central1 \\
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --bigtable-instance scip-feature-store \\
