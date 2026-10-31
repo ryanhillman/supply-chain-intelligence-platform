@@ -276,8 +276,11 @@ detection is not yet wired into an automated block.
 
 ## Decision 8 — PSI-Based Retraining Trigger (Implementation)
 
-**Chosen:** `drift_monitor.py` computes PSI using the raw training rows in
-`train.parquet` as the reference distribution. Current feature values
+**Chosen:** `drift_monitor.py` computes PSI against `drift_reference.json`:
+decile bins and expected fractions computed from the raw training split when
+the model is trained and written next to `model.pt`, so the reference travels
+with the model rather than with whatever dataset is on the operator's disk
+(the provenance problem `preprocessor.pkl` had). Current feature values
 are read from Bigtable rather than Silver, matching the exact feature values that
 were presented to the model at inference.
 
@@ -294,8 +297,8 @@ distribution. Monitoring Silver would give a false-negative in this scenario.
 PSI = Σ (p_actual - p_expected) × ln(p_actual / p_expected)
 ```
 
-Bin edges are the training distribution's own (deduplicated) deciles, read
-directly from `train.parquet`, with `p_expected` set to each bin's *actual*
+Bin edges are the training distribution's own (deduplicated) deciles, stored
+in `drift_reference.json`, with `p_expected` set to each bin's *actual*
 training fraction rather than assumed to be a uniform 10%. An earlier version
 derived bin edges from normal quantiles of the training (`mean`, `scale`)
 instead; that assumption badly misrepresents the skewed
@@ -306,7 +309,7 @@ binned raw live values against *standardized* training rows (the parquet splits
 were StandardScaler-transformed at the time) and produced PSI 2–8 for the same
 train-vs-itself check. The splits are now stored in raw units, so bins and live
 values share units by construction, and there is no approximate fallback:
-`train.parquet` is required. Bins with zero observed count use a floor of
+`drift_reference.json` is required. Bins with zero observed count use a floor of
 0.0001 to avoid log(0).
 
 **Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud

@@ -4,13 +4,16 @@ feature_client.py — reads all feature rows from the Bigtable inventory_feature
 Design
 ------
 - Scans all rows in the table (no row key filter) to score every entity.
-- Restricts to feature column families (inventory, velocity, demand, supplier)
-  plus lineage:silver_ts, the ISO-8601 time of the Silver run that wrote the
-  row. The risk and predictions families are skipped — they contain ML
-  outputs, not model inputs. Callers use split_fresh() to drop rows whose
-  Silver write is older than their freshness threshold: feature families keep
-  only the latest cell (no age-based GC), so a quiet store would otherwise be
-  scored on stale features.
+- scan_all() reads the feature column families (inventory, velocity, demand,
+  supplier) plus lineage:silver_ts, the ISO-8601 time of the Silver run that
+  wrote the row. Callers use split_fresh() to drop rows whose Silver write is
+  older than their freshness threshold: feature families keep only the latest
+  cell (no age-based GC), so a quiet store would otherwise be scored on stale
+  features.
+- read_predictions() reads the predictions family (UTF-8 strings written by
+  prediction_writer.py) and risk:urgency for the drift monitor's variance and
+  baseline-divergence checks. This module is the one Bigtable reader for the
+  scorer, the smoke test and the monitor.
 - Numeric cells are stored as big-endian IEEE 754 doubles (8 bytes).
   See spark/utils/bigtable_writer.py for the write side.
 - Abbreviated column qualifiers are mapped to flat feature names via
@@ -62,6 +65,13 @@ _FEATURE_FAMILIES: frozenset[str] = frozenset({"inventory", "velocity", "demand"
 _LINEAGE_FAMILY:      str = "lineage"
 _SILVER_TS_QUALIFIER: str = "silver_ts"
 
+# Prediction cells written by prediction_writer.py (UTF-8 strings) and the
+# rule-based reorder urgency written by Silver (big-endian double, risk
+# family). Read together by read_predictions() for the drift monitor.
+_PREDICTIONS_FAMILY: str = "predictions"
+_RISK_FAMILY:        str = "risk"
+_URGENCY_QUALIFIER:  str = "urgency"
+
 
 @dataclass
 class FeatureRow:
@@ -89,6 +99,27 @@ class FeatureRow:
     sku_id:            str
     features:          dict[str, float] = field(default_factory=dict)
     last_silver_write: datetime | None  = None
+
+
+@dataclass
+class PredictionRow:
+    """One entity's latest prediction cells plus the rule-based urgency.
+
+    shortage_prob_7d, stockout_risk_score, model_version and
+    prediction_timestamp come from the predictions family (UTF-8 strings
+    written by prediction_writer.py); reorder_urgency comes from risk:urgency
+    (a double written by Silver). Any field is None when its cell is absent
+    or unparseable.
+    """
+
+    row_key:              str
+    warehouse_id:         str
+    sku_id:               str
+    shortage_prob_7d:     float | None = None
+    stockout_risk_score:  float | None = None
+    model_version:        str | None = None
+    prediction_timestamp: str | None = None
+    reorder_urgency:      float | None = None
 
 
 class FeatureClient:
@@ -133,9 +164,12 @@ class FeatureClient:
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def scan_all(self) -> list[FeatureRow]:
+    def scan_all(self, limit: int | None = None) -> list[FeatureRow]:
         """
-        Scan every row in the inventory_features table and return decoded feature rows.
+        Scan the inventory_features table and return decoded feature rows.
+
+        limit caps the number of rows read (the smoke test samples a few
+        entities this way); None reads every row.
 
         Reads the feature column families (inventory, velocity, demand, supplier)
         and lineage:silver_ts.
@@ -170,7 +204,7 @@ class FeatureClient:
         n_cells_total = 0
         n_skipped     = 0
 
-        for row_data in self._table.read_rows(filter_=filter_):
+        for row_data in self._table.read_rows(filter_=filter_, limit=limit):
             row_key = row_data.row_key.decode("utf-8")
             parts   = row_key.split("#")
 
@@ -225,6 +259,34 @@ class FeatureClient:
 
         return rows
 
+    def read_predictions(self) -> list[PredictionRow]:
+        """
+        Read every row's latest prediction cells and rule-based urgency.
+
+        One scan over the predictions and risk families, shared by the drift
+        monitor's variance-collapse and baseline-divergence checks. Rows with
+        neither a prediction nor an urgency cell are omitted.
+        """
+        from google.cloud.bigtable import row_filters
+
+        filter_ = row_filters.RowFilterChain(filters=[
+            row_filters.FamilyNameRegexFilter(f"{_PREDICTIONS_FAMILY}|{_RISK_FAMILY}"),
+            row_filters.CellsColumnLimitFilter(1),
+        ])
+
+        rows: list[PredictionRow] = []
+        for row_data in self._table.read_rows(filter_=filter_):
+            row_key = row_data.row_key.decode("utf-8")
+            parts   = row_key.split("#")
+            if len(parts) != 2:
+                continue
+            pred = _parse_prediction_row(row_key, parts[0], parts[1], row_data.cells)
+            if pred is not None:
+                rows.append(pred)
+
+        logger.info("Prediction scan complete: %d rows with predictions or urgency", len(rows))
+        return rows
+
     def close(self) -> None:
         """Close the underlying Bigtable client connection."""
         self._client.close()
@@ -258,6 +320,51 @@ def split_fresh(
         if r.last_silver_write is not None and r.last_silver_write >= cutoff
     ]
     return fresh, len(rows) - len(fresh)
+
+
+def _parse_prediction_row(
+    row_key: str,
+    warehouse_id: str,
+    sku_id: str,
+    cells: dict,
+) -> PredictionRow | None:
+    """Build a PredictionRow from a row's {family: {qualifier: [cell, ...]}} cells."""
+    pred_cells = cells.get(_PREDICTIONS_FAMILY, {})
+    risk_cells = cells.get(_RISK_FAMILY, {})
+
+    def text(qualifier: str) -> str | None:
+        c = pred_cells.get(qualifier.encode("utf-8"))
+        return c[0].value.decode("utf-8") if c else None
+
+    def number(qualifier: str) -> float | None:
+        s = text(qualifier)
+        if s is None:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            logger.warning("Row %s: cannot parse predictions:%s=%r", row_key, qualifier, s)
+            return None
+
+    urgency_cells = risk_cells.get(_URGENCY_QUALIFIER.encode("utf-8"))
+    urgency = (
+        _decode_double(urgency_cells[0].value, _RISK_FAMILY, _URGENCY_QUALIFIER)
+        if urgency_cells else None
+    )
+
+    row = PredictionRow(
+        row_key=row_key,
+        warehouse_id=warehouse_id,
+        sku_id=sku_id,
+        shortage_prob_7d=number("shortage_prob_7d"),
+        stockout_risk_score=number("stockout_risk_score"),
+        model_version=text("model_version"),
+        prediction_timestamp=text("prediction_timestamp"),
+        reorder_urgency=urgency,
+    )
+    if row.shortage_prob_7d is None and row.stockout_risk_score is None and row.reorder_urgency is None:
+        return None
+    return row
 
 
 def _decode_timestamp(value: bytes, row_key: str) -> datetime | None:

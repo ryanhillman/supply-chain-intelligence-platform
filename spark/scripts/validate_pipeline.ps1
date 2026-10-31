@@ -16,6 +16,11 @@
     The production architecture (silver_feature_engineering.py) is unchanged;
     this script uses silver_batch.py as a low-memory one-shot alternative.
 
+    This is the only verification script. verify_silver.ps1 and
+    verify_bigtable.ps1 duplicated checks 2, 4 and 5 (plus cbt inspection of
+    column families and GC policies) and were removed. All of this targets the
+    GCP deployment as it ran in June 2026; the local stack gets its own checks.
+
     Prerequisites:
       - docker ps shows kafka is healthy
       - gsutil / cbt are on PATH (gcloud SDK)

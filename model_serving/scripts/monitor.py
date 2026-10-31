@@ -97,12 +97,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--artifacts",
         default="ml_training/artifacts",
-        help="Directory containing feature_metadata.json (default: ml_training/artifacts)",
-    )
-    p.add_argument(
-        "--dataset",
-        default="ml_training/artifacts/dataset",
-        help="Directory containing train.parquet for the PSI bins (default: ml_training/artifacts/dataset)",
+        help="Directory containing feature_metadata.json and drift_reference.json (default: ml_training/artifacts)",
     )
 
     # ── Monitoring options ────────────────────────────────────────────────────
@@ -163,8 +158,7 @@ def main() -> None:
 
     # Verify local artifacts exist before touching Bigtable.
     artifacts_dir = Path(args.artifacts)
-    dataset_dir   = Path(args.dataset)
-    _preflight_check(artifacts_dir, dataset_dir)
+    _preflight_check(artifacts_dir)
 
     logger.info(
         "Starting drift monitor:\n"
@@ -176,7 +170,7 @@ def main() -> None:
         "  cloud_monitoring : %s",
         args.project,
         args.bigtable_instance, args.bigtable_table,
-        dataset_dir,
+        artifacts_dir,
         not args.no_predictions,
         args.report_path or "(not saved)",
         args.emit_cloud_monitoring,
@@ -187,7 +181,6 @@ def main() -> None:
             project_id       = args.project,
             instance_id      = args.bigtable_instance,
             artifacts_dir    = artifacts_dir,
-            dataset_dir      = dataset_dir,
             table_id         = args.bigtable_table,
             credentials_path = args.sa_key,
         ) as monitor:
@@ -209,16 +202,16 @@ def main() -> None:
     sys.exit(1 if report.requires_retraining else 0)
 
 
-def _preflight_check(artifacts_dir: Path, dataset_dir: Path) -> None:
+def _preflight_check(artifacts_dir: Path) -> None:
     required = [
-        (dataset_dir   / "train.parquet",         "train.parquet"),
+        (artifacts_dir / "drift_reference.json",  "drift_reference.json"),
         (artifacts_dir / "feature_metadata.json", "feature_metadata.json"),
     ]
     missing = [(path, name) for path, name in required if not path.exists()]
     if missing:
         for path, name in missing:
             logger.error("Required artifact not found: %s  (expected at %s)", name, path)
-        logger.error("Run ml_training/scripts/build_dataset.py and train.py to generate Phase 4 artifacts.")
+        logger.error("Run ml_training/scripts/train.py; it writes both files next to model.pt.")
         sys.exit(2)
 
     for path, _ in required:

@@ -18,8 +18,9 @@ predictions today. A human has to act on the report.
 Flow
 ----
 1. Load feature_metadata.json (feature_mean / feature_scale fit on the train
-   split, reported next to the live mean/std) and the raw train.parquet rows
-   (the PSI bins; required, no approximate fallback).
+   split, reported next to the live mean/std) and drift_reference.json (PSI
+   bins computed from the raw training split when the model was trained;
+   required, no approximate fallback).
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
    - fill_defaults() + engineer_features() derive all 21 features.
@@ -27,7 +28,7 @@ Flow
 3. Read current predictions from Bigtable predictions column family
    (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
 4. Compute PSI for each monitored feature using bins at the deciles of the
-   raw training rows (train.parquet).
+   raw training rows (drift_reference.json).
 5. Classify PSI per ADR-005 thresholds:
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
@@ -46,15 +47,15 @@ PSI formula
 
     Where:
       N     = up to 10 bins with edges at the (deduplicated) deciles of the
-              raw training rows in train.parquet — correct for any feature
-              shape, and in the same units as the live Bigtable values.
+              raw training rows, stored in drift_reference.json — correct for
+              any feature shape, and in the same units as the live values.
       E_i   = the actual training fraction in bin i (not assumed uniform:
               clustered features such as supplier_reliability collapse
               several decile edges onto one value)
       A_i   = actual fraction of current Bigtable values in bin i
 
-    Zero-count bins replaced with ε=1e-4 to avoid log(0). train.parquet is
-    required; there is no approximate fallback.
+    Zero-count bins replaced with ε=1e-4 to avoid log(0). drift_reference.json
+    is required; there is no approximate fallback.
 
 Required packages:
     numpy>=1.26.0
@@ -76,6 +77,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ml_training.evaluation.drift_reference import (
+    MONITORED_FEATURES as _MONITORED_FEATURES,
+    load_drift_reference,
+)
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -91,26 +97,11 @@ _PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
 # risk call agrees with the rule-based risk__reorder_urgency heuristic more
 # than this fraction of the time, the model adds no signal over the heuristic.
 _BASELINE_DIVERGENCE_THRESHOLD = 0.95
-_BASELINE_RISK_FAMILY          = "risk"
-_BASELINE_URGENCY_COL          = b"urgency"
 _BASELINE_PROB_THRESHOLD       = 0.5   # shortage_prob_7d >= this → model says "at risk"
 _BASELINE_AT_RISK_URGENCY_MIN  = 2     # urgency >= REORDER(2) → heuristic says "at risk"
 
-# Monitored features: (display_name, flat_feature_name)
-# The flat name must appear in NUMERIC_FEATURE_COLS from feature_engineer.py.
-# days_of_supply is a derived feature computed by engineer_features();
-# it is not read directly from Bigtable but re-derived for consistency.
-_MONITORED_FEATURES: list[tuple[str, str]] = [
-    ("inventory__days_of_supply",       "days_of_supply"),
-    ("velocity__sales_7d",              "sales_7d"),
-    ("velocity__avg_daily_sales_7d",    "avg_daily_sales_7d"),
-    ("supplier__supplier_reliability",  "supplier_reliability"),
-]
-
-# Column families to skip in predictions read (only read "predictions" family).
-_PREDICTIONS_FAMILY = "predictions"
-_PREDICTIONS_PROB_COL   = b"shortage_prob_7d"
-_PREDICTIONS_SCORE_COL  = b"stockout_risk_score"
+# Monitored features come from ml_training.evaluation.drift_reference, shared
+# with the trainer, which writes their PSI bins next to the model.
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -181,11 +172,9 @@ class DriftMonitor:
     instance_id:
         Bigtable instance ID (e.g. "scip-feature-store").
     artifacts_dir:
-        Directory containing feature_metadata.json.
+        Directory containing feature_metadata.json and drift_reference.json,
+        both written next to model.pt by the trainer.
         Default: "ml_training/artifacts"
-    dataset_dir:
-        Directory containing train.parquet (raw training rows for the PSI bins).
-        Default: "ml_training/artifacts/dataset"
     table_id:
         Bigtable table ID (default "inventory_features").
     credentials_path:
@@ -197,7 +186,6 @@ class DriftMonitor:
         project_id: str,
         instance_id: str,
         artifacts_dir: str | Path = "ml_training/artifacts",
-        dataset_dir:   str | Path = "ml_training/artifacts/dataset",
         table_id: str = "inventory_features",
         credentials_path: str | None = None,
     ) -> None:
@@ -206,12 +194,11 @@ class DriftMonitor:
         self.table_id    = table_id
 
         self._artifacts_dir = Path(artifacts_dir)
-        self._dataset_dir   = Path(dataset_dir)
 
         self._metadata      = self._load_metadata()
         self._feature_mean  = np.asarray(self._metadata["feature_mean"],  dtype=float)
         self._feature_scale = np.asarray(self._metadata["feature_scale"], dtype=float)
-        self._training_quantiles = self._load_training_quantiles()
+        self._training_quantiles, self._reference_info = self._load_drift_reference()
 
         # Import from ml_training — sys.path must include the repo root.
         from ml_training.datasets.feature_engineer import (
@@ -247,16 +234,16 @@ class DriftMonitor:
                 scopes=["https://www.googleapis.com/auth/cloud-platform"],
             )
 
-        from google.cloud import bigtable
-        bigtable_kwargs: dict = {"project": project_id, "admin": False}
-        if self._creds:
-            bigtable_kwargs["credentials"] = self._creds
-        self._bigtable_client = bigtable.Client(**bigtable_kwargs)
-        self._table     = self._bigtable_client.instance(instance_id).table(table_id)
+        from model_serving.pipeline.feature_client import FeatureClient
+        self._feature_client = FeatureClient(
+            project_id=project_id, instance_id=instance_id,
+            table_id=table_id, credentials_path=credentials_path,
+        )
+        self._prediction_rows_cache = None
 
         logger.info(
             "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
-            instance_id, table_id, self._dataset_dir,
+            instance_id, table_id, self._artifacts_dir,
             len(self._NUMERIC_FEATURE_COLS),
         )
 
@@ -289,6 +276,7 @@ class DriftMonitor:
         DriftReport
         """
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._prediction_rows_cache = None   # one Bigtable prediction read per run
         logger.info("=== SCIP Drift Monitor — %s ===", run_ts)
 
         # Step 1: collect current feature values from Bigtable.
@@ -392,7 +380,7 @@ class DriftMonitor:
         return report
 
     def close(self) -> None:
-        self._bigtable_client.close()
+        self._feature_client.close()
 
     def __enter__(self) -> "DriftMonitor":
         return self
@@ -404,65 +392,18 @@ class DriftMonitor:
 
     def _collect_feature_values(self) -> dict[str, list[float]]:
         """
-        Scan all feature rows from Bigtable, run engineer_features(), and
-        return a dict of {flat_feature_name: [float, ...]} for monitored features.
-
-        Scans self._table directly (the shared Bigtable client set up in __init__)
-        rather than instantiating a separate FeatureClient, to avoid closing the
-        shared client when a context manager exits.
+        Scan all feature rows via FeatureClient, run engineer_features(), and
+        return {flat_feature_name: [float, ...]} for the monitored features.
+        Same read path and derivation as RequestBuilder.build(), so the
+        monitor sees exactly what the scorer scores.
         """
-        from google.cloud.bigtable import row_filters as bigtable_filters
-        from model_serving.pipeline.feature_client import (
-            _BIGTABLE_TO_FEATURE,
-            _FEATURE_FAMILIES,
-            _decode_double,
-            FeatureRow,
-        )
         from model_serving.pipeline.request_builder import _RAW_FEATURES
 
-        filter_ = bigtable_filters.RowFilterChain(filters=[
-            bigtable_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES))),
-            bigtable_filters.CellsColumnLimitFilter(1),
-        ])
-
-        feature_rows: list[FeatureRow] = []
-        n_skipped = 0
-
-        for row_data in self._table.read_rows(filter_=filter_):
-            row_key = row_data.row_key.decode("utf-8")
-            parts   = row_key.split("#")
-            if len(parts) != 2:
-                n_skipped += 1
-                continue
-            warehouse_id, sku_id = parts[0], parts[1]
-            raw_features: dict[str, float] = {}
-
-            for cf_name, cf_data in row_data.cells.items():
-                if cf_name not in _FEATURE_FAMILIES:
-                    continue
-                for col_qualifier_bytes, cells in cf_data.items():
-                    col_qualifier = col_qualifier_bytes.decode("utf-8")
-                    feature_name  = _BIGTABLE_TO_FEATURE.get((cf_name, col_qualifier))
-                    if feature_name is None:
-                        continue
-                    decoded = _decode_double(cells[0].value, cf_name, col_qualifier)
-                    if decoded is not None:
-                        raw_features[feature_name] = decoded
-
-            feature_rows.append(FeatureRow(
-                row_key=row_key, warehouse_id=warehouse_id,
-                sku_id=sku_id, features=raw_features,
-            ))
-
-        logger.info(
-            "Bigtable scan complete: %d rows, %d skipped", len(feature_rows), n_skipped
-        )
-
+        feature_rows = self._feature_client.scan_all()
         if not feature_rows:
             logger.warning("No feature rows returned from Bigtable")
             return {}
 
-        # Build DataFrame and apply feature engineering (same as RequestBuilder.build()).
         records = []
         for fr in feature_rows:
             row = {col: fr.features.get(col, np.nan) for col in _RAW_FEATURES}
@@ -474,150 +415,73 @@ class DriftMonitor:
         self._fill_defaults(df)
         df = self._engineer_features(df)
 
-        # Extract only the monitored features.
         result: dict[str, list[float]] = {}
         for _, feature_name in _MONITORED_FEATURES:
-            if feature_name in df.columns:
-                vals = df[feature_name].dropna().tolist()
-                result[feature_name] = [float(v) for v in vals]
-            else:
-                result[feature_name] = []
+            vals = df[feature_name].dropna().tolist() if feature_name in df.columns else []
+            result[feature_name] = [float(v) for v in vals]
 
         logger.info(
             "Feature values collected: %d entities, %d monitored features",
-            len(feature_rows),
-            sum(1 for v in result.values() if v),
+            len(feature_rows), sum(1 for v in result.values() if v),
         )
         return result
 
+    def _prediction_rows(self):
+        """One read of the predictions family and risk:urgency per run, shared
+        by the variance-collapse and baseline-divergence checks."""
+        if self._prediction_rows_cache is None:
+            self._prediction_rows_cache = self._feature_client.read_predictions()
+        return self._prediction_rows_cache
+
     def _collect_prediction_values(self) -> PredictionMetrics | None:
-        """
-        Read shortage_prob_7d and stockout_risk_score from the Bigtable
-        predictions column family. Values are stored as UTF-8 strings by
-        prediction_writer.py.
-
-        Returns None if no prediction rows are found.
-        """
-        from google.cloud.bigtable import row_filters
-
-        filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter(_PREDICTIONS_FAMILY),
-            row_filters.CellsColumnLimitFilter(1),
-        ])
-
-        probs:  list[float] = []
-        scores: list[float] = []
-
-        for row_data in self._table.read_rows(filter_=filter_):
-            cells = row_data.cells.get(_PREDICTIONS_FAMILY, {})
-
-            prob_cells  = cells.get(_PREDICTIONS_PROB_COL,  [])
-            score_cells = cells.get(_PREDICTIONS_SCORE_COL, [])
-
-            if prob_cells:
-                try:
-                    probs.append(float(prob_cells[0].value.decode("utf-8")))
-                except (ValueError, UnicodeDecodeError):
-                    pass
-
-            if score_cells:
-                try:
-                    scores.append(float(score_cells[0].value.decode("utf-8")))
-                except (ValueError, UnicodeDecodeError):
-                    pass
-
-        if not probs and not scores:
+        """Variance statistics of shortage_prob_7d and stockout_risk_score.
+        Returns None if no prediction rows are found."""
+        rows   = self._prediction_rows()
+        probs  = np.array([r.shortage_prob_7d    for r in rows if r.shortage_prob_7d    is not None], dtype=float)
+        scores = np.array([r.stockout_risk_score for r in rows if r.stockout_risk_score is not None], dtype=float)
+        if len(probs) == 0 and len(scores) == 0:
             return None
 
-        n = max(len(probs), len(scores))
-        prob_arr  = np.array(probs,  dtype=float)
-        score_arr = np.array(scores, dtype=float)
-
-        prob_std  = float(np.std(prob_arr))  if len(prob_arr)  > 1 else 0.0
-        score_std = float(np.std(score_arr)) if len(score_arr) > 1 else 0.0
-
+        prob_std  = float(np.std(probs))  if len(probs)  > 1 else 0.0
+        score_std = float(np.std(scores)) if len(scores) > 1 else 0.0
         return PredictionMetrics(
-            prob_mean               = float(np.mean(prob_arr))  if len(prob_arr)  > 0 else 0.0,
-            prob_std                = prob_std,
-            score_mean              = float(np.mean(score_arr)) if len(score_arr) > 0 else 0.0,
-            score_std               = score_std,
+            prob_mean                = float(np.mean(probs))  if len(probs)  else 0.0,
+            prob_std                 = prob_std,
+            score_mean               = float(np.mean(scores)) if len(scores) else 0.0,
+            score_std                = score_std,
             prob_variance_collapsed  = prob_std  < _VARIANCE_COLLAPSE_THRESHOLD,
             score_variance_collapsed = score_std < _VARIANCE_COLLAPSE_THRESHOLD,
-            n_entities              = n,
+            n_entities               = max(len(probs), len(scores)),
         )
 
     def _collect_baseline_divergence(self) -> BaselineDivergenceMetrics | None:
         """
         Compare the model's binary risk call against the rule-based
-        risk__reorder_urgency heuristic for every entity that has both a
-        prediction and an urgency value.
+        risk__reorder_urgency heuristic for every entity that has both.
 
         model_at_risk     = shortage_prob_7d >= _BASELINE_PROB_THRESHOLD
         heuristic_at_risk = reorder_urgency  >= _BASELINE_AT_RISK_URGENCY_MIN
 
-        risk__reorder_urgency is written to Bigtable in the "risk" column
-        family as a big-endian double (same encoding as every other numeric
-        feature — see spark/utils/bigtable_writer.py), so it's decoded with
-        feature_client's _decode_double rather than the UTF-8 decode used
-        for the predictions family.
-
         Returns None if no entity has both values present.
         """
-        from google.cloud.bigtable import row_filters
-        from model_serving.pipeline.feature_client import _decode_double
-
-        filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter(
-                f"{_PREDICTIONS_FAMILY}|{_BASELINE_RISK_FAMILY}"
-            ),
-            row_filters.CellsColumnLimitFilter(1),
-        ])
-
-        n_compared = 0
-        n_agree    = 0
-
-        for row_data in self._table.read_rows(filter_=filter_):
-            pred_cells = row_data.cells.get(_PREDICTIONS_FAMILY, {})
-            risk_cells = row_data.cells.get(_BASELINE_RISK_FAMILY, {})
-
-            prob_cells    = pred_cells.get(_PREDICTIONS_PROB_COL, [])
-            urgency_cells = risk_cells.get(_BASELINE_URGENCY_COL, [])
-
-            if not prob_cells or not urgency_cells:
-                continue
-
-            try:
-                prob = float(prob_cells[0].value.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                continue
-
-            urgency = _decode_double(
-                urgency_cells[0].value, _BASELINE_RISK_FAMILY, "urgency"
-            )
-            if urgency is None:
-                continue
-
-            model_at_risk     = prob    >= _BASELINE_PROB_THRESHOLD
-            heuristic_at_risk = urgency >= _BASELINE_AT_RISK_URGENCY_MIN
-
-            n_compared += 1
-            if model_at_risk == heuristic_at_risk:
-                n_agree += 1
-
-        if n_compared == 0:
+        pairs = [
+            (r.shortage_prob_7d, r.reorder_urgency)
+            for r in self._prediction_rows()
+            if r.shortage_prob_7d is not None and r.reorder_urgency is not None
+        ]
+        if not pairs:
             return None
 
-        agreement_rate = n_agree / n_compared
-        status = (
-            "trigger" if agreement_rate > _BASELINE_DIVERGENCE_THRESHOLD
-            else "stable"
+        n_agree = sum(
+            1 for prob, urgency in pairs
+            if (prob >= _BASELINE_PROB_THRESHOLD) == (urgency >= _BASELINE_AT_RISK_URGENCY_MIN)
         )
-
+        agreement_rate = n_agree / len(pairs)
         return BaselineDivergenceMetrics(
-            n_compared     = n_compared,
+            n_compared     = len(pairs),
             n_agree        = n_agree,
             agreement_rate = agreement_rate,
-            status         = status,
+            status         = "trigger" if agreement_rate > _BASELINE_DIVERGENCE_THRESHOLD else "stable",
         )
 
     # ── PSI computation ────────────────────────────────────────────────────────
@@ -632,8 +496,8 @@ class DriftMonitor:
         Compute PSI and status for one monitored feature.
 
         μ and σ (training_mean / training_std in the report) come from
-        feature_metadata.json; the PSI bins themselves come from the raw
-        training rows loaded by _load_training_quantiles.
+        feature_metadata.json; the PSI bins themselves come from
+        drift_reference.json (_load_drift_reference).
         """
         idx          = self._feature_to_idx[feature_name]
         train_mean   = float(self._feature_mean[idx])
@@ -678,7 +542,7 @@ class DriftMonitor:
         """
         Population Stability Index using the training data's own bins.
 
-        bin_edges/expected come from _load_training_quantiles: bin_edges
+        bin_edges/expected come from _load_drift_reference: bin_edges
         are the training distribution's own (deduplicated) decile edges,
         and expected is the ACTUAL fraction of training rows that fall in
         each of those bins — not assumed to be a uniform 1/10, since
@@ -687,9 +551,9 @@ class DriftMonitor:
         in a warehouse, so one value alone can be ~50% of all rows) and
         naive equal-frequency binning degenerates in that case.
 
-        Both sides are in raw feature units: train.parquet holds raw rows
-        (DatasetBuilder no longer standardizes the splits) and the live
-        values come from engineer_features() on raw Bigtable cells. An
+        Both sides are in raw feature units: the reference bins come from the
+        raw training split (DatasetBuilder no longer standardizes the splits)
+        and the live values from engineer_features() on raw Bigtable cells. An
         earlier version binned raw live values against standardized
         training rows and reported PSI 2–8 (TRIGGER) for the training data
         compared with itself; before that, a normal-quantile approximation
@@ -734,6 +598,11 @@ class DriftMonitor:
         print(f"\n{sep}")
         print(f"  SCIP Drift Monitor Report  —  {report.run_timestamp}")
         print(sep)
+        info = self._reference_info
+        print(
+            f"  Reference: drift_reference.json — {info.get('n_rows')} training rows, "
+            f"created {info.get('created_at')}"
+        )
 
         # Feature PSI table
         print("\nFeature Distribution Shift (PSI)")
@@ -1033,65 +902,38 @@ class DriftMonitor:
         with open(path) as f:
             return json.load(f)
 
-    def _load_training_quantiles(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    def _load_drift_reference(self) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], dict]:
         """
-        Empirical bin edges AND expected fractions for each monitored
-        feature, computed from the real training distribution
-        (train.parquet in dataset_dir; raw feature units).
+        PSI bins for the monitored features from drift_reference.json, which
+        the trainer writes next to model.pt from the raw training split (see
+        ml_training/evaluation/drift_reference.py). The bins are the training
+        rows' deduplicated deciles with each bin's actual training fraction as
+        `expected`, so they are correct for skewed and clustered features and
+        give PSI ~0 for training-vs-itself.
 
-        These are the correct PSI bins regardless of the feature's shape
-        — unlike bins derived from a normal-distribution assumption (which
-        an earlier version of this monitor used), which badly misrepresents skewed
-        features such as sales_7d, avg_daily_sales_7d, and
-        supplier_reliability and causes false "retraining required"
-        triggers even on in-distribution data.
-
-        Quantile edges are deduplicated before use: several monitored
-        features are heavily clustered (e.g. supplier_reliability is a
-        per-supplier value shared by every SKU in a warehouse until the
-        next PERFORMANCE_UPDATE event, so one value alone can account for
-        ~50% of all training rows). Naively using 10 quantile edges on
-        such a feature produces repeated edges and collapses most of the
-        mass into one degenerate bin. Deduplicating the edges and then
-        computing each bin's *actual* training fraction (instead of
-        assuming a uniform 1/10 per bin) keeps PSI correct — and ~0 for
-        training-vs-itself — however the mass happens to be distributed.
-
-        Raises FileNotFoundError if train.parquet isn't available. There is
-        no approximate fallback: the normal-quantile approximation this
-        monitor used to fall back on produced spurious TRIGGERs on the
-        skewed features monitored here.
+        Reading the reference from the model's artifacts directory, rather than
+        from a dataset directory, means the baseline is the one the deployed
+        model was trained on. Raises FileNotFoundError if absent: there is no
+        approximate fallback.
         """
-        train_path = self._dataset_dir / "train.parquet"
-        if not train_path.exists():
+        path = self._artifacts_dir / "drift_reference.json"
+        if not path.exists():
             raise FileNotFoundError(
-                f"train.parquet not found at {train_path}. The PSI bins are the raw "
-                "training rows' deciles; run ml_training/scripts/build_dataset.py or "
-                "copy train.parquet into the dataset directory."
+                f"drift_reference.json not found at {path}. It is written by "
+                "ml_training/scripts/train.py next to model.pt; retrain or copy it "
+                "into the artifacts directory."
             )
 
-        feature_names = [fname for _, fname in _MONITORED_FEATURES]
-        train_df = pd.read_parquet(train_path, columns=feature_names)
-
-        quantile_points = np.linspace(0.0, 1.0, _N_BINS + 1)
-        quantiles: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        for feature_name in feature_names:
-            values = train_df[feature_name].dropna().to_numpy(dtype=float)
-            edges  = np.unique(np.quantile(values, quantile_points))
-            edges[0]  = -np.inf
-            edges[-1] =  np.inf
-
-            train_counts, _ = np.histogram(values, bins=edges)
-            expected = train_counts.astype(float) / len(values)
-
-            quantiles[feature_name] = (edges, expected)
+        bins, info = load_drift_reference(path)
+        missing = [name for _, name in _MONITORED_FEATURES if name not in bins]
+        if missing:
+            raise ValueError(f"drift_reference.json lacks monitored features {missing}")
 
         logger.info(
-            "Loaded empirical training quantiles for %d monitored features from %s",
-            len(quantiles), train_path,
+            "Loaded drift reference (%d features, %s training rows, created %s) from %s",
+            len(bins), info.get("n_rows"), info.get("created_at"), path,
         )
-        return quantiles
-
+        return bins, info
 
 # ── Module helpers ─────────────────────────────────────────────────────────────
 
