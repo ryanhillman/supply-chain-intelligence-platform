@@ -9,9 +9,6 @@
 # Install:
 #   pip install -r model_serving/requirements.txt
 #
-# Note: scikit-learn brings numpy and scipy as transitive dependencies.
-# Explicit version pins below ensure compatibility with ml_training artifacts.
-
 # GCP clients
 google-cloud-aiplatform>=1.38.0
 google-cloud-bigtable>=2.22.0
@@ -21,9 +18,9 @@ google-cloud-storage>=2.18.0
 # ML / data
 numpy>=1.26.0
 pandas>=2.1.0
-scikit-learn>=1.4.0   # matches ml_training/requirements.txt — must be high enough to
-                       # safely unpickle the StandardScaler fit under that version
-scipy>=1.11.0          # required by drift_monitor.py for normal quantile bins
+scipy>=1.11.0          # Normal-approx stockout_risk_score (ml_training.datasets.feature_engineer)
+scikit-learn>=1.4.0    # AUPRC/AUC/Brier via ml_training.evaluation.metrics (promote_model rescoring)
+onnxruntime>=1.17.0    # promote_model rescoring of both deployed models on one holdout
 
 # Protobuf (required by gapic clients used in promote_model.py)
 protobuf>=4.21.0

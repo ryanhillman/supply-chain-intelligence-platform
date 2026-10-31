@@ -8,13 +8,15 @@ pandas>=2.1.0
 numpy>=1.26.0
 scipy>=1.11.0
 
-# ── Preprocessing (sklearn used for StandardScaler only, not as final model) ──
+# ── sklearn: fits the standardization statistics and computes metrics; not the model ──
 scikit-learn>=1.4.0
 
 # ── PyTorch (CPU-only — installed via --extra-index-url in Dockerfile) ────────
 # Do not install torch here directly; the Dockerfile pip command handles the
 # CPU wheel index. This line is a version constraint only.
-torch>=2.2.0
+# >= 2.5: first release with the dynamo= flag on torch.onnx.export, which
+# onnx_export.py uses to pin the TorchScript exporter.
+torch>=2.5.0,<3
 
 # ── ONNX (Phase 5 Vertex AI serving readiness) ────────────────────────────────
 onnx>=1.15.0

@@ -2,15 +2,18 @@
 ONNXPredictor — loads model.onnx from GCS at container startup and runs
 inference via onnxruntime.
 
-Inputs received from batch_scorer.py (all scaling and vocab mapping is
-done client-side; see ADR-005 Decision 3):
-  numeric_features : float32 (batch, 21)  — StandardScaler-transformed
+Inputs received from batch_scorer.py (vocab mapping is done client-side;
+standardization happens inside the ONNX graph — see ADR-005 Decision 3):
+  numeric_features : float32 (batch, n)   — raw feature units in
+                                            NUMERIC_FEATURE_COLS order; n is
+                                            read from the ONNX graph at startup
   warehouse_ids    : int64   (batch,)     — vocab int, NOT warehouse string ID
   sku_ids          : int64   (batch,)     — vocab int, NOT SKU string ID
 
-Outputs returned to caller:
-  shortage_prob_7d    : float32 (batch,)  — sigmoid(logit_prob), P(stockout<=7d)
-  stockout_risk_score : float32 (batch,)  — direct risk_score ONNX output in [0,1]
+Output returned to caller:
+  shortage_prob_7d : float32 (batch,)  — sigmoid(logit_prob), P(stockout<=7d)
+  (stockout_risk_score is not a model output; the batch scorer computes it
+  with the closed-form Normal approximation from the raw features.)
 
 Environment variables:
   MODEL_GCS_PATH            — GCS URI to the versioned model directory,
@@ -30,10 +33,6 @@ import onnxruntime as ort
 from google.cloud import storage
 
 logger = logging.getLogger(__name__)
-
-# Must match len(ml_training.datasets.feature_engineer.NUMERIC_FEATURE_COLS).
-# If the model architecture changes, rebuild the container image.
-_N_NUMERIC_FEATURES: int = 21
 
 # Model files are downloaded here at startup. /tmp is world-writable so
 # this works under both root and the non-root appuser.
@@ -65,12 +64,15 @@ class ONNXPredictor:
         _MODEL_DIR.mkdir(parents=True, exist_ok=True)
         self._download_model_files()
         self._session = self._create_session()
+        self.n_numeric_features: int = self._read_numeric_width()
         self.n_warehouses, self.n_skus = self._load_vocab_sizes()
 
         logger.info(
-            "ONNXPredictor ready | version=%s | inputs=%s | n_warehouses=%d | n_skus=%d",
+            "ONNXPredictor ready | version=%s | inputs=%s | n_numeric=%d "
+            "| n_warehouses=%d | n_skus=%d",
             self.model_version,
             [inp.name for inp in self._session.get_inputs()],
+            self.n_numeric_features,
             self.n_warehouses,
             self.n_skus,
         )
@@ -82,14 +84,15 @@ class ONNXPredictor:
         numeric_features: np.ndarray,
         warehouse_ids: np.ndarray,
         sku_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> np.ndarray:
         """
-        Run ONNX inference on a pre-scaled, pre-vocabbed batch.
+        Run ONNX inference on a raw-feature, pre-vocabbed batch.
 
         Parameters
         ----------
-        numeric_features : float32, shape (batch, 21)
-            Already StandardScaler-transformed. Do NOT pass raw Silver values.
+        numeric_features : float32, shape (batch, n_numeric_features)
+            Raw feature units in NUMERIC_FEATURE_COLS order. Do NOT pre-scale:
+            the graph's Standardize layer applies the training statistics.
         warehouse_ids : int64, shape (batch,)
             Vocab indices from feature_metadata.json["warehouse_vocab"].
         sku_ids : int64, shape (batch,)
@@ -98,31 +101,39 @@ class ONNXPredictor:
         Returns
         -------
         shortage_prob_7d : float32, shape (batch,), in [0, 1]
-        stockout_risk_score : float32, shape (batch,), in [0, 1]
         """
-        outputs = self._session.run(
-            output_names=["logit_prob", "risk_score"],
+        (logit_prob,) = self._session.run(
+            output_names=["logit_prob"],
             input_feed={
                 "numeric_features": numeric_features.astype(np.float32),
                 "warehouse_ids":    warehouse_ids.astype(np.int64),
                 "sku_ids":          sku_ids.astype(np.int64),
             },
         )
-        logit_prob, risk_score = outputs
-
-        # logit_prob shape: (batch, 1) — apply sigmoid to get probability
-        shortage_prob = _sigmoid(logit_prob[:, 0])
-
-        # risk_score shape: (batch, 1) — already sigmoid from model's score_head
-        stockout_risk = risk_score[:, 0]
-
-        return shortage_prob, stockout_risk
-
-    @property
-    def n_numeric_features(self) -> int:
-        return _N_NUMERIC_FEATURES
+        # logit_prob shape: (batch, 1) — apply sigmoid to get the probability
+        return _sigmoid(logit_prob[:, 0])
 
     # ── Internals ─────────────────────────────────────────────────────────────
+
+    def _read_numeric_width(self) -> int:
+        """
+        Width of the numeric_features input, taken from the loaded graph.
+
+        Reading it from the model instead of hardcoding it means the container
+        cannot disagree with the model it serves if the feature list changes;
+        main.py validates each request row against this value.
+        """
+        shape = next(
+            inp.shape for inp in self._session.get_inputs()
+            if inp.name == "numeric_features"
+        )
+        width = shape[1]
+        if not isinstance(width, int) or width <= 0:
+            raise ValueError(
+                f"numeric_features input has a non-static width: {shape}. "
+                "Only the batch axis may be dynamic."
+            )
+        return width
 
     @staticmethod
     def _parse_version(gcs_path: str) -> str:
@@ -194,7 +205,7 @@ class ONNXPredictor:
             )
 
         output_names = {out.name for out in session.get_outputs()}
-        expected_outputs = {"logit_prob", "risk_score"}
+        expected_outputs = {"logit_prob"}
         if output_names != expected_outputs:
             raise ValueError(
                 f"ONNX output names mismatch. "

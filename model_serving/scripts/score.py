@@ -3,7 +3,7 @@ score.py — CLI entry point for the Phase 5.4 batch scoring pipeline.
 
 This script:
 1. Scans all rows from Bigtable inventory_features.
-2. Applies the StandardScaler and engineer_features() from Phase 4.
+2. Applies fill_defaults() and engineer_features() from Phase 4 (raw units).
 3. Calls the Vertex AI endpoint in batches to obtain predictions.
 4. Publishes each prediction to the Pub/Sub prediction-results topic.
 
@@ -150,11 +150,6 @@ def parse_args() -> argparse.Namespace:
         default="ml_training/artifacts",
         help="Directory containing feature_metadata.json (default: ml_training/artifacts)",
     )
-    p.add_argument(
-        "--dataset",
-        default="ml_training/artifacts/dataset",
-        help="Directory containing preprocessor.pkl (default: ml_training/artifacts/dataset)",
-    )
 
     # ── Writer (optional in-process) ──────────────────────────────────────────
     p.add_argument(
@@ -280,10 +275,7 @@ def _run_scoring(
     so the Bigtable client is always closed, including on an exception or
     sys.exit() from any of the branches below."""
     # ── Request builder ───────────────────────────────────────────────────────
-    request_builder = RequestBuilder(
-        artifacts_dir = args.artifacts,
-        dataset_dir   = args.dataset,
-    )
+    request_builder = RequestBuilder(artifacts_dir=args.artifacts)
 
     # ── Dry-run: scan + build only ────────────────────────────────────────────
     if args.dry_run:

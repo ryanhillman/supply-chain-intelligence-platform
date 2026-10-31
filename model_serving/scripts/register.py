@@ -88,11 +88,6 @@ def parse_args() -> argparse.Namespace:
         help="Local directory containing model.onnx, feature_metadata.json, evaluation_test.json",
     )
     p.add_argument(
-        "--dataset",
-        default="ml_training/artifacts/dataset",
-        help="Local directory containing preprocessor.pkl",
-    )
-    p.add_argument(
         "--version",
         default=None,
         help="Version tag (e.g. v20260620_181523). Defaults to v{UTC timestamp}.",
@@ -139,8 +134,7 @@ def main() -> None:
 
     # Pre-flight: verify local artifacts exist
     artifacts_dir = Path(args.artifacts)
-    dataset_dir   = Path(args.dataset)
-    _check_local_artifacts(artifacts_dir, dataset_dir)
+    _check_local_artifacts(artifacts_dir)
 
     logger.info("Registering model version: %s", args.version or "(auto)")
     logger.info("GCS bucket: %s", args.bucket)
@@ -156,7 +150,6 @@ def main() -> None:
 
     info = registrar.register(
         artifacts_dir = artifacts_dir,
-        dataset_dir   = dataset_dir,
         image_uri     = image_uri,
         version       = args.version,
         dry_run       = args.dry_run,
@@ -177,12 +170,11 @@ def main() -> None:
     )
 
 
-def _check_local_artifacts(artifacts_dir: Path, dataset_dir: Path) -> None:
+def _check_local_artifacts(artifacts_dir: Path) -> None:
     required: list[Path] = [
         artifacts_dir / "model.onnx",
         artifacts_dir / "feature_metadata.json",
         artifacts_dir / "evaluation_test.json",
-        dataset_dir   / "preprocessor.pkl",
     ]
     missing = [p for p in required if not p.exists()]
     if missing:
@@ -197,7 +189,7 @@ def _check_local_artifacts(artifacts_dir: Path, dataset_dir: Path) -> None:
 
     logger.info("Local artifacts verified:")
     for p in [artifacts_dir / "model.onnx", artifacts_dir / "feature_metadata.json",
-              artifacts_dir / "evaluation_test.json", dataset_dir / "preprocessor.pkl"]:
+              artifacts_dir / "evaluation_test.json"]:
         if p.exists():
             logger.info("  %s  (%d bytes)", p, p.stat().st_size)
 
