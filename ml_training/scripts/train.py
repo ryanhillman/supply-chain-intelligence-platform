@@ -19,7 +19,6 @@ Optional GCS upload:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import sys
@@ -104,7 +103,7 @@ def main() -> None:
 
     logger.info("Starting training — config: %s", config)
     trainer = Trainer(config=config, dataset_dir=dataset, output_dir=output)
-    history = trainer.train()
+    trainer.train()
 
     logger.info("Evaluating on test split")
     report = run_evaluation(

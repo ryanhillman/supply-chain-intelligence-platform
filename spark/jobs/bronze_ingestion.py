@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
@@ -36,7 +35,6 @@ from config.bronze_config import (
     KAFKA_GROUP_ID,
     STARTING_OFFSETS,
     SOURCE_TOPICS,
-    TOPIC_REQUIRED_FIELDS,
     TRIGGER_INTERVAL,
 )
 from jobs.schemas.inventory_schema import INVENTORY_EVENT_SCHEMA

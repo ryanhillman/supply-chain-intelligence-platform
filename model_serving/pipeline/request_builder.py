@@ -212,7 +212,7 @@ class RequestBuilder:
 
         # Assemble ScoringRequest objects.
         requests: list[ScoringRequest] = []
-        for i, (fr, wh_id, sku_id) in enumerate(zip(valid_rows, wh_vocab_ids, sku_vocab_ids)):
+        for i, (fr, wh_id, sku_id) in enumerate(zip(valid_rows, wh_vocab_ids, sku_vocab_ids, strict=True)):
             instance = {
                 "numeric_features": x_raw[i].tolist(),
                 "warehouse_id":     wh_id,

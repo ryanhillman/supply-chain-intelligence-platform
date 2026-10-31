@@ -221,7 +221,7 @@ def _preflight_check(artifacts_dir: Path, dataset_dir: Path) -> None:
         logger.error("Run ml_training/scripts/build_dataset.py and train.py to generate Phase 4 artifacts.")
         sys.exit(2)
 
-    for path, name in required:
+    for path, _ in required:
         logger.info("Artifact verified: %s  (%d bytes)", path, path.stat().st_size)
 
 
