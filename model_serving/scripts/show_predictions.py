@@ -17,6 +17,9 @@ Usage
 
     # Minimal (uses GCP_PROJECT_ID / GOOGLE_APPLICATION_CREDENTIALS env vars):
     python model_serving/scripts/show_predictions.py
+
+    # Local run: no key; BIGTABLE_EMULATOR_HOST points the client at the emulator.
+    python model_serving/scripts/show_predictions.py --project local-scip
 """
 from __future__ import annotations
 
@@ -78,7 +81,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--sa-key",
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help="Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var)",
+        help=(
+            "Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var). "
+            "Omit for application default credentials or the Bigtable emulator."
+        ),
     )
     p.add_argument(
         "--top-n",
@@ -91,17 +97,22 @@ def parse_args() -> argparse.Namespace:
 
 # -- Bigtable read -------------------------------------------------------------
 
-def read_predictions(project: str, instance_id: str, table_id: str, sa_key: str) -> list[dict]:
+def read_predictions(project: str, instance_id: str, table_id: str, sa_key: str | None) -> list[dict]:
     """Read all prediction rows from Bigtable. Returns list of dicts."""
     from google.cloud import bigtable
-    from google.oauth2 import service_account
 
     try:
-        creds  = service_account.Credentials.from_service_account_file(sa_key)
-        client = bigtable.Client(project=project, credentials=creds, admin=False)
+        if sa_key:
+            from google.oauth2 import service_account
+            creds  = service_account.Credentials.from_service_account_file(sa_key)
+            client = bigtable.Client(project=project, credentials=creds, admin=False)
+        else:
+            # Application default credentials, or the emulator when
+            # BIGTABLE_EMULATOR_HOST is set (the client library handles both).
+            client = bigtable.Client(project=project, admin=False)
     except Exception as exc:
         print(f"\n  [ERROR] Failed to authenticate: {exc}")
-        print(f"  Key path: {sa_key}")
+        print(f"  Key path: {sa_key or '(none: application default credentials / emulator)'}")
         sys.exit(1)
 
     table = client.instance(instance_id).table(table_id)

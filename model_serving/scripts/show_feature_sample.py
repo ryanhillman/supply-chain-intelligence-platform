@@ -19,6 +19,9 @@ Usage
 -----
     python model_serving/scripts/show_feature_sample.py
     python model_serving/scripts/show_feature_sample.py --n 8 --sort warehouse
+
+    # Local run: no key; BIGTABLE_EMULATOR_HOST points the client at the emulator.
+    python model_serving/scripts/show_feature_sample.py --project local-scip
 """
 from __future__ import annotations
 
@@ -64,7 +67,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--sa-key",
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help="Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var)",
+        help=(
+            "Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var). "
+            "Omit for application default credentials or the Bigtable emulator."
+        ),
     )
     p.add_argument(
         "--n",
@@ -107,7 +113,7 @@ def read_all_rows(
     project: str,
     instance_id: str,
     table_id: str,
-    sa_key: str,
+    sa_key: str | None,
 ) -> list[dict]:
     """
     Scan the entire inventory_features table.
@@ -119,14 +125,19 @@ def read_all_rows(
     """
     from google.cloud import bigtable
     from google.cloud.bigtable import row_filters
-    from google.oauth2 import service_account
 
     try:
-        creds  = service_account.Credentials.from_service_account_file(sa_key)
-        client = bigtable.Client(project=project, credentials=creds, admin=False)
+        if sa_key:
+            from google.oauth2 import service_account
+            creds  = service_account.Credentials.from_service_account_file(sa_key)
+            client = bigtable.Client(project=project, credentials=creds, admin=False)
+        else:
+            # Application default credentials, or the emulator when
+            # BIGTABLE_EMULATOR_HOST is set (the client library handles both).
+            client = bigtable.Client(project=project, admin=False)
     except Exception as exc:
         print(f"\n  [ERROR] Authentication failed: {exc}")
-        print(f"  Key path: {sa_key}")
+        print(f"  Key path: {sa_key or '(none: application default credentials / emulator)'}")
         sys.exit(1)
 
     table = client.instance(instance_id).table(table_id)
