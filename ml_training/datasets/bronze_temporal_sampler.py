@@ -93,7 +93,6 @@ class BronzeTemporalSampler:
         credentials_path: str | None = None,
         min_lookback_days: int = 30,
         min_lookahead_days: int = 7,
-        simulate_days: int = 0,
         bronze_path: str | Path | None = None,
     ) -> None:
         if bool(bucket) == bool(bronze_path):
@@ -105,7 +104,6 @@ class BronzeTemporalSampler:
         self._credentials_path = credentials_path
         self._min_lookback = min_lookback_days
         self._min_lookahead = min_lookahead_days
-        self._simulate_days = simulate_days
         self._fs = None
         if bucket:
             self._fs = gcsfs.GCSFileSystem(
@@ -135,18 +133,10 @@ class BronzeTemporalSampler:
         span_days = (inv["ts"].max() - inv["ts"].min()).days
         required = self._min_lookback + self._min_lookahead + 1
         if span_days < required:
-            if self._simulate_days > 0:
-                logger.warning(
-                    "Bronze data spans only %d day(s); need %d. "
-                    "Tiling events across %d simulated days for training.",
-                    span_days, required, self._simulate_days,
-                )
-                inv = self._tile_events(inv, self._simulate_days)
-            else:
-                raise ValueError(
-                    f"Bronze data spans only {span_days} day(s); need {required}. "
-                    "Pass --simulate-days N (e.g. 60) to tile the events for training."
-                )
+            raise ValueError(
+                f"Bronze data spans only {span_days} day(s); need {required}. "
+                "Replay more simulated days (REPLAY_DAYS in kafka/docker-compose.yml)."
+            )
 
         sample_dates = self._sample_date_range(inv)
         if len(sample_dates) == 0:
@@ -476,42 +466,6 @@ class BronzeTemporalSampler:
                     out_col:        float(qty[is_open].sum()),
                 })
         return pd.DataFrame(rows, columns=["warehouse_id", "sku_id", "sample_date", out_col])
-
-    @staticmethod
-    def _tile_events(inv: pd.DataFrame, n_days: int, seed: int = 42) -> pd.DataFrame:
-        """
-        Tile a single day of events across n_days simulated days.
-
-        Each tile is shifted by i*24h from the original start.  quantity_after
-        and quantity_delta receive ±10% multiplicative noise per tile to produce
-        realistic variation in inventory levels across the simulated window.
-
-        This is a development-mode workaround for when Bronze data spans < 38 days.
-        Production Bronze data accumulates naturally over time and will not need this.
-        """
-        rng = np.random.default_rng(seed)
-        tiles: list[pd.DataFrame] = []
-
-        for i in range(n_days):
-            tile = inv.copy()
-            tile["ts"] = tile["ts"] + pd.Timedelta(days=i)
-            tile["timestamp"] = tile["ts"].dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "+00:00"
-
-            noise = rng.uniform(0.90, 1.10, size=len(tile))
-            for col in ("quantity_after", "quantity_delta"):
-                if col in tile.columns:
-                    tile[col] = (tile[col].astype(float) * noise).round().astype(
-                        tile[col].dtype
-                    )
-            tiles.append(tile)
-
-        tiled = pd.concat(tiles, ignore_index=True).sort_values("ts")
-        logger.info(
-            "Tiled events: %d rows across %d days (%s → %s)",
-            len(tiled), n_days,
-            tiled['ts'].min().date(), tiled['ts'].max().date(),
-        )
-        return tiled
 
     def _demand_features(
         self, dem: pd.DataFrame, sample_dates: pd.DatetimeIndex

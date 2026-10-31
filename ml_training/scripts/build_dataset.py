@@ -43,39 +43,7 @@ logger = logging.getLogger("build_dataset")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Build the training dataset from Bronze (local directory or GCS) or the synthetic generator"
-    )
-
-    # ── Data source ───────────────────────────────────────────────────────────
-    p.add_argument(
-        "--synthetic",
-        action="store_true",
-        help=(
-            "Use the SyntheticDataGenerator instead of Bronze. "
-            "When set, neither --bronze-path nor --bucket is required. "
-            "The existing Bronze pipeline is unchanged and remains the "
-            "production data path."
-        ),
-    )
-    p.add_argument(
-        "--total-days",
-        type=int,
-        default=402,
-        help=(
-            "Total simulation days for --synthetic mode "
-            "(default: 402 = 30 warmup + 365 sample + 7 lookahead)"
-        ),
-    )
-    p.add_argument(
-        "--start-date",
-        default="2025-04-01",
-        help="Simulation start date for --synthetic mode (default: 2025-04-01)",
-    )
-    p.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="RNG seed for --synthetic mode (default: 42)",
+        description="Build the training dataset from Bronze (local directory or GCS)"
     )
 
     # ── Bronze source ─────────────────────────────────────────────────────────
@@ -92,7 +60,7 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("GCS_BUCKET_NAME", ""),
         help=(
             "GCS bucket name (e.g. my-project-scip-lake) for Bronze on GCS. "
-            "One of --bronze-path / --bucket is required unless --synthetic."
+            "One of --bronze-path / --bucket is required."
         ),
     )
     p.add_argument(
@@ -100,18 +68,8 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
         help="Path to service account JSON key (default: Application Default Credentials)",
     )
-    p.add_argument(
-        "--simulate-days",
-        type=int,
-        default=60,
-        help=(
-            "Tile Bronze events across N simulated days when data spans < 38 days "
-            "(default: 60; set 0 to disable and raise an error instead). "
-            "Ignored when --synthetic is set."
-        ),
-    )
 
-    # ── Shared options ────────────────────────────────────────────────────────
+    # ── Output ────────────────────────────────────────────────────────────────
     p.add_argument(
         "--output-dir",
         default="ml_training/artifacts/dataset",
@@ -128,62 +86,27 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if not args.bronze_path and not args.bucket:
+        logger.error(
+            "A Bronze source is required: --bronze-path <dir> (local Spark output) "
+            "or --bucket <name> / GCS_BUCKET_NAME (GCS)."
+        )
+        sys.exit(1)
 
-    builder = DatasetBuilder(
+    if args.bronze_path:
+        logger.info("Bronze path : %s", args.bronze_path)
+    else:
+        logger.info("Bronze bucket : %s (SA key: %s)", args.bucket,
+                    args.sa_key or "Application Default Credentials")
+    logger.info("Output : %s | horizon : %d days", args.output_dir, args.horizon)
+
+    manifest = DatasetBuilder(
         bucket           = None if args.bronze_path else args.bucket,
         bronze_path      = args.bronze_path,
         credentials_path = args.sa_key,
         output_dir       = args.output_dir,
         horizon_days     = args.horizon,
-        simulate_days    = args.simulate_days,
-    )
-
-    if args.synthetic:
-        # ── Synthetic data path (additive — does not affect existing pipeline) ─
-        from ml_training.datasets.synthetic_generator import SyntheticConfig, SyntheticDataGenerator
-
-        logger.info("Dataset build mode : SYNTHETIC")
-        logger.info("  start_date   : %s", args.start_date)
-        logger.info("  total_days   : %d", args.total_days)
-        logger.info("  seed         : %d", args.seed)
-        logger.info("  output       : %s", args.output_dir)
-        logger.info("  horizon      : %d days", args.horizon)
-
-        config    = SyntheticConfig(
-            start_date = args.start_date,
-            total_days = args.total_days,
-            seed       = args.seed,
-        )
-        generator = SyntheticDataGenerator(config=config)
-        manifest  = builder.build_from_synthetic(generator)
-
-    else:
-        # ── Bronze (local directory or GCS) ───────────────────────────────────
-        if not args.bronze_path and not args.bucket:
-            logger.error(
-                "A Bronze source is required: --bronze-path <dir> (local Spark output) "
-                "or --bucket <name> / GCS_BUCKET_NAME (GCS). "
-                "To use synthetic data instead, pass --synthetic."
-            )
-            sys.exit(1)
-
-        if args.bronze_path:
-            logger.info("Dataset build mode : LOCAL BRONZE")
-            logger.info("  Bronze path   : %s", args.bronze_path)
-        else:
-            logger.info("Dataset build mode : GCS BRONZE")
-            logger.info("  Bucket        : %s", args.bucket)
-            logger.info("  SA key        : %s", args.sa_key or "Application Default Credentials")
-        logger.info("  Output        : %s", args.output_dir)
-        logger.info("  Horizon       : %d days", args.horizon)
-        logger.info("  Simulate days : %d", args.simulate_days)
-        if args.simulate_days > 0:
-            logger.warning(
-                "Temporal simulation enabled (%d days). Bronze data will be tiled "
-                "with ±10%% quantity noise. Disable with --simulate-days 0 once "
-                "real multi-day Bronze data is available.", args.simulate_days
-            )
-        manifest = builder.build()
+    ).build()
 
     print("\n" + "=" * 60)
     print("  Dataset Build Complete")

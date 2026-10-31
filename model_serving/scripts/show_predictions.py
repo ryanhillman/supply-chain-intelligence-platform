@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD
 
-# -- SKU category mapping (mirrors synthetic_generator._SKUS) -----------------
+# -- SKU category mapping (mirrors simulation/world.py SKUS) ------------------
 # Hard-coded so show_predictions.py has zero dependency on ml_training modules.
 _SKU_CATEGORIES: dict[str, str] = {
     "SKU-001": "FMCG",        "SKU-002": "FMCG",

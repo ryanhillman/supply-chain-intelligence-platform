@@ -70,17 +70,13 @@ Bigtable emulator. Pass `-e SILVER_AS_OF=YYYY-MM-DD` to compute an earlier date.
 ## 4. Build the dataset and train
 
 ```
-python ml_training/scripts/build_dataset.py --bronze-path spark/data/bronze --simulate-days 150 --output-dir ml_training/artifacts/dataset
+python ml_training/scripts/build_dataset.py --bronze-path spark/data/bronze --output-dir ml_training/artifacts/dataset
 python ml_training/scripts/train.py --dataset ml_training/artifacts/dataset --artifacts ml_training/artifacts
 ```
 
-A few minutes of Bronze is far less than the 38 days the sampler needs, so
-`build_dataset.py` tiles the events across simulated days the way it did
-during development; 150 days leaves enough sample dates for the 7-day purge
-gaps between the time splits (the default of 60 does not). The labels from a
-capture this short are degenerate (no stockouts happen), so this trains a
-plumbing check, not a model; the one-world replay replaces the tiling with a
-simulated year. `train.py` writes `model.pt`, `model.onnx`,
+The sampler builds one row per (warehouse, SKU, day) from the replayed year,
+with the same feature windows Silver uses, and labels each row from the
+following 7 days of events. `train.py` writes `model.pt`, `model.onnx`,
 `feature_metadata.json`, `evaluation_test.json`, `training_metrics.json` and
 `drift_reference.json`.
 
