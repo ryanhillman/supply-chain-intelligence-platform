@@ -65,9 +65,7 @@ jobs:
           terraform_version: "1.9.8"
 
       # No credentials and no backend: this validates syntax, types and
-      # provider schemas only. The GCP project this configuration last managed
-      # was decommissioned after the June 2026 demo; the code is kept as the
-      # record of what ran there.
+      # provider schemas only.
       #
       # The committed .terraform.lock.hcl records only windows_amd64 checksums
       # for hashicorp/google, so init on this linux runner fails with a
