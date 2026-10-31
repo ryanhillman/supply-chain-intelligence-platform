@@ -164,8 +164,18 @@ messages that fail 5 delivery attempts for forensic inspection.
 ## Decision 6 — Champion/Challenger Gating
 
 **Chosen:** A new model version is only promoted to 100% traffic after
-`promote_model.py` verifies it outperforms the current champion on the held-out
+`promote_model.py` verifies it outperforms the current champion on one held-out
 test split across all three metrics: AUPRC, AUC-ROC, Brier.
+
+**One split for both models.** Each `evaluation_test.json` records a sha256 of
+the test split its metrics were computed on. If champion and challenger share
+it, the stored metrics are compared directly. After a retrain on new data they
+never will, so `promote_model.py` downloads both models' `model.onnx` and
+`feature_metadata.json`, scores both on the challenger's `test.parquet` locally
+with onnxruntime, and compares those numbers. The local split's hash must match
+the challenger's recorded hash, otherwise promotion refuses rather than compare
+against the wrong holdout. (An earlier version compared each model's own
+test-split metrics, which are not comparable across datasets or seeds.)
 
 **Mechanism:** Vertex AI Endpoint traffic splitting by model version. New versions
 deploy at 0% traffic; promotion sets the split to 100% new / 0% old. Old versions

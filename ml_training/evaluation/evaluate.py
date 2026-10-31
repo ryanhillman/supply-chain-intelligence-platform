@@ -10,6 +10,7 @@ Called by scripts/evaluate.py.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -56,7 +57,10 @@ def run_evaluation(
     Returns
     -------
     dict with keys: model, baseline, baseline_description, rule_baseline,
-                    improvements, outperforms_baseline, in_stock, per_warehouse.
+                    improvements, outperforms_baseline, in_stock, per_warehouse,
+                    split_sha256 (hash of the parquet file the metrics came from;
+                    promote_model.py uses it to tell whether two models' metrics
+                    are comparable).
     """
     artifacts_dir = Path(artifacts_dir)
     dataset_dir   = Path(dataset_dir)
@@ -109,6 +113,7 @@ def run_evaluation(
 
     report = {
         "split":                split,
+        "split_sha256":         _file_sha256(dataset_dir / f"{split}.parquet"),
         "n_examples":           len(df),
         "positive_rate":        float(y_true.mean()),
         "model":                comparison["model"],
@@ -221,6 +226,15 @@ def _subset_metrics(
     block["baseline"]      = compute_metrics(y_sub, y_baseline[mask])
     block["rule_baseline"] = compute_metrics(y_sub, y_rule[mask])
     return block
+
+
+def _file_sha256(path: Path) -> str:
+    """Hex sha256 of a file's bytes, read in 1 MiB chunks."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _load_json(path: Path) -> dict:

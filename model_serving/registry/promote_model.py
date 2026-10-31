@@ -6,15 +6,21 @@ Flow
 1. List deployed models on the Vertex AI endpoint.
 2. Identify the champion (traffic > 0%) and the most recently deployed
    challenger (traffic == 0%).
-3. Download evaluation_test.json from each model's GCS artifact URI.
-4. Compare metrics: challenger must beat champion on ALL THREE —
+3. Download evaluation_test.json from each model's GCS artifact URI. Each one
+   carries the metrics and a sha256 of the test split they were computed on.
+4. Put both models on one holdout. If the hashes match, the stored metrics are
+   comparable and are used as-is. Otherwise — the normal case after a retrain
+   on new data — download both models' model.onnx + feature_metadata.json and
+   score both on the challenger's test split (dataset_dir/test.parquet, whose
+   hash must equal the challenger's recorded hash) locally with onnxruntime.
+5. Compare metrics: challenger must beat champion on ALL THREE —
      AUPRC    (higher is better)
      AUC-ROC  (higher is better)
      Brier    (lower is better)
-5. If dry_run: print comparison and exit without mutating state.
-6. If all three criteria pass: update endpoint traffic split to
+6. If dry_run: print comparison and exit without mutating state.
+7. If all three criteria pass: update endpoint traffic split to
    {challenger: 100%, champion: 0%}.
-7. If any criterion fails: exit non-zero. The champion remains live.
+8. If any criterion fails: exit non-zero. The champion remains live.
 
 The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
 SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
@@ -31,18 +37,29 @@ Required packages:
     google-cloud-aiplatform>=1.38.0
     google-cloud-storage>=2.16.0
     protobuf>=4.21.0
+    onnxruntime>=1.17.0      (local rescoring)
+    pandas, numpy, scikit-learn (via ml_training.evaluation.metrics)
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
+import numpy as np
+import onnxruntime as ort
+import pandas as pd
 from google.cloud import aiplatform
 from google.cloud import aiplatform_v1
 from google.cloud import storage as gcs_storage
 from google.protobuf import field_mask_pb2
+
+from ml_training.datasets.feature_engineer import TARGET_COL
+from ml_training.evaluation.metrics import compute_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +77,7 @@ class DeployedModelInfo:
     create_time: datetime
     artifact_uri: str
     test_metrics: dict  # {"auprc": float, "auc_roc": float, "brier": float}
+    split_sha256: str | None  # sha256 of the test split test_metrics came from
 
 
 class ModelPromoter:
@@ -75,6 +93,9 @@ class ModelPromoter:
         "projects/{project}/locations/{region}/endpoints/{endpoint_id}"
     credentials_path:
         Path to service account JSON key. None = application default credentials.
+    dataset_dir:
+        Directory holding the challenger's test.parquet (raw feature units).
+        Used only when the two models were evaluated on different splits.
     """
 
     def __init__(
@@ -83,10 +104,12 @@ class ModelPromoter:
         region: str,
         endpoint_resource_name: str,
         credentials_path: str | None = None,
+        dataset_dir: str | Path = "ml_training/artifacts/dataset",
     ) -> None:
         self.project_id              = project_id
         self.region                  = region
         self.endpoint_resource_name  = endpoint_resource_name
+        self._dataset_dir            = Path(dataset_dir)
 
         if credentials_path:
             from google.oauth2 import service_account
@@ -130,8 +153,9 @@ class ModelPromoter:
         champion, challenger = self._find_champion_and_challenger()
         self._print_deployed_summary(champion, challenger)
 
+        basis = self._align_metrics(champion, challenger)
         passes, summary = self._compare_metrics(champion, challenger)
-        self._print_metric_comparison(champion, challenger, summary)
+        self._print_metric_comparison(champion, challenger, summary, basis)
 
         if not passes:
             logger.warning(
@@ -235,7 +259,7 @@ class ModelPromoter:
         model_obj   = aiplatform.Model(model_name=proto.model)
         artifact_uri = model_obj.artifact_uri
 
-        test_metrics = self._load_test_metrics(artifact_uri)
+        evaluation = self._load_evaluation(artifact_uri)
 
         return DeployedModelInfo(
             deployed_model_id=deployed_model_id,
@@ -245,20 +269,17 @@ class ModelPromoter:
                 proto.create_time.timestamp(), tz=timezone.utc
             ),
             artifact_uri=artifact_uri,
-            test_metrics=test_metrics,
+            test_metrics=evaluation["metrics"],
+            split_sha256=evaluation["split_sha256"],
         )
 
-    def _load_test_metrics(self, artifact_uri: str) -> dict:
+    def _load_evaluation(self, artifact_uri: str) -> dict:
         """
         Download evaluation_test.json from the model's GCS artifact URI.
-        Returns {"auprc": float, "auc_roc": float, "brier": float}.
+        Returns {"metrics": {"auprc", "auc_roc", "brier"}, "split_sha256": str | None}.
         """
-        path_without_scheme = artifact_uri.removeprefix("gs://")
-        bucket_name, _, prefix = path_without_scheme.partition("/")
-        blob_name = prefix.rstrip("/") + "/evaluation_test.json"
-
-        bucket = self._storage_client.bucket(bucket_name)
-        blob   = bucket.blob(blob_name)
+        bucket_name, prefix = _split_gcs_uri(artifact_uri)
+        blob = self._storage_client.bucket(bucket_name).blob(f"{prefix}/evaluation_test.json")
 
         if not blob.exists():
             raise FileNotFoundError(
@@ -277,7 +298,101 @@ class ModelPromoter:
                 f"Found: {list(metrics.keys())}"
             )
 
-        return {k: float(metrics[k]) for k in required}
+        return {
+            "metrics":      {k: float(metrics[k]) for k in required},
+            "split_sha256": data.get("split_sha256"),
+        }
+
+    def _align_metrics(
+        self,
+        champion: DeployedModelInfo,
+        challenger: DeployedModelInfo,
+    ) -> str:
+        """
+        Make champion.test_metrics and challenger.test_metrics comparable.
+
+        Same split hash → the stored metrics already are. Otherwise rescore
+        both models on the challenger's test split (overwriting test_metrics
+        in place). Returns a one-line description of the basis for the report.
+        """
+        if not needs_rescore(champion.split_sha256, challenger.split_sha256):
+            return (
+                "stored evaluation_test.json metrics — both models were evaluated "
+                f"on the same test split (sha256 {challenger.split_sha256[:12]}…)"
+            )
+
+        logger.info(
+            "Test splits differ (champion %s, challenger %s) — rescoring both models "
+            "on the challenger's split with onnxruntime",
+            (champion.split_sha256 or "unknown")[:12], (challenger.split_sha256 or "unknown")[:12],
+        )
+        n = self._rescore_on_challenger_split(champion, challenger)
+        return (
+            f"both models rescored locally on the challenger's test split "
+            f"(n={n}, sha256 {challenger.split_sha256[:12]}…)"
+        )
+
+    def _rescore_on_challenger_split(
+        self,
+        champion: DeployedModelInfo,
+        challenger: DeployedModelInfo,
+    ) -> int:
+        """Score both deployed models on dataset_dir/test.parquet. Returns the row count."""
+        test_path = self._dataset_dir / "test.parquet"
+        if not test_path.exists():
+            raise FileNotFoundError(
+                f"{test_path} not found. Rescoring needs the challenger's test split; "
+                "pass --dataset pointing at the dataset directory it was trained from."
+            )
+        if challenger.split_sha256 is None:
+            raise ValueError(
+                "The challenger's evaluation_test.json has no split_sha256, so the "
+                "local test.parquet cannot be verified as its split. Re-run evaluate.py "
+                "and register.py for the challenger."
+            )
+        local_hash = file_sha256(test_path)
+        if local_hash != challenger.split_sha256:
+            raise ValueError(
+                f"{test_path} (sha256 {local_hash[:12]}…) is not the split the challenger "
+                f"was evaluated on ({challenger.split_sha256[:12]}…). Point --dataset at the "
+                "challenger's dataset directory; refusing to compare on a different holdout."
+            )
+
+        df     = pd.read_parquet(test_path)
+        y_true = df[TARGET_COL].to_numpy(dtype=float)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for info in (champion, challenger):
+                onnx_path, metadata = self._download_model_files(
+                    info.artifact_uri, Path(tmp) / info.deployed_model_id
+                )
+                probs = score_onnx_on_split(onnx_path, metadata, df)
+                info.test_metrics = compute_metrics(y_true, probs)
+                logger.info(
+                    "Rescored %s: AUPRC=%.4f AUC=%.4f Brier=%.4f",
+                    info.deployed_model_id, info.test_metrics["auprc"],
+                    info.test_metrics["auc_roc"], info.test_metrics["brier"],
+                )
+        return len(df)
+
+    def _download_model_files(self, artifact_uri: str, dest: Path) -> tuple[Path, dict]:
+        """Fetch model.onnx (+ sidecar if any) and feature_metadata.json into dest."""
+        bucket_name, prefix = _split_gcs_uri(artifact_uri)
+        bucket = self._storage_client.bucket(bucket_name)
+        dest.mkdir(parents=True, exist_ok=True)
+
+        for fname, required in (("model.onnx", True), ("model.onnx.data", False),
+                                ("feature_metadata.json", True)):
+            blob = bucket.blob(f"{prefix}/{fname}")
+            if not blob.exists():
+                if required:
+                    raise FileNotFoundError(f"{fname} not found at {artifact_uri}")
+                continue
+            blob.download_to_filename(str(dest / fname))
+
+        with open(dest / "feature_metadata.json") as f:
+            metadata = json.load(f)
+        return dest / "model.onnx", metadata
 
     def _compare_metrics(
         self,
@@ -375,7 +490,10 @@ class ModelPromoter:
         champion: DeployedModelInfo,
         challenger: DeployedModelInfo,
         summary: dict[str, dict],
+        basis: str,
     ) -> None:
+        print()
+        print(f"  Basis: {basis}")
         print()
         print(f"  {'Metric':<10} {'Champion':>10} {'Challenger':>12} {'Delta':>10}  Pass")
         print(f"  {'-'*10} {'-'*10} {'-'*12} {'-'*10}  ----")
@@ -390,3 +508,57 @@ class ModelPromoter:
         verdict  = "PROMOTE" if all_pass else "BLOCKED"
         print(f"\n  Verdict: {verdict}")
         print("=" * 68)
+
+
+# ── Module helpers (pure; unit-tested without GCP) ────────────────────────────
+
+def needs_rescore(champion_hash: str | None, challenger_hash: str | None) -> bool:
+    """Stored metrics are comparable only when both hashes exist and match."""
+    return champion_hash is None or challenger_hash is None or champion_hash != challenger_hash
+
+
+def file_sha256(path: Path) -> str:
+    """Hex sha256 of a file's bytes; same function evaluate.py uses for split_sha256."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np.ndarray:
+    """
+    Run one exported model over a raw-unit split and return shortage_prob_7d.
+
+    The graph standardizes internally (ADR-005 Decision 3), so the parquet's
+    raw columns go straight in, in the model's own numeric_features order and
+    with its own vocab. Any entity the model has never seen is an error, not
+    a silent default: the comparison must cover the same rows for both models.
+    """
+    cols    = metadata["numeric_features"]
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Split is missing model features {missing}")
+
+    wh  = df["warehouse_id"].map(metadata["warehouse_vocab"])
+    sku = df["sku_id"].map(metadata["sku_vocab"])
+    if wh.isna().any() or sku.isna().any():
+        unknown = sorted(set(df.loc[wh.isna(), "warehouse_id"]) | set(df.loc[sku.isna(), "sku_id"]))
+        raise ValueError(f"Split contains entities outside this model's vocab: {unknown}")
+
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    (logit,) = session.run(
+        ["logit_prob"],
+        {
+            "numeric_features": df[cols].to_numpy(dtype=np.float32),
+            "warehouse_ids":    wh.to_numpy(dtype=np.int64),
+            "sku_ids":          sku.to_numpy(dtype=np.int64),
+        },
+    )
+    return 1.0 / (1.0 + np.exp(-logit[:, 0].astype(np.float64)))
+
+
+def _split_gcs_uri(uri: str) -> tuple[str, str]:
+    """'gs://bucket/some/prefix/' -> ('bucket', 'some/prefix')."""
+    bucket_name, _, prefix = uri.removeprefix("gs://").partition("/")
+    return bucket_name, prefix.rstrip("/")
