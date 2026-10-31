@@ -287,10 +287,13 @@ derived bin edges from normal quantiles of the training (`mean`, `scale`)
 instead; that assumption badly misrepresents the skewed
 features monitored here (`sales_7d`, `avg_daily_sales_7d`,
 `supplier_reliability`) and was confirmed to produce PSI ≥ 6 — a spurious
-TRIGGER — even when fed the training data against itself. Falls back to the
-normal-quantile approximation (with a logged warning) only if `train.parquet`
-isn't available in the dataset directory. Bins with zero observed count
-use a floor of 0.0001 to avoid log(0).
+TRIGGER — even when fed the training data against itself. A later version
+binned raw live values against *standardized* training rows (the parquet splits
+were StandardScaler-transformed at the time) and produced PSI 2–8 for the same
+train-vs-itself check. The splits are now stored in raw units, so bins and live
+values share units by construction, and there is no approximate fallback:
+`train.parquet` is required. Bins with zero observed count use a floor of
+0.0001 to avoid log(0).
 
 **Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud
 Monitoring metrics (`custom.googleapis.com/scip/drift/feature_psi` with label
