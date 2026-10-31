@@ -16,13 +16,20 @@ The Terraform, Vertex AI and GCS code paths are unchanged; the local run only
 changes what the clients connect to. No service-account key is needed anywhere
 in the local run.
 
-## 1. Kafka and the event producer
+## 1. Kafka and the replay
 
 ```
 docker compose -f kafka/docker-compose.yml up -d
 ```
 
-This also creates the `kafka_scip-net` network that the other stacks join.
+This creates the `kafka_scip-net` network the other stacks join, creates the
+five topics (30-day retention), and starts the producer. The producer replays
+365 simulated days (2025-10-01 to 2026-09-30, seed 42) from
+`simulation/world.py`, about 200,000 events, and exits within a minute;
+`docker logs scip-producer` ends with `Replay complete`. `REPLAY_START`,
+`REPLAY_DAYS` and `SEED` in `kafka/docker-compose.yml` choose another world.
+Replaying the same seed again re-sends identical events, which Silver and the
+training sampler drop as duplicates.
 
 ## 2. Emulators
 
@@ -54,9 +61,11 @@ docker build -t scip-spark:latest spark
 docker compose -f spark/docker-compose.spark.yml up -d spark-bronze
 ```
 
-Bronze writes Parquet under `spark/data/bronze/<topic>/...` every 30 seconds.
-Once it has caught up, run Silver (stop Bronze first if Docker Desktop is short
-on memory; each job takes up to 1.5 GB):
+Bronze reads the topics from the earliest offset and writes Parquet under
+`spark/data/bronze/<topic>/event_type=/year=/month=/day=/`. It has caught up
+when its log stops printing `write_bronze` lines, about 10 minutes for the
+default replay on Docker Desktop. Then run Silver (stop Bronze first if Docker
+Desktop is short on memory; each job takes up to 1.5 GB):
 
 ```
 docker compose -f spark/docker-compose.spark.yml stop spark-bronze
@@ -64,8 +73,9 @@ docker compose -f spark/docker-compose.spark.yml run --rm spark-silver-batch
 ```
 
 Silver computes one feature row per (warehouse, SKU) as of the latest day in
-Bronze, writes it to `spark/data/silver/`, and writes the same rows into the
-Bigtable emulator. Pass `-e SILVER_AS_OF=YYYY-MM-DD` to compute an earlier date.
+Bronze (2026-09-30 for the default replay), writes it to `spark/data/silver/`,
+and writes the same rows into the Bigtable emulator. It takes about 5 minutes.
+Pass `-e SILVER_AS_OF=YYYY-MM-DD` to compute an earlier date.
 
 ## 4. Build the dataset and train
 
