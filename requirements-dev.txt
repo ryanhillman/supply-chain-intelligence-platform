@@ -1,8 +1,12 @@
 # Test and lint tooling. Install after the component requirements files:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 #   pip install -r ml_training/requirements.txt -r model_serving/requirements.txt \
-#               -r model_serving/serving/container/requirements.txt -r requirements-dev.txt
-# This is exactly what .github/workflows/ci.yml does.
+#               -r requirements-dev.txt
+# This is exactly what .github/workflows/ci.yml does. The serving container's
+# own requirements.txt is for its Docker image (exact pins for a separate
+# environment) and is deliberately not part of the test environment.
 pytest>=8.0
 ruff>=0.6
-httpx>=0.27     # fastapi.testclient (tests/test_serving_validation.py)
+httpx>=0.27          # fastapi.testclient (tests/test_serving_validation.py)
+fastapi>=0.115       # tests import the serving container's main.py
+pydantic>=2.9

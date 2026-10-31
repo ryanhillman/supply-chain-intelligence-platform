@@ -24,12 +24,17 @@ jobs:
           cache-dependency-path: |
             ml_training/requirements.txt
             model_serving/requirements.txt
-            model_serving/serving/container/requirements.txt
             requirements-dev.txt
 
       # CPU-only torch first, from PyTorch's index, so the requirements files'
       # "torch>=2.5,<3" constraint is already satisfied and pip does not pull
       # the multi-GB CUDA build from PyPI (same approach as ml_training/Dockerfile).
+      #
+      # The serving container's requirements.txt is NOT installed here: it pins
+      # the image's exact versions (numpy 1.26.4, onnxruntime 1.19.2) for a
+      # separate environment, and the training stack's pyarrow needs numpy 2.
+      # The serving tests only import the container's FastAPI app, so
+      # requirements-dev.txt provides fastapi and pydantic unpinned.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -37,7 +42,6 @@ jobs:
           pip install \
             -r ml_training/requirements.txt \
             -r model_serving/requirements.txt \
-            -r model_serving/serving/container/requirements.txt \
             -r requirements-dev.txt
 
       - name: Lint (ruff)
