@@ -4,7 +4,8 @@ score.py — CLI entry point for the Phase 5.4 batch scoring pipeline.
 This script:
 1. Scans all rows from Bigtable inventory_features.
 2. Applies fill_defaults() and engineer_features() from Phase 4 (raw units).
-3. Calls the Vertex AI endpoint in batches to obtain predictions.
+3. Calls the model endpoint in batches to obtain predictions: the Vertex AI
+   endpoint (--endpoint) or the serving container over HTTP (--endpoint-url).
 4. Publishes each prediction to the Pub/Sub prediction-results topic.
 
 Optionally runs the PredictionWriter in the same process after publishing
@@ -13,7 +14,15 @@ Alternatively, run prediction_writer.py separately as a Cloud Run job.
 
 Usage
 -----
-    # Score only (batch_scorer publishes to Pub/Sub; writer runs separately):
+    # Local run: serving container on :8080, Bigtable and Pub/Sub emulators
+    # found through BIGTABLE_EMULATOR_HOST / PUBSUB_EMULATOR_HOST (local/README.md):
+    python model_serving/scripts/score.py \\
+        --project local-scip \\
+        --endpoint-url http://localhost:8080 \\
+        --model-version local-dev \\
+        --write
+
+    # Score only against Vertex AI (writer runs separately):
     python model_serving/scripts/score.py \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
@@ -35,6 +44,7 @@ Environment variables (alternatives to CLI flags):
     GCP_PROJECT_ID                   -- --project
     GCP_REGION                       -- --region
     VERTEX_AI_ENDPOINT_RESOURCE_NAME -- --endpoint
+    ENDPOINT_URL                     -- --endpoint-url
     BIGTABLE_INSTANCE_ID             -- --bigtable-instance
     PUBSUB_TOPIC_ID                  -- --topic
     PUBSUB_SUBSCRIPTION_ID           -- --subscription
@@ -72,7 +82,7 @@ _LOCAL_REGISTRATION_INFO = Path("model_serving/artifacts/registration_info.json"
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Run the SCIP batch scoring pipeline (Bigtable -> Vertex AI -> Pub/Sub)"
+        description="Run the SCIP batch scoring pipeline (Bigtable -> model endpoint -> Pub/Sub)"
     )
 
     # ── GCP identity ──────────────────────────────────────────────────────────
@@ -92,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         help="Service account key for the batch scorer (scip-vertex-sa.json)",
     )
 
-    # ── Vertex AI ─────────────────────────────────────────────────────────────
+    # ── Model endpoint ────────────────────────────────────────────────────────
     p.add_argument(
         "--endpoint",
         default=os.environ.get("VERTEX_AI_ENDPOINT_RESOURCE_NAME", ""),
@@ -100,6 +110,14 @@ def parse_args() -> argparse.Namespace:
             "Full Vertex AI endpoint resource name "
             "(projects/.../locations/.../endpoints/...). "
             "Use the 'vertex_ai_endpoint_resource_name' Terraform output."
+        ),
+    )
+    p.add_argument(
+        "--endpoint-url",
+        default=os.environ.get("ENDPOINT_URL", ""),
+        help=(
+            "Base URL of the serving container run locally, e.g. http://localhost:8080. "
+            "Alternative to --endpoint (one of the two is required unless --dry-run)."
         ),
     )
 
@@ -241,8 +259,12 @@ def main() -> None:
 
     # Validate required arguments.
     _require(args, "project",  "GCP_PROJECT_ID")
-    if not args.dry_run:
-        _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
+    if not args.dry_run and not (args.endpoint or args.endpoint_url):
+        logger.error(
+            "Pass --endpoint (Vertex AI resource name) or --endpoint-url "
+            "(local serving container, e.g. http://localhost:8080)"
+        )
+        sys.exit(1)
 
     model_version = _resolve_model_version(args)
 
@@ -257,7 +279,7 @@ def main() -> None:
         "  batch_size       : %d\n"
         "  dry_run          : %s",
         args.project, args.region,
-        args.endpoint or "(dry-run — not used)",
+        args.endpoint_url or args.endpoint or "(dry-run — not used)",
         args.bigtable_instance, args.bigtable_table,
         args.topic,
         model_version,
@@ -302,9 +324,10 @@ def _run_scoring(
     scorer = BatchScorer(
         project_id             = args.project,
         region                 = args.region,
-        endpoint_resource_name = args.endpoint,
         feature_client         = feature_client,
         request_builder        = request_builder,
+        endpoint_resource_name = None if args.endpoint_url else args.endpoint,
+        endpoint_url           = args.endpoint_url or None,
         topic_id               = args.topic,
         credentials_path       = args.sa_key,
     )
@@ -345,7 +368,7 @@ def _run_scoring(
                 stats.rows_stale,
             )
         else:
-            logger.error("No predictions were published — check Vertex AI endpoint and Pub/Sub config")
+            logger.error("No predictions were published — check the model endpoint and Pub/Sub config")
         sys.exit(1)
 
     # ── Optional in-process write ─────────────────────────────────────────────
@@ -353,7 +376,7 @@ def _run_scoring(
         logger.info("--write set: draining Pub/Sub subscription %s into Bigtable...", args.subscription)
 
         writer_key = args.writer_sa_key or args.sa_key
-        if not writer_key:
+        if args.sa_key and not args.writer_sa_key:
             logger.warning(
                 "No --writer-sa-key provided. Using --sa-key for the writer. "
                 "In production, use scip-prediction-writer-sa.json (roles: "
@@ -395,9 +418,9 @@ def _run_scoring(
             f"\n    python model_serving/pipeline/prediction_writer.py \\\n"
             f"        --project {args.project} \\\n"
             f"        --bigtable-instance {args.bigtable_instance} \\\n"
-            f"        --subscription {args.subscription} \\\n"
-            f"        --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json\n"
-            "\n  Or run it with --streaming as a long-lived Cloud Run service / GKE workload."
+            f"        --subscription {args.subscription}\n"
+            "\n  (add --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json on GCP;\n"
+            "  or run it with --streaming as a long-lived service.)"
         )
 
 
