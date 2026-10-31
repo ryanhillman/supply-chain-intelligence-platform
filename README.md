@@ -216,15 +216,3 @@ Retraining is recommended when any of these trips:
 `supplier_reliability` is computed per warehouse, so a snapshot holds only six values, too few for PSI. Each warehouse's value is checked against its training p1–p99, and an out-of-range warehouse is reported as a warning, not a trigger.
 
 The monitor writes `drift_report.json` and can emit its metrics to Cloud Monitoring. The report is advisory: nothing reads it back to block scoring or promotion.
-
----
-
-## Teardown
-
-Deployed models and the Bigtable node bill while idle. Between sessions, undeploy the endpoint's models (the endpoint resource stays):
-
-```
-python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <endpoint-resource-name>
-```
-
-The Bigtable instance can also be destroyed. After `terraform apply` recreates it, re-running the Silver job repopulates it from Bronze.
