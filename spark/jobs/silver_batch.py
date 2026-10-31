@@ -41,7 +41,11 @@ from config.bronze_config import (
     SILVER_BASE_PATH,
 )
 from config.feature_config import PIPELINE_VERSION, ROW_KEY_SEPARATOR
-from jobs.schemas.feature_schema import SILVER_DEDUP_COLS, SILVER_PARTITION_COLS
+from jobs.schemas.feature_schema import (
+    SILVER_DEDUP_COLS,
+    SILVER_PARTITION_COLS,
+    conform_to_silver_schema,
+)
 from jobs.silver_features import compute_features, latest_event_date
 from utils.bigtable_writer import write_to_bigtable
 
@@ -141,9 +145,9 @@ def main() -> None:
         spark.stop()
         sys.exit(1)
 
-    feature_df = add_row_key_and_partitions(
+    feature_df = conform_to_silver_schema(add_row_key_and_partitions(
         add_lineage(features, BATCH_EPOCH_ID, event_count), as_of
-    ).cache()
+    )).cache()
     try:
         write_silver(feature_df, BATCH_EPOCH_ID)
         try:
