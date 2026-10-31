@@ -21,7 +21,9 @@ A same-split benchmark confirms this. Synthetic test split, 6,600 rows, 17.3% po
 | PyTorch MLP, weighted BCE (original default) | 0.933 | 0.719 | 0.117 |
 | PyTorch MLP, unweighted BCE (current default) | 0.932 | 0.732 | 0.076 |
 
-LightGBM matches the MLP. It trains in about 6 seconds, scores 120 rows in about 6 ms, needs no standardization or embeddings, and can run inside the scorer with no endpoint. It is the recommended model for a production version of this system.
+LightGBM slightly exceeds the MLP on all three metrics and needs no standardization layer or embeddings. It is the recommended model for a production version of this system.
+
+The deployment's cost comes from the managed infrastructure (the Vertex AI endpoint and the Bigtable node), not from the model. Either model can be scored inside the batch job; promotion rescoring already scores the MLP in-process with onnxruntime.
 
 The MLP is retained as the learning artifact and as the comparison row that documents the choice as measured rather than assumed. The original version of this record rejected LightGBM on ONNX-export and embedding grounds. Both points are technically valid, but they were not the basis of the decision, and the benchmark supersedes them.
 
