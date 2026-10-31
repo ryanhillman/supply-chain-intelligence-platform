@@ -178,6 +178,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print comparison without updating endpoint traffic split",
     )
+    promote_p.add_argument(
+        "--dataset",
+        default="ml_training/artifacts/dataset",
+        help=(
+            "Directory holding the challenger's test.parquet. Used to rescore both "
+            "models on one holdout when their evaluation splits differ "
+            "(default: ml_training/artifacts/dataset)"
+        ),
+    )
 
     return p.parse_args()
 
@@ -254,6 +263,7 @@ def main() -> None:
             region                 = args.region,
             endpoint_resource_name = args.endpoint,
             credentials_path       = args.sa_key,
+            dataset_dir            = args.dataset,
         )
         promoted = promoter.promote(dry_run=args.dry_run)
         sys.exit(0 if promoted else 1)
