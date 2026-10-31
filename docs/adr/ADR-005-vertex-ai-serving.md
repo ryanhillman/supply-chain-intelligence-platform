@@ -1,148 +1,46 @@
-# ADR-005 — Vertex AI Serving and Prediction Storage
+# ADR-005: Vertex AI Serving and Prediction Storage
 
-**Status:** Accepted
-**Date:** 2026-06-20
-**Phase:** 5
-
----
+**Status:** Accepted, June 2026
 
 ## Context
 
-Phase 4 produced a trained ONNX model (`model.onnx`) and a validated inference
-pipeline. Phase 5 must operationalize that model — registering it in a versioned
-registry, deploying it to a managed endpoint, and persisting its predictions in a
-durable, low-latency store.
+Training produces `model.onnx`. Serving needs a runtime for it, a store for its predictions, and a way to detect when those predictions stop being trustworthy. The batch scorer reads 120 feature rows from Bigtable, scores them, and stores one prediction per (warehouse, SKU) pair.
 
-Three design questions arise:
+Vertex AI (Model Registry and an online endpoint) was selected as a learning objective: model registration, deployment, traffic splitting and promotion on a managed platform. The workload does not require it. A 21 KB model scoring 120 rows once a day can run inside the scorer process. An endpoint bills about $80 per month per deployed model regardless of traffic, so models are undeployed between demo sessions (`deploy.py undeploy`).
 
-1. **Where should predictions be written?** Phase 4 batch inference wrote a local
-   `predictions.parquet`. That file is ephemeral and inaccessible to downstream
-   systems.
-2. **Should predictions coexist with features in Silver?** Silver is GCS Parquet
-   produced by Spark batch jobs. Writing model output back into the same Parquet
-   partition would make the feature layer mutable, violating its role as the
-   append-only source of truth.
-3. **Is model deployment alone sufficient?** Phase 4 inference revealed a severe
-   training/inference distribution mismatch. A deployed model that silently
-   produces wrong predictions is operationally worse than no model. Monitoring
-   and retraining triggers are mandatory, not optional.
+## Decision 1 — Predictions are not written back to Silver
 
----
+Silver is recomputed from Bronze and treated as append-only. Predictions change with every retrain, so writing them into Silver would require overwriting partitions, mix data of two origins, and break the guarantee that Silver can be rebuilt from Bronze at any time. The two `risk` prediction columns remain null in Silver.
 
-## Decision 1 — Silver Immutability: Predictions Are Not Written to Silver
+## Decision 2 — Predictions live in a `predictions` column family in Bigtable
 
-**Chosen:** Silver GCS Parquet remains strictly read-only after Phase 3. Phase 5
-does not modify, append to, or delete any Silver file.
+Predictions are stored in the existing `inventory_features` table, under the same `{warehouse_id}#{sku_id}` row key, in a dedicated family:
 
-**Rejected:** Writing `risk__shortage_prob_7d` and `risk__stockout_risk_score`
-back into Silver Parquet.
+- `shortage_prob_7d`: the model's probability
+- `stockout_risk_score`: the closed-form baseline (ADR-004 Decision 2)
+- `model_version`, e.g. `v20260620_180918`
+- `prediction_timestamp`, UTC
 
-**Rationale:**
+The family keeps the last 3 versions: the current prediction plus two earlier rounds, enough to compare a challenger's output with the champion's. A separate table would duplicate IAM and GC configuration with no benefit, and a shared row lets one scan return features and the latest prediction together.
 
-| Concern | Impact of writing to Silver |
-|---|---|
-| Immutability | Predictions change on every model retrain. Silver partitions would need to be overwritten, destroying the lineage audit trail. |
-| Schema coupling | Silver schema is owned by the Spark pipeline (Phase 3). ML predictions are owned by the serving layer (Phase 5). Coupling them in the same file creates a cross-cutting ownership conflict. |
-| Partial write risk | A failed prediction run would leave Silver in a partially updated state. |
-| Replayability | Silver can be recomputed from Bronze at any time. That property is only safe if Silver contains no data with a different origin. |
+## Decision 3 — Standardization lives inside the model graph
 
-The columns `risk__shortage_prob_7d` and `risk__stockout_risk_score` remain null
-placeholders in Silver. They serve as schema documentation, not as production
-values.
+`ShortagePredictor` standardizes its own numeric inputs. The per-feature mean and scale are fit on the training split, stored in `feature_metadata.json`, and registered as fixed buffers, so they ship inside `model.pt` and `model.onnx`. The endpoint takes raw feature values and the scorer sends them unchanged.
 
----
+The initial design kept the scaler in a pickled `preprocessor.pkl` loaded by the scorer from the local dataset directory, on the premise that the scaler was a dataset artifact rather than part of the model. That premise was wrong. The weights are only meaningful for inputs scaled with exactly those statistics, and nothing tied the pickle on disk to the model version the endpoint served. A local retrain without a redeploy would have scored every row with the wrong statistics. With the scaler inside the graph, the ONNX file is self-contained, the serving side no longer depends on scikit-learn, and the client's only preprocessing is mapping warehouse and SKU strings to vocab indices.
 
-## Decision 2 — Bigtable as the Prediction Store (Separate Column Family)
+## Decision 4 — A small FastAPI container around ONNX Runtime
 
-**Chosen:** A dedicated `predictions` column family in the existing
-`inventory_features` Bigtable table.
+Vertex AI's prebuilt prediction containers do not serve ONNX, so a custom container is used: a small FastAPI app that loads `model.onnx` with onnxruntime and implements Vertex's `/health` and `/predict` contract. The same image runs locally with `docker run`, which allows testing before deployment.
 
-**Schema:**
+Inputs: `numeric_features` (float32, `[batch, 21]`, raw units), `warehouse_ids` and `sku_ids` (int64, `[batch]`). Output: `shortage_prob_7d`, the sigmoid of the graph's single logit. The container reads the feature width from the model and rejects a mismatched request with HTTP 422 instead of failing inside the graph.
 
-| Column qualifier | Type | Description |
-|---|---|---|
-| `shortage_prob_7d` | float string | P(stockout ≤ 7d) ∈ [0, 1] |
-| `stockout_risk_score` | float string | continuous risk ∈ [0, 1] |
-| `model_version` | string | e.g. `v20260620_180918` |
-| `prediction_timestamp` | RFC3339 | UTC timestamp of the prediction run |
+## Decision 5 — Predictions go through Pub/Sub
 
-Row key: `{warehouse_id}#{sku_id}` — unchanged from Phase 3.
+The scorer publishes one JSON message per prediction to the `prediction-results` topic, and a separate writer drains the subscription into Bigtable. A message is acknowledged only after its Bigtable write succeeds, and a dead-letter topic receives anything that fails five delivery attempts.
 
-**GC policy:** Keep last 3 cell versions. This preserves two prior prediction
-rounds alongside the current one, enabling champion/challenger rollback inspection
-without unbounded storage growth.
+For 120 rows this hop exceeds what the workload needs; the scorer could write the rows directly. It is retained to exercise the decoupled scorer/writer pattern, and it allows additional consumers, such as alerting, to subscribe without changes to the scorer.
 
-**Rationale for separate column family over a separate table:**
-
-The row key, instance, and cluster are already provisioned. A separate table adds
-operational overhead (split key configuration, GC policy duplication, separate IAM
-scope) without benefit. Sharing the table but isolating the column family keeps
-row key semantics stable and allows a single Bigtable scan to return both features
-and the latest prediction.
-
----
-
-## Decision 3 — Standardization Lives Inside the Model Graph
-
-**Chosen:** `ShortagePredictor` standardizes its own numeric inputs. The
-per-feature mean and scale are fit on the training split by `DatasetBuilder`,
-stored in `feature_metadata.json` (`feature_mean`, `feature_scale`), and
-registered as fixed buffers — not parameters — in the model. They are exported
-inside `model.onnx`, so the Vertex AI endpoint takes raw Silver-scale features
-and `batch_scorer.py` sends them unchanged.
-
-**Rejected:** Client-side scaling with a pickled `StandardScaler`
-(`preprocessor.pkl`) loaded from the operator's local dataset directory.
-
-**Rationale:** The earlier version of this decision argued the scaler was "a
-dataset artifact, not part of the model graph" and should stay out of the
-container. That had it backwards. The scaler is fit on the training split and is
-part of the model: the weights are only meaningful for inputs standardized with
-exactly those statistics. Keeping it in a local pickle meant nothing tied the
-scaler a scorer used to the model version the endpoint served — retraining
-locally without redeploying would silently score every row with the wrong
-statistics. Folding it into the graph makes the ONNX file self-contained, removes
-`preprocessor.pkl` and the scikit-learn dependency from the serving side, and
-leaves the client with one job: map warehouse and SKU strings to vocab indices.
-
----
-
-## Decision 4 — Serving Format: Custom FastAPI Container Wrapping ONNX Runtime
-
-**Chosen:** Custom serving container that loads `model.onnx` with `onnxruntime`
-and exposes a Vertex AI-compatible `/predict` REST endpoint.
-
-**Evaluated alternatives:**
-
-| Option | Verdict |
-|---|---|
-| Vertex AI pre-built containers (TF, PyTorch, sklearn) | None support ONNX natively |
-| Triton Inference Server | Supported on Vertex AI but requires `config.pbtxt`, KFServing V2 protocol, and a 7 GB container image for a 21 KB model. Complexity is not justified. |
-| Vertex AI Custom Prediction Routine (CPR) | Reduces boilerplate but is Vertex AI-proprietary; not reproducible locally. |
-| **Custom FastAPI + ONNX Runtime** | ~80 lines, portable, explicit `/health` + `/predict` contract, local smoke test via `curl`. |
-
-**Container inputs:**
-- `numeric_features`: float32, shape `[batch, 21]` (raw feature units; standardized inside the graph)
-- `warehouse_ids`: int64, shape `[batch]`
-- `sku_ids`: int64, shape `[batch]`
-
-**Container output:**
-- `logit_prob`: float32 logit, shape `[batch, 1]` — sigmoid applied in the container, returned as `shortage_prob_7d`
-
-`stockout_risk_score` is not a model output: `batch_scorer.py` publishes the
-closed-form Normal approximation (`feature_engineer.normal_stockout_prob`) that
-`RequestBuilder` computes from the raw features, so the Pub/Sub message, the
-Bigtable `predictions` cells and the dashboards are unchanged.
-
----
-
-## Decision 5 — Prediction Results via Pub/Sub (Decoupled Write)
-
-**Chosen:** After calling the endpoint, `batch_scorer.py` publishes each
-prediction as a JSON message to the `prediction-results` Pub/Sub topic. A
-separate `prediction_writer.py` subscribes and writes to Bigtable.
-
-**Message schema:**
 ```json
 {
   "warehouse_id": "W-001",
@@ -154,32 +52,11 @@ separate `prediction_writer.py` subscribes and writes to Bigtable.
 }
 ```
 
-**Rationale:** Pub/Sub message acknowledgement ensures no prediction is lost if
-the Bigtable write fails. Future consumers (alerting, dashboards) subscribe to
-the same topic without touching the scorer. The dead-letter topic captures
-messages that fail 5 delivery attempts for forensic inspection.
+## Decision 6 — A challenger must beat the champion on the same test split
 
----
+A new model deploys at 0% traffic and is promoted to 100% only if `promote_model.py` finds it better than the current champion on all three metrics: AUPRC, AUC-ROC and Brier. The previous version stays deployed at 0% for rollback.
 
-## Decision 6 — Champion/Challenger Gating
-
-**Chosen:** A new model version is only promoted to 100% traffic after
-`promote_model.py` verifies it outperforms the current champion on one held-out
-test split across all three metrics: AUPRC, AUC-ROC, Brier.
-
-**One split for both models.** Each `evaluation_test.json` records a sha256 of
-the test split its metrics were computed on. If champion and challenger share
-it, the stored metrics are compared directly. After a retrain on new data they
-never will, so `promote_model.py` downloads both models' `model.onnx` and
-`feature_metadata.json`, scores both on the challenger's `test.parquet` locally
-with onnxruntime, and compares those numbers. The local split's hash must match
-the challenger's recorded hash, otherwise promotion refuses rather than compare
-against the wrong holdout. (An earlier version compared each model's own
-test-split metrics, which are not comparable across datasets or seeds.)
-
-**Mechanism:** Vertex AI Endpoint traffic splitting by model version. New versions
-deploy at 0% traffic; promotion sets the split to 100% new / 0% old. Old versions
-remain registered (not deleted) for rollback.
+Both models must be scored on the same holdout. Each `evaluation_test.json` records a sha256 of the test split it was computed on. If the hashes match, the stored metrics are compared directly. After a retrain on new data they will not match, so `promote_model.py` downloads both models and scores them on the challenger's `test.parquet` with onnxruntime. The local file's hash must equal the challenger's recorded hash; otherwise promotion is refused rather than compared on the wrong data. The initial version compared each model's metrics from its own test split, which is meaningless when the splits differ.
 
 ---
 
@@ -274,76 +151,31 @@ detection is not yet wired into an automated block.
 
 ---
 
-## Decision 8 — PSI-Based Retraining Trigger (Implementation)
+## Decision 8 — How the drift monitor computes PSI
 
-**Chosen:** `drift_monitor.py` computes PSI against `drift_reference.json`:
-decile bins and expected fractions computed from the raw training split when
-the model is trained and written next to `model.pt`, so the reference travels
-with the model rather than with whatever dataset is on the operator's disk
-(the provenance problem `preprocessor.pkl` had). Current feature values
-are read from Bigtable rather than Silver, matching the exact feature values that
-were presented to the model at inference.
+`drift_monitor.py` reads current feature values from Bigtable, because those are exactly the values the model received. If Silver and Bigtable diverge, Bigtable is the model's actual input distribution, and monitoring Silver would miss the problem.
 
-**Why Bigtable rather than Silver for drift reference:**
-
-The model is served using features read from Bigtable. If Silver and Bigtable
-diverge (e.g., a Phase 3 Spark job runs but Bigtable write fails for some rows),
-the model's actual input distribution is the Bigtable distribution, not the Silver
-distribution. Monitoring Silver would give a false-negative in this scenario.
-
-**PSI computation:**
+The reference distribution is `drift_reference.json`, written next to `model.pt` at training time: decile bin edges from the raw training split, plus the fraction of training rows observed in each bin. It travels with the model, so the monitor always compares against that model's own training data.
 
 ```
-PSI = Σ (p_actual - p_expected) × ln(p_actual / p_expected)
+PSI = Σ (p_actual − p_expected) × ln(p_actual / p_expected)
 ```
 
-Bin edges are the training distribution's own (deduplicated) deciles, stored
-in `drift_reference.json`, with `p_expected` set to each bin's *actual*
-training fraction rather than assumed to be a uniform 10%. An earlier version
-derived bin edges from normal quantiles of the training (`mean`, `scale`)
-instead; that assumption badly misrepresents the skewed
-features monitored here (`sales_7d`, `avg_daily_sales_7d`,
-`supplier_reliability`) and was confirmed to produce PSI ≥ 6 — a spurious
-TRIGGER — even when fed the training data against itself. A later version
-binned raw live values against *standardized* training rows (the parquet splits
-were StandardScaler-transformed at the time) and produced PSI 2–8 for the same
-train-vs-itself check. The splits are now stored in raw units, so bins and live
-values share units by construction, and there is no approximate fallback:
-`drift_reference.json` is required. Bins with zero observed count use a floor of
-0.0001 to avoid log(0).
+Empty bins use a floor of 0.0001 to avoid log(0).
 
-**Monitoring output:** `drift_monitor.py` can optionally emit custom Cloud
-Monitoring metrics (`custom.googleapis.com/scip/drift/feature_psi` with label
-`feature_name`, plus `prob_std`, `score_std`, `baseline_agreement_rate`, and
-`retraining_required`) via `--emit-cloud-monitoring`. `infrastructure/gcp/
-vertex_ai.tf` grants `scip-vertex-sa` the `monitoring.metricWriter` IAM role
-needed to write them.
+Two earlier implementations were incorrect:
 
-**Not yet implemented:** no `google_monitoring_alert_policy` Terraform
-resource exists. The metrics above can be written and graphed, but nothing
-pages or alerts on PSI ≥ 0.2 (or any other threshold) today — that would
-require adding an alert policy resource querying this custom metric.
+- Bins built from normal quantiles of the training mean and scale. The monitored features are skewed, and the training data compared against itself produced PSI of 6 or more: a false trigger on identical data.
+- Raw live values binned against standardized training rows, because the training splits were stored standardized at the time. The same train-against-itself check produced PSI of 2 to 8.
 
----
+The splits are now stored in raw units, so bins and live values share units by construction, and the monitor refuses to run without `drift_reference.json` rather than fall back to an approximation.
+
+With `--emit-cloud-monitoring`, the monitor also writes PSI, prediction spread, baseline agreement and the retraining flag as custom Cloud Monitoring metrics. No alert policy is defined in Terraform, so nothing alerts on them.
 
 ## Consequences
 
-**Positive:**
-- Silver is protected as a stable, replayable feature source.
-- Predictions are versioned with per-cell history enabling rollback inspection.
-- The Pub/Sub layer makes prediction delivery observable and failure-safe.
-- The champion/challenger gate prevents a regressed model from reaching production.
-- Distribution shift is a first-class, observable, alertable condition rather than
-  a silent failure mode.
-
-**Accepted trade-offs:**
-- Two-step write (Pub/Sub → Bigtable) adds ~1–3s latency to batch scoring.
-  Acceptable for a batch job running at most daily.
-- The serving container must be built and pushed to Artifact Registry. One-time
-  per major model architecture change.
-- PSI monitors feature drift only, not label drift. Label drift monitoring (has
-  the true shortage rate changed?) requires ground-truth labels with an observation
-  delay matching the 7-day horizon. This is a Phase 6 concern.
-- The model trained on simulated data will fail PSI checks on real Silver data.
-  This is the intended behavior: the monitoring layer exists to detect and surface
-  this condition, not to suppress it.
+- Silver remains rebuildable from Bronze, and predictions keep three versions for comparison.
+- The scorer and writer fail independently without losing predictions.
+- A regressed model cannot reach traffic unnoticed, and a distribution-shifted one is flagged.
+- PSI monitors inputs, not outcomes. Detecting a change in the real stockout rate requires labels, which arrive 7 days late.
+- The managed components (endpoint, Pub/Sub, Model Registry) cost more and do more than 120 rows require. That is the accepted cost of the learning objective.
