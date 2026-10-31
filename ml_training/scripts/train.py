@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patience",   type=int,   default=10)
     p.add_argument(
         "--loss",
-        choices=["bce", "weighted_bce", "focal"],
+        choices=["bce", "weighted_bce"],
         default="bce",
     )
     p.add_argument(

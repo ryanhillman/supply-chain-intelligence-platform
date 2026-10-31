@@ -24,13 +24,11 @@ class TrainingConfig:
     # ── Loss ──────────────────────────────────────────────────────────────────
     # "bce"          — BCEWithLogitsLoss, unweighted (default)
     # "weighted_bce" — BCEWithLogitsLoss(pos_weight=n_neg/n_pos)
-    # "focal"        — FocalLoss with focal_gamma
     # Unweighted is the default: on the seed-42 synthetic split, pos_weight
     # (3.59) moved test AUPRC 0.732 → 0.719 and Brier 0.076 → 0.117. The
     # weight inflates every predicted probability, which hurts calibration
     # without improving ranking.
     loss_type:         str   = "bce"
-    focal_gamma:       float = 2.0
 
     # ── LR scheduler ─────────────────────────────────────────────────────────
     # "cosine"  — CosineAnnealingLR over T_max epochs; None means max_epochs,
