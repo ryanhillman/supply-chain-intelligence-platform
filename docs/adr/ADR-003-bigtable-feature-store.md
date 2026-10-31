@@ -34,7 +34,7 @@ Numeric features are stored as `struct.pack(">d", value)`: a fixed 8 bytes, netw
 
 ## Decision 5 — Write Silver first, Bigtable best-effort
 
-Each Silver batch caches the feature DataFrame, writes Silver Parquet, then writes Bigtable inside its own try/except. Silver is the source of truth: a failed Bigtable write leaves Silver intact, and Bigtable is rebuilt from it. This is also what makes destroying the instance between sessions safe. Writing Bigtable first would risk online features with no offline record behind them.
+Each Silver batch caches the feature DataFrame, writes Silver Parquet, then writes Bigtable inside its own try/except. Silver is the source of truth: a failed Bigtable write leaves Silver intact, and re-running the Silver job, which recomputes from Bronze, repopulates Bigtable. This is also what makes destroying the instance between sessions safe. Writing Bigtable first would risk online features with no offline record behind them.
 
 Caching before the two writes prevents Spark from recomputing the plan for the second sink.
 
@@ -48,8 +48,8 @@ A key created with `google_service_account_key` is stored in plain text in Terra
 
 ## Consequences
 
-- Silver can always rebuild Bigtable, so the most expensive component can be switched off without data loss.
-- Adding a feature means adding a qualifier in `spark/config/feature_config.py`; no schema change.
+- Re-running the Silver job repopulates Bigtable from Bronze, so the most expensive component can be switched off between sessions.
+- Adding a feature needs no Bigtable schema change; its qualifier is registered in `spark/config/feature_config.py`.
 - No SQL. Aggregations happen in Spark before the write.
 - Writes are at-least-once; upserts on the same row key make a retried write idempotent.
 

@@ -31,7 +31,7 @@ The initial design kept the scaler in a pickled `preprocessor.pkl` loaded by the
 
 ## Decision 4 — A small FastAPI container around ONNX Runtime
 
-Vertex AI's prebuilt prediction containers do not serve ONNX, so a custom container is used: a small FastAPI app that loads `model.onnx` with onnxruntime and implements Vertex's `/health` and `/predict` contract. The same image runs locally with `docker run`, which allows testing before deployment.
+A custom container serves the model: a small FastAPI app that loads `model.onnx` with onnxruntime and implements Vertex's `/health` and `/predict` contract. The same image runs locally with `docker run`, which allows testing before deployment.
 
 Inputs: `numeric_features` (float32, `[batch, 21]`, raw units), `warehouse_ids` and `sku_ids` (int64, `[batch]`). Output: `shortage_prob_7d`, the sigmoid of the graph's single logit. The container reads the feature width from the model and rejects a mismatched request with HTTP 422 instead of failing inside the graph.
 
