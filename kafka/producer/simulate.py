@@ -1,66 +1,59 @@
 """
-Supply Chain Event Simulator — Phase 1/2
+Kafka producer: replays the world model (simulation/world.py) onto the five
+source topics.
 
-Produces realistic inventory events to all 5 Kafka topics continuously.
+By default it simulates REPLAY_DAYS days from REPLAY_START as fast as Kafka
+accepts them, flushes, and exits. Every event's `timestamp` field is its
+simulated time, so Bronze partitions the history under the right dates. The
+Kafka record timestamp stays wall-clock, so topic retention counts from when
+the replay ran.
 
-Topology:
-  6 warehouses  (W-001 .. W-006)
-  20 SKUs       (SKU-001 .. SKU-020)
-  4 suppliers   (SUP-001 .. SUP-004)
+TICK_SECONDS_PER_DAY > 0 keeps producing after the replay, one simulated day
+every that many seconds, for live demos. It is off by default: at a few
+seconds per day, continuous ticking adds decades of simulated history per
+wall-clock day.
 
-Per 2-second cycle, at the default EVENTS_PER_BATCH=17:
-  inventory.events        — 10 events (mix of SALE, RECEIVE, ADJUSTMENT, RETURN, TRANSFER)
-  demand.signals          —  3 events (FORECAST, SURGE, TREND, SEASONAL)
-  purchase.orders.events  —  2 events (CREATED, SUBMITTED, APPROVED, RECEIVED)
-  shipments.events        —  2 events (CREATED, SHIPPED, DELIVERED)
-  suppliers.events        —  1 event  (PERFORMANCE_UPDATE, every 5th cycle only)
+The same seed reproduces the same events and event IDs, so running the
+replay twice duplicates records harmlessly (Silver and the training sampler
+drop duplicate event IDs).
 
-Other EVENTS_PER_BATCH values scale each category proportionally to this
-10:3:2:2 ratio (see _batch_split()); suppliers.events stays fixed at once
-every 5th cycle regardless of EVENTS_PER_BATCH.
-
-All fields match the PySpark Bronze schemas in spark/jobs/schemas/.
-Required fields guaranteed present and non-null on every event.
-
-Configuration via environment variables:
-  KAFKA_BOOTSTRAP_SERVERS  default: kafka:29092
-  EVENTS_PER_BATCH         default: 17
-  BATCH_SLEEP_SECONDS      default: 2
-  LOG_LEVEL                default: INFO
+Environment:
+  KAFKA_BOOTSTRAP_SERVERS  default kafka:29092
+  REPLAY_START             default 2025-10-01
+  REPLAY_DAYS              default 365
+  SEED                     default 42
+  TICK_SECONDS_PER_DAY     default 0 (stop after the replay)
+  LOG_LEVEL                default INFO
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import random
+import sys
 import time
-import uuid
-from datetime import datetime, timezone
+from datetime import date, timedelta
+from pathlib import Path
 
 from confluent_kafka import Producer
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# In the image, simulation/ sits next to this file; in the repo it is two levels up.
+for _root in Path(__file__).resolve().parents:
+    if (_root / "simulation").is_dir():
+        sys.path.insert(0, str(_root))
+        break
 
-BOOTSTRAP_SERVERS: str  = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
-EVENTS_PER_BATCH: int   = int(os.environ.get("EVENTS_PER_BATCH", "17"))
-BATCH_SLEEP: float      = float(os.environ.get("BATCH_SLEEP_SECONDS", "2"))
-LOG_LEVEL: str          = os.environ.get("LOG_LEVEL", "INFO")
+from simulation.world import Event, World  # noqa: E402
 
-# Default per-category split (10 inventory : 3 demand : 2 PO : 2 shipment)
-# sums to 17 — the historical default. Other EVENTS_PER_BATCH values scale
-# each category proportionally, rounding down with a floor of 1 per category.
-_BASE_SPLIT: dict[str, int] = {
-    "inventory": 10, "demand": 3, "purchase_order": 2, "shipment": 2,
-}
-_BASE_TOTAL = sum(_BASE_SPLIT.values())
+BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
+REPLAY_START      = date.fromisoformat(os.environ.get("REPLAY_START", "2025-10-01"))
+REPLAY_DAYS       = int(os.environ.get("REPLAY_DAYS", "365"))
+SEED              = int(os.environ.get("SEED", "42"))
+TICK_SECONDS      = float(os.environ.get("TICK_SECONDS_PER_DAY", "0"))
+LOG_LEVEL         = os.environ.get("LOG_LEVEL", "INFO")
 
-
-def _batch_split(total: int) -> dict[str, int]:
-    return {
-        category: max(1, round(total * count / _BASE_TOTAL))
-        for category, count in _BASE_SPLIT.items()
-    }
+PRODUCER_ID = "scip-simulator"
+LOG_EVERY_DAYS = 30
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
@@ -68,315 +61,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("simulate")
 
-# ── Domain constants ───────────────────────────────────────────────────────────
 
-WAREHOUSES: list[str] = [f"W-{i:03d}" for i in range(1, 7)]
-SKUS: list[str]       = [f"SKU-{i:03d}" for i in range(1, 21)]
-SUPPLIERS: list[str]  = [f"SUP-{i:03d}" for i in range(1, 5)]
-
-SCHEMA_VERSION = "1.0"
-PRODUCER_ID    = "scip-simulator"
-
-# One primary supplier per warehouse (round-robin assignment)
-WAREHOUSE_SUPPLIER: dict[str, str] = {
-    wh: SUPPLIERS[i % len(SUPPLIERS)]
-    for i, wh in enumerate(WAREHOUSES)
-}
-
-# Reorder parameters per SKU (static, simulating catalogue data)
-REORDER_PARAMS: dict[str, dict] = {
-    sku: {
-        "reorder_point": random.randint(20, 60),
-        "safety_stock":  random.randint(10, 25),
-        "unit_cost":     round(random.uniform(5.0, 500.0), 2),
-    }
-    for sku in SKUS
-}
-
-# ── Inventory state ────────────────────────────────────────────────────────────
-# Tracks current quantity per (warehouse, sku) pair.
-# Initialised with random starting inventory.
-
-inventory: dict[tuple[str, str], int] = {
-    (wh, sku): random.randint(50, 500)
-    for wh in WAREHOUSES
-    for sku in SKUS
-}
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def new_id() -> str:
-    return str(uuid.uuid4())
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-def delivery_callback(err, msg) -> None:
+def _delivery_callback(err, msg) -> None:
     if err:
-        logger.error("Delivery failed | topic=%s partition=%d error=%s",
-                     msg.topic(), msg.partition(), err)
+        logger.error("Delivery failed | topic=%s error=%s", msg.topic(), err)
 
 
-# ── Event producers ────────────────────────────────────────────────────────────
+def produce_events(p: Producer, events: list[Event]) -> None:
+    """Send one day's events; wait for queue space when the local buffer is full."""
+    for e in events:
+        value = json.dumps(e.payload)
+        while True:
+            try:
+                p.produce(e.topic, key=e.key, value=value, callback=_delivery_callback)
+                break
+            except BufferError:
+                p.poll(1.0)
+        p.poll(0)
 
-def produce_inventory_event(p: Producer) -> None:
-    """
-    Produces one inventory.events message.
-
-    Event types weighted to reflect real warehouse operations:
-      SALE        60% — most common; decreases stock
-      RECEIVE     20% — restocking; increases stock
-      ADJUSTMENT  10% — cycle count correction; small delta either direction
-      RETURN       5% — customer return; increases stock
-      TRANSFER     5% — inter-warehouse; decreases stock at source
-
-    RECEIVE only actually restocks when qty_before is at or below the
-    SKU's reorder_point -- matching how real warehouses operate (you
-    don't place a replenishment order against healthy stock). If a
-    RECEIVE is drawn while stock is still above the reorder point, it's
-    treated as an extra SALE instead. Without this gate, restocking fires
-    unconditionally at a fixed 20% rate regardless of stock level: mean
-    quantity per item climbs from ~280 to tens of thousands within days,
-    no item ever reaches zero even over a week of continuous running (a
-    bounded-below random walk with near-zero per-event drift still
-    ratchets upward off the zero floor), and training on real (non-tiled)
-    Bronze data yields no positive stockout labels at all. Gating RECEIVE
-    on the reorder point makes inventory mean-revert around a realistic
-    band and ensures genuine stockouts occur.
-    """
-    wh  = random.choice(WAREHOUSES)
-    sku = random.choice(SKUS)
-    key = (wh, sku)
-
-    qty_before = inventory[key]
-    params     = REORDER_PARAMS[sku]
-
-    event_type = random.choices(
-        ["SALE", "RECEIVE", "ADJUSTMENT", "RETURN", "TRANSFER"],
-        weights=[60, 20, 10, 5, 5],
-    )[0]
-
-    # A replenishment order only exists when stock is actually low; above
-    # the reorder point there's nothing to receive, so this draw becomes
-    # another SALE instead (see docstring).
-    if event_type == "RECEIVE" and qty_before > params["reorder_point"]:
-        event_type = "SALE"
-
-    if event_type == "SALE":
-        # Sell between 1 and 20 units; can't sell more than in stock
-        delta = -random.randint(1, max(1, min(20, qty_before)))
-    elif event_type == "RECEIVE":
-        # Restocking order arrival, triggered because qty_before <= reorder_point.
-        delta = random.randint(10, 54)
-    elif event_type == "ADJUSTMENT":
-        # Small positive or negative correction
-        delta = random.randint(-10, 10)
-    elif event_type == "RETURN":
-        # Customer return adds back stock
-        delta = random.randint(1, 5)
-    else:
-        # TRANSFER — removes stock (destination warehouse gets RECEIVE separately)
-        delta = -random.randint(1, max(1, min(10, qty_before)))
-
-    qty_after = max(0, qty_before + delta)
-    inventory[key] = qty_after
-    actual_delta   = qty_after - qty_before
-
-    event = {
-        "event_id":        new_id(),
-        "schema_version":  SCHEMA_VERSION,
-        "event_type":      event_type,
-        "warehouse_id":    wh,
-        "sku_id":          sku,
-        "quantity_before": qty_before,
-        "quantity_after":  qty_after,
-        "quantity_delta":  actual_delta,
-        "unit_cost":       params["unit_cost"],
-        "reorder_point":   params["reorder_point"],
-        "safety_stock":    params["safety_stock"],
-        "reference_id":    None,
-        "timestamp":       now_iso(),
-        "producer_id":     PRODUCER_ID,
-        "correlation_id":  new_id(),
-        "metadata":        None,
-    }
-
-    p.produce(
-        "inventory.events",
-        key=f"{wh}#{sku}",
-        value=json.dumps(event),
-        callback=delivery_callback,
-    )
-
-
-def produce_demand_signal(p: Producer) -> None:
-    """
-    Produces one demand.signals message.
-
-    Note: demand.signals uses signal_type (not event_type) — matches
-    DEMAND_SIGNAL_SCHEMA and the Bronze normalisation in bronze_ingestion.py.
-    """
-    wh  = random.choice(WAREHOUSES)
-    sku = random.choice(SKUS)
-
-    signal = {
-        "event_id":             new_id(),
-        "schema_version":       SCHEMA_VERSION,
-        "signal_type":          random.choice(["FORECAST", "SURGE", "TREND", "SEASONAL"]),
-        "warehouse_id":         wh,
-        "sku_id":               sku,
-        "demand_quantity":      round(random.uniform(10.0, 200.0), 1),
-        "confidence_score":     round(random.uniform(0.5, 1.0), 2),
-        "signal_source":        random.choice(["ML_MODEL", "HISTORICAL", "MANUAL"]),
-        "forecast_horizon_days": random.choice([7, 14, 30]),
-        "timestamp":            now_iso(),
-        "producer_id":          PRODUCER_ID,
-        "correlation_id":       new_id(),
-        "metadata":             None,
-    }
-
-    p.produce(
-        "demand.signals",
-        key=f"{wh}#{sku}",
-        value=json.dumps(signal),
-        callback=delivery_callback,
-    )
-
-
-def produce_purchase_order(p: Producer) -> None:
-    """
-    Produces one purchase.orders.events message.
-
-    Status distribution:
-      CREATED    40% — PO raised but not yet submitted
-      SUBMITTED  30% — PO sent to supplier (Silver: counted in active_po_qty)
-      APPROVED   20% — Supplier confirmed
-      RECEIVED   10% — Goods arrived (quantity_received populated)
-    """
-    wh       = random.choice(WAREHOUSES)
-    sku      = random.choice(SKUS)
-    supplier = WAREHOUSE_SUPPLIER[wh]
-
-    event_type    = random.choices(
-        ["CREATED", "SUBMITTED", "APPROVED", "RECEIVED"],
-        weights=[40, 30, 20, 10],
-    )[0]
-
-    qty_ordered = random.randint(50, 500)
-    unit_cost   = REORDER_PARAMS[sku]["unit_cost"]
-
-    po = {
-        "event_id":             new_id(),
-        "schema_version":       SCHEMA_VERSION,
-        "event_type":           event_type,
-        "warehouse_id":         wh,
-        "sku_id":               sku,
-        "order_id":             f"PO-{new_id()[:8].upper()}",
-        "supplier_id":          supplier,
-        "quantity_ordered":     qty_ordered,
-        "quantity_received":    qty_ordered if event_type == "RECEIVED" else None,
-        "unit_cost":            unit_cost,
-        "total_cost":           round(qty_ordered * unit_cost, 2),
-        "expected_delivery_date": now_iso(),
-        "actual_delivery_date": now_iso() if event_type == "RECEIVED" else None,
-        "timestamp":            now_iso(),
-        "producer_id":          PRODUCER_ID,
-        "correlation_id":       new_id(),
-    }
-
-    p.produce(
-        "purchase.orders.events",
-        key=f"{wh}#{sku}",
-        value=json.dumps(po),
-        callback=delivery_callback,
-    )
-
-
-def produce_shipment(p: Producer) -> None:
-    """
-    Produces one shipments.events message.
-
-    Status distribution:
-      CREATED    30% — shipment initiated
-      SHIPPED    50% — in transit (Silver: counted in in_transit_qty)
-      DELIVERED  20% — arrived; actual_arrival populated
-    """
-    wh       = random.choice(WAREHOUSES)
-    sku      = random.choice(SKUS)
-    supplier = WAREHOUSE_SUPPLIER[wh]
-
-    event_type = random.choices(
-        ["CREATED", "SHIPPED", "DELIVERED"],
-        weights=[30, 50, 20],
-    )[0]
-
-    shipment = {
-        "event_id":         new_id(),
-        "schema_version":   SCHEMA_VERSION,
-        "event_type":       event_type,
-        "warehouse_id":     wh,
-        "sku_id":           sku,
-        "shipment_id":      f"SHP-{new_id()[:8].upper()}",
-        "supplier_id":      supplier,
-        "quantity":         random.randint(10, 200),
-        "carrier":          random.choice(["FEDEX", "UPS", "DHL", "USPS"]),
-        "tracking_number":  f"TRK{random.randint(100000, 999999)}",
-        "estimated_arrival": now_iso(),
-        "actual_arrival":   now_iso() if event_type == "DELIVERED" else None,
-        "timestamp":        now_iso(),
-        "producer_id":      PRODUCER_ID,
-        "correlation_id":   new_id(),
-        "metadata":         None,
-    }
-
-    p.produce(
-        "shipments.events",
-        key=f"{wh}#{sku}",
-        value=json.dumps(shipment),
-        callback=delivery_callback,
-    )
-
-
-def produce_supplier_event(p: Producer) -> None:
-    """
-    Produces one suppliers.events message.
-
-    Supplier events are infrequent (once per 5 cycles = ~every 10s).
-    They carry lead_time_days and on_time_delivery_rate, which Silver
-    aggregates per warehouse for supplier feature computation.
-
-    affected_sku_ids is a JSON array of strings, matching ArrayType(StringType())
-    in SUPPLIER_EVENT_SCHEMA.
-    """
-    wh       = random.choice(WAREHOUSES)
-    supplier = WAREHOUSE_SUPPLIER[wh]
-
-    event = {
-        "event_id":             new_id(),
-        "schema_version":       SCHEMA_VERSION,
-        "event_type":           "PERFORMANCE_UPDATE",
-        "supplier_id":          supplier,
-        "warehouse_id":         wh,
-        "lead_time_days":       random.randint(3, 21),
-        "on_time_delivery_rate": round(random.uniform(0.70, 1.0), 2),
-        "reliability_score":    round(random.uniform(0.60, 1.0), 2),
-        "affected_sku_ids":     random.sample(SKUS, random.randint(1, 5)),
-        "timestamp":            now_iso(),
-        "producer_id":          PRODUCER_ID,
-        "correlation_id":       new_id(),
-        "metadata":             None,
-    }
-
-    p.produce(
-        "suppliers.events",
-        key=supplier,
-        value=json.dumps(event),
-        callback=delivery_callback,
-    )
-
-
-# ── Main loop ─────────────────────────────────────────────────────────────────
 
 def make_producer() -> Producer:
     return Producer({
@@ -385,76 +87,58 @@ def make_producer() -> Producer:
         "acks":              "all",
         "retries":           3,
         "retry.backoff.ms":  500,
+        "linger.ms":         50,
     })
 
 
+def _last_day(world: World) -> str:
+    """The last simulated day (step() has already advanced next_date past it)."""
+    return (world.next_date - timedelta(days=1)).isoformat()
+
+
+def replay(p: Producer, world: World, days: int) -> int:
+    """Produce `days` simulated days; return the number of events sent."""
+    total = 0
+    for i in range(1, days + 1):
+        events = world.step()
+        produce_events(p, events)
+        total += len(events)
+        if i % LOG_EVERY_DAYS == 0 or i == days:
+            p.flush()
+            logger.info("Replayed %d/%d days | through %s | events=%d",
+                        i, days, _last_day(world), total)
+    return total
+
+
 def main() -> None:
-    split = _batch_split(EVENTS_PER_BATCH)
     logger.info(
-        "Supply chain simulator starting | bootstrap=%s warehouses=%d skus=%d suppliers=%d "
-        "events_per_batch=%d split=%s",
-        BOOTSTRAP_SERVERS, len(WAREHOUSES), len(SKUS), len(SUPPLIERS),
-        EVENTS_PER_BATCH, split,
+        "World replay starting | bootstrap=%s start=%s days=%d seed=%d tick=%ss",
+        BOOTSTRAP_SERVERS, REPLAY_START, REPLAY_DAYS, SEED, TICK_SECONDS or "off",
     )
 
-    # Retry connection to Kafka — broker may not be ready immediately
     p: Producer | None = None
     for attempt in range(1, 11):
         try:
             p = make_producer()
-            logger.info("Kafka producer connected | attempt=%d", attempt)
             break
         except Exception as exc:
             logger.warning("Producer connection attempt %d failed: %s — retrying in 5s", attempt, exc)
             time.sleep(5)
-
     if p is None:
         logger.error("Could not connect to Kafka after 10 attempts — exiting")
+        sys.exit(1)
+
+    world = World(REPLAY_START, seed=SEED)
+    total = replay(p, world, REPLAY_DAYS)
+    logger.info("Replay complete | %d events through %s", total, _last_day(world))
+
+    if TICK_SECONDS <= 0:
         return
-
-    batch = 0
-    total_events = 0
-
+    logger.info("Ticking one simulated day every %ss", TICK_SECONDS)
     while True:
-        batch += 1
-
-        # ── inventory.events (most frequent — drives Silver trigger cadence) ──
-        for _ in range(split["inventory"]):
-            produce_inventory_event(p)
-
-        # ── demand.signals ────────────────────────────────────────────────────
-        for _ in range(split["demand"]):
-            produce_demand_signal(p)
-
-        # ── purchase.orders.events ────────────────────────────────────────────
-        for _ in range(split["purchase_order"]):
-            produce_purchase_order(p)
-
-        # ── shipments.events ──────────────────────────────────────────────────
-        for _ in range(split["shipment"]):
-            produce_shipment(p)
-
-        # ── suppliers.events (infrequent) ─────────────────────────────────────
-        supplier_count = 0
-        if batch % 5 == 0:
-            produce_supplier_event(p)
-            supplier_count = 1
-
-        # Flush triggers delivery callbacks and ensures all messages are sent
-        p.poll(0)
+        time.sleep(TICK_SECONDS)
+        produce_events(p, world.step())
         p.flush()
-
-        batch_total = sum(split.values()) + supplier_count
-        total_events += batch_total
-
-        logger.info(
-            "Batch %d | inventory=%d demand=%d po=%d shipment=%d supplier=%d | "
-            "batch_total=%d cumulative=%d",
-            batch, split["inventory"], split["demand"], split["purchase_order"],
-            split["shipment"], supplier_count, batch_total, total_events,
-        )
-
-        time.sleep(BATCH_SLEEP)
 
 
 if __name__ == "__main__":

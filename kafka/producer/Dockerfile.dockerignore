@@ -1,0 +1,6 @@
+# The build context is the repository root; send only what the image copies.
+*
+!kafka/producer/requirements.txt
+!kafka/producer/simulate.py
+!simulation/
+**/__pycache__

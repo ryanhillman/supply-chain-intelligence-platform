@@ -139,11 +139,13 @@ services:
       - scip-net
 
 
-  # ── Event producer (warehouse simulator) ─────────────────────────────────────
+  # ── Event producer (world-model replay) ──────────────────────────────────────
+  # Replays REPLAY_DAYS simulated days from simulation/world.py, then exits.
+  # Built from the repository root so the image can copy simulation/.
   producer:
     build:
-      context: ./producer
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kafka/producer/Dockerfile
     container_name: scip-producer
     depends_on:
       broker:
@@ -152,8 +154,10 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      EVENTS_PER_BATCH: 17      # events produced per 2-second cycle
-      BATCH_SLEEP_SECONDS: 2    # pause between production cycles
+      REPLAY_START: "2025-10-01"
+      REPLAY_DAYS: "365"
+      SEED: "42"
+      TICK_SECONDS_PER_DAY: "0"   # > 0 keeps ticking after the replay (live demos)
       LOG_LEVEL: INFO
     networks:
       - scip-net
