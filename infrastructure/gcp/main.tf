@@ -47,9 +47,14 @@ resource "google_project_service" "iam" {
 ###############################################################################
 # GCS Data Lake Bucket
 # Single bucket, prefix-based organization:
-#   bronze/    — raw Kafka events, 90-day lifecycle
+#   bronze/    — raw Kafka events, deleted after var.bronze_retention_days (120d)
 #   silver/    — feature aggregates, permanent
-#   checkpoints/ — Spark streaming checkpoints
+#   checkpoints/ — Spark streaming checkpoints. No lifecycle rule: Spark bounds
+#                its own checkpoint growth (minBatchesToRetain, log compaction),
+#                and an age rule deleted the live offsets after a pause, so the
+#                Bronze query restarted from "latest" and silently skipped the
+#                Kafka data produced in between. Remove abandoned checkpoint
+#                directories by hand.
 #   dlq/       — dead-letter queue (Kafka DLQ is primary in Phase 3)
 ###############################################################################
 
@@ -75,16 +80,6 @@ resource "google_storage_bucket" "data_lake" {
     }
   }
 
-  lifecycle_rule {
-    condition {
-      age            = 7
-      matches_prefix = ["checkpoints/"]
-    }
-    action {
-      type = "Delete"
-    }
-  }
-
   labels = local.common_labels
 
   depends_on = [google_project_service.storage]
@@ -92,8 +87,11 @@ resource "google_storage_bucket" "data_lake" {
 
 ###############################################################################
 # Bigtable Instance
-# DEVELOPMENT = single node, no replication, no SLA — use for dev/local testing
-# PRODUCTION  = minimum 3 nodes per cluster, 99.9% SLA
+# One PRODUCTION node. Google deprecated the DEVELOPMENT instance type
+# ("Prefer PRODUCTION for all use cases"); a 1-node PRODUCTION instance costs
+# the same (~$0.65/node-hour, no free tier) without the restrictions. This is
+# the project's largest line item — destroy the instance between demo sessions
+# (Silver is the source of truth; the next Silver run repopulates Bigtable).
 ###############################################################################
 
 resource "google_bigtable_instance" "feature_store" {
@@ -105,14 +103,15 @@ resource "google_bigtable_instance" "feature_store" {
   cluster {
     cluster_id   = "scip-feature-store-c1"
     zone         = var.zone
-    num_nodes    = var.bigtable_instance_type == "PRODUCTION" ? var.bigtable_num_nodes : null
+    num_nodes    = var.bigtable_num_nodes
     storage_type = var.bigtable_storage_type
 
     # autoscaling_config omitted — manual scaling, simpler for portfolio demo
   }
 
-  instance_type = var.bigtable_instance_type
-  labels        = local.common_labels
+  # instance_type is intentionally unset: the provider defaults to PRODUCTION
+  # and the field is deprecated (DEVELOPMENT instances are being converted).
+  labels = local.common_labels
 
   depends_on = [
     google_project_service.bigtable,
@@ -130,10 +129,6 @@ resource "google_bigtable_table" "inventory_features" {
   project       = var.project_id
   instance_name = google_bigtable_instance.feature_store.name
   name          = "inventory_features"
-
-  # Split points based on warehouse_id prefix ranges.
-  # Distributes load across tablet servers for range scans.
-  split_keys = ["W-2", "W-4", "W-6"]
 
   column_family {
     family = "inventory"
@@ -173,15 +168,19 @@ resource "google_bigtable_table" "inventory_features" {
 ###############################################################################
 # Bigtable GC Policies
 # One policy per column family. Mirrors the feature store design in
-# docs/adr/ADR-003-bigtable-feature-store.md.
+# docs/adr/ADR-003-bigtable-feature-store.md (Decision 3).
 #
-# Rationale per family:
-#   inventory  — max 1 version; realtime snapshot, older = stale
-#   velocity   — max age 7d; rolling window, cells older than window are meaningless
-#   demand     — max 1 version; forecasts are replaced not appended
-#   supplier   — max age 90d; lead time history used in 90d rolling averages
-#   risk       — max age 48h; stale risk scores are worse than no score
-#   lineage    — max age 7d; audit window for replay debugging
+# Every feature family keeps exactly the latest cell (max_version = 1): Silver
+# rewrites the whole row on each run and every reader takes the newest cell
+# only, so older versions are never read. Age-based expiry (velocity 7d, risk
+# 48h, lineage 7d, supplier 90d) was removed — this store is written in bursts
+# around demo sessions, and max_age turned an idle store into a partially
+# empty one that the scorer back-filled with defaults and scored as all-clear.
+# Freshness is enforced by the scorer instead (lineage:silver_ts, see
+# model_serving/pipeline/feature_client.py split_fresh()).
+#
+#   predictions — max 3 versions: current + 2 prior rounds for rollback
+#                 inspection (ADR-005 Decision 2)
 ###############################################################################
 
 resource "google_bigtable_gc_policy" "inventory" {
@@ -203,8 +202,8 @@ resource "google_bigtable_gc_policy" "velocity" {
   column_family   = "velocity"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "168h" # 7 days
+  max_version {
+    number = 1
   }
 }
 
@@ -227,8 +226,8 @@ resource "google_bigtable_gc_policy" "supplier" {
   column_family   = "supplier"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "2160h" # 90 days
+  max_version {
+    number = 1
   }
 }
 
@@ -239,8 +238,8 @@ resource "google_bigtable_gc_policy" "risk" {
   column_family   = "risk"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "48h"
+  max_version {
+    number = 1
   }
 }
 
@@ -251,8 +250,8 @@ resource "google_bigtable_gc_policy" "lineage" {
   column_family   = "lineage"
   deletion_policy = "ABANDON"
 
-  max_age {
-    duration = "168h" # 7 days
+  max_version {
+    number = 1
   }
 }
 
@@ -292,16 +291,18 @@ resource "google_service_account" "spark_sa" {
 ###############################################################################
 # IAM Bindings
 # Principle of least privilege: SA gets only what Spark needs.
-#   storage.objectAdmin  — read/write/delete GCS objects (bronze, silver, checkpoints)
+#   storage.objectAdmin  — read/write/delete objects in the data-lake bucket only
+#                          (bronze, silver, checkpoints, dlq); granted on the
+#                          bucket, not the project, like the Vertex SA
 #   bigtable.user        — read/write Bigtable rows (not admin/DDL)
 #   monitoring.metricWriter — emit custom metrics from Spark
 #   logging.logWriter    — write structured logs to Cloud Logging
 ###############################################################################
 
-resource "google_project_iam_member" "spark_gcs" {
-  project = var.project_id
-  role    = "roles/storage.objectAdmin"
-  member  = "serviceAccount:${google_service_account.spark_sa.email}"
+resource "google_storage_bucket_iam_member" "spark_gcs" {
+  bucket = google_storage_bucket.data_lake.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.spark_sa.email}"
 }
 
 resource "google_project_iam_member" "spark_bigtable" {

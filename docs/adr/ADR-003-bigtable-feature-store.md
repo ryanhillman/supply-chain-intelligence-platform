@@ -58,7 +58,7 @@ The Bronze → Silver pipeline already produces the feature computation. What re
 
 **Access pattern.** The primary read pattern is point lookup by `(warehouse_id, sku_id)`. The primary write pattern is upsert of the full feature vector for one pair per Silver batch. A composite key satisfies both without secondary indexes.
 
-**Key distribution.** Bigtable distributes data by row key range across tablets. Warehouse IDs (`W-001` through `W-006`) are short, fixed-width prefixes that spread naturally across the keyspace. Split points `W-2`, `W-4`, `W-6` are pre-configured in Terraform to distribute load at launch without waiting for automatic splits.
+**Key distribution.** Bigtable distributes data by row key range across tablets and splits tablets automatically under load. Warehouse IDs (`W-001` through `W-006`) are short, fixed-width prefixes that keep each warehouse's rows contiguous. With 120 rows the table is a single tablet, so no pre-split points are configured. (An earlier version pre-split at `W-2`, `W-4`, `W-6`; every key begins with `W-0`, so all rows sorted before the first split point and the splits did nothing.)
 
 **Separator choice.** `#` (0x23) sorts before alphanumeric characters in ASCII, ensuring warehouse-level range scans (`ReadRows(prefix="W-001#")`) are tight and do not bleed into adjacent warehouses.
 
@@ -78,24 +78,29 @@ W-006#SKU-020
 
 ---
 
-## Decision 3 — Six Column Families with Independent GC Policies
+## Decision 3 — Column Families and GC Policy
 
-**Chosen: One column family per feature group, GC policy matched to feature staleness tolerance**
+**Chosen: One column family per feature group; every feature family keeps exactly the latest cell**
 
 ### Column family design
 
 | Family | GC Policy | Rationale |
 |---|---|---|
 | `inventory` | max 1 version | Current stock snapshot — only the latest value is meaningful |
-| `velocity` | max age 7 days | Rolling window feature — cells older than the window are stale |
+| `velocity` | max 1 version | Rolling windows are recomputed from Bronze on every Silver run; the previous cell is superseded, not aged |
 | `demand` | max 1 version | Demand forecasts are replaced, not appended |
-| `supplier` | max age 90 days | Lead time history used in 90-day rolling averages |
-| `risk` | max age 48 hours | Risk scores expire fast — stale risk alerts are worse than no alert |
-| `lineage` | max age 7 days | Audit window for replay debugging |
+| `supplier` | max 1 version | 90-day rolling stats are recomputed by Silver; the cell is the result, not the history |
+| `risk` | max 1 version | Only the latest risk score is read |
+| `lineage` | max 1 version | Provenance of the current row; the scorer uses `silver_ts` to refuse stale rows |
+| `predictions` | max 3 versions | Current prediction plus two prior rounds for rollback inspection (ADR-005 Decision 2) |
+
+### Why not age-based GC
+
+The first version of this table expired `velocity` after 7 days, `risk` after 48 hours and `lineage` after 7 days. That design assumes a store that is written continuously. This one is written in bursts around demo sessions, so after a quiet week the age-based families were empty while `inventory` and `demand` were intact. The scorer then filled the missing velocity features with defaults (`sales_7d` → 0, so `days_of_supply` → 365) and scored every entity as low risk: a stale store became a confident all-clear. Keeping the latest cell and letting the scorer reject rows whose `lineage:silver_ts` is older than its freshness threshold (`score.py --max-feature-age-hours`, default 48) fails loudly instead.
 
 ### Why not a single family
 
-A single column family would require a single GC policy. `inventory` and `risk` need aggressive cleanup (1 version / 48 h); `supplier` needs 90-day retention. A shared policy would either retain stale risk scores or delete valid supplier history.
+The families still group the 29 features into the six logical domains used throughout Silver, the Bigtable writer and the scorer, and `predictions` needs a different policy (3 versions) from the feature families (1).
 
 ### Why not one family per feature
 
@@ -215,7 +220,7 @@ The manual approach (`gcloud iam service-accounts keys create keys/scip-spark-sa
 
 ### Negative / Trade-offs
 
-- **Bigtable minimum cost** — DEVELOPMENT instance is free-tier; PRODUCTION requires minimum 3 nodes (~$1,500/month). Acceptable for a production deployment; use DEVELOPMENT for portfolio demos.
+- **Bigtable cost** — a node bills about $0.65 per node-hour (~$475/month at us-central1 list price) whether the instance is DEVELOPMENT or PRODUCTION; there is no free tier, and PRODUCTION no longer requires three nodes (Google has deprecated the DEVELOPMENT type). This is the project's dominant cost, so the instance is destroyed between demo sessions and rebuilt from Silver, the durable source of truth.
 - **No ad-hoc SQL** — Bigtable does not support SQL. Range scans require careful key design. Complex aggregations must be done in Silver (Spark SQL), not Bigtable.
 - **Cold start** — first `terraform apply` + Silver batch before Bigtable has any data. Inference must handle "feature not found" gracefully until the first batch writes.
 - **At-least-once writes** — `foreachBatch` at-least-once semantics means a row may be re-written on Spark retry. Bigtable upsert semantics (overwrite on same row key) make re-writes idempotent for the latest-value pattern.

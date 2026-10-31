@@ -41,28 +41,17 @@ variable "gcs_bucket_name" {
 }
 
 variable "bronze_retention_days" {
-  description = "Days before Bronze layer objects are deleted by lifecycle rule."
+  description = "Days before Bronze layer objects are deleted by the bucket lifecycle rule. Must exceed Silver's longest lookback (90 days of supplier and PO history) so a partition cannot expire mid-read; 120 leaves a month of slack."
   type        = number
-  default     = 90
+  default     = 120
 
   validation {
-    condition     = var.bronze_retention_days >= 7
-    error_message = "bronze_retention_days must be at least 7 to allow Silver reprocessing windows."
+    condition     = var.bronze_retention_days > 90
+    error_message = "bronze_retention_days must exceed Silver's 90-day lookback window."
   }
 }
 
 # ── Bigtable ──────────────────────────────────────────────────────────────────
-
-variable "bigtable_instance_type" {
-  description = "DEVELOPMENT = single node, no SLA. PRODUCTION = minimum 3 nodes, 99.9% SLA."
-  type        = string
-  default     = "DEVELOPMENT"
-
-  validation {
-    condition     = contains(["DEVELOPMENT", "PRODUCTION"], var.bigtable_instance_type)
-    error_message = "bigtable_instance_type must be DEVELOPMENT or PRODUCTION."
-  }
-}
 
 variable "bigtable_storage_type" {
   description = "SSD for low-latency online serving. HDD for batch-heavy workloads."
@@ -76,7 +65,7 @@ variable "bigtable_storage_type" {
 }
 
 variable "bigtable_num_nodes" {
-  description = "Number of Bigtable nodes (PRODUCTION only; ignored for DEVELOPMENT)."
+  description = "Number of Bigtable nodes in the single cluster. One node (~$0.65/hour, no free tier) is plenty for the 120-row demo table."
   type        = number
   default     = 1
 }

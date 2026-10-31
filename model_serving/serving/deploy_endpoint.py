@@ -190,6 +190,31 @@ class EndpointDeployer:
 
         return info
 
+    def undeploy_all(self) -> list[str]:
+        """
+        Undeploy every model from the endpoint, keeping the endpoint itself.
+
+        Vertex AI bills each deployed model's replicas by the hour whether or
+        not they serve traffic, so this is the between-sessions teardown. The
+        endpoint resource is Terraform-managed and stays; registered models
+        stay in the Model Registry and can be redeployed with deploy().
+
+        Returns the deployed-model IDs that were removed.
+        """
+        endpoint = aiplatform.Endpoint(endpoint_name=self.endpoint_resource_name)
+        deployed = [m.id for m in endpoint.list_models()]
+        if not deployed:
+            logger.info("No models deployed on %s — nothing to undeploy", self.endpoint_resource_name)
+            return []
+
+        logger.info(
+            "Undeploying %d model(s) from %s: %s",
+            len(deployed), self.endpoint_resource_name, deployed,
+        )
+        endpoint.undeploy_all(sync=True)
+        logger.info("Undeploy complete — endpoint kept; redeploy with deploy.py deploy")
+        return deployed
+
     # ── Internals ─────────────────────────────────────────────────────────────
 
     def _load_registration_info(self) -> dict:
