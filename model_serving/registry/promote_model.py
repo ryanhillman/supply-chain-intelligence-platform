@@ -22,6 +22,14 @@ Flow
    {challenger: 100%, champion: 0%}.
 8. If any criterion fails: exit non-zero. The champion remains live.
 
+Offline (`deploy.py promote --local`)
+-------------------------------------
+promote_local() runs steps 3-5 between two training runs' artifact
+directories (train.py output: model.onnx, feature_metadata.json,
+evaluation_test.json) and reports the verdict. Nothing is deployed; the
+local run (local/README.md) serves whichever directory wins by pointing
+MODEL_LOCAL_PATH at it.
+
 The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
 SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
 method in all SDK versions. The gapic PATCH call is the canonical approach.
@@ -78,6 +86,22 @@ class DeployedModelInfo:
     artifact_uri: str
     test_metrics: dict  # {"auprc": float, "auc_roc": float, "brier": float}
     split_sha256: str | None  # sha256 of the test split test_metrics came from
+
+    @property
+    def label(self) -> str:
+        return self.deployed_model_id
+
+
+@dataclass
+class LocalModelInfo:
+    """A training run's artifacts directory as a promotion candidate."""
+    artifacts_dir: Path
+    test_metrics: dict
+    split_sha256: str | None
+
+    @property
+    def label(self) -> str:
+        return str(self.artifacts_dir)
 
 
 class ModelPromoter:
@@ -153,9 +177,9 @@ class ModelPromoter:
         champion, challenger = self._find_champion_and_challenger()
         self._print_deployed_summary(champion, challenger)
 
-        basis = self._align_metrics(champion, challenger)
-        passes, summary = self._compare_metrics(champion, challenger)
-        self._print_metric_comparison(champion, challenger, summary, basis)
+        basis = align_metrics(champion, challenger, self._dataset_dir, self._fetch_model)
+        passes, summary = compare_metrics(champion.test_metrics, challenger.test_metrics)
+        print_metric_comparison(summary, basis)
 
         if not passes:
             logger.warning(
@@ -287,93 +311,11 @@ class ModelPromoter:
                 "Re-register the model with register_model.py to include it."
             )
 
-        data = json.loads(blob.download_as_text())
-        metrics = data.get("model", {})
+        return parse_evaluation(json.loads(blob.download_as_text()), artifact_uri)
 
-        required = {"auprc", "auc_roc", "brier"}
-        missing  = required - set(metrics)
-        if missing:
-            raise ValueError(
-                f"evaluation_test.json is missing keys: {missing}. "
-                f"Found: {list(metrics.keys())}"
-            )
-
-        return {
-            "metrics":      {k: float(metrics[k]) for k in required},
-            "split_sha256": data.get("split_sha256"),
-        }
-
-    def _align_metrics(
-        self,
-        champion: DeployedModelInfo,
-        challenger: DeployedModelInfo,
-    ) -> str:
-        """
-        Make champion.test_metrics and challenger.test_metrics comparable.
-
-        Same split hash → the stored metrics already are. Otherwise rescore
-        both models on the challenger's test split (overwriting test_metrics
-        in place). Returns a one-line description of the basis for the report.
-        """
-        if not needs_rescore(champion.split_sha256, challenger.split_sha256):
-            return (
-                "stored evaluation_test.json metrics — both models were evaluated "
-                f"on the same test split (sha256 {challenger.split_sha256[:12]}…)"
-            )
-
-        logger.info(
-            "Test splits differ (champion %s, challenger %s) — rescoring both models "
-            "on the challenger's split with onnxruntime",
-            (champion.split_sha256 or "unknown")[:12], (challenger.split_sha256 or "unknown")[:12],
-        )
-        n = self._rescore_on_challenger_split(champion, challenger)
-        return (
-            f"both models rescored locally on the challenger's test split "
-            f"(n={n}, sha256 {challenger.split_sha256[:12]}…)"
-        )
-
-    def _rescore_on_challenger_split(
-        self,
-        champion: DeployedModelInfo,
-        challenger: DeployedModelInfo,
-    ) -> int:
-        """Score both deployed models on dataset_dir/test.parquet. Returns the row count."""
-        test_path = self._dataset_dir / "test.parquet"
-        if not test_path.exists():
-            raise FileNotFoundError(
-                f"{test_path} not found. Rescoring needs the challenger's test split; "
-                "pass --dataset pointing at the dataset directory it was trained from."
-            )
-        if challenger.split_sha256 is None:
-            raise ValueError(
-                "The challenger's evaluation_test.json has no split_sha256, so the "
-                "local test.parquet cannot be verified as its split. Re-run evaluate.py "
-                "and register.py for the challenger."
-            )
-        local_hash = file_sha256(test_path)
-        if local_hash != challenger.split_sha256:
-            raise ValueError(
-                f"{test_path} (sha256 {local_hash[:12]}…) is not the split the challenger "
-                f"was evaluated on ({challenger.split_sha256[:12]}…). Point --dataset at the "
-                "challenger's dataset directory; refusing to compare on a different holdout."
-            )
-
-        df     = pd.read_parquet(test_path)
-        y_true = df[TARGET_COL].to_numpy(dtype=float)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            for info in (champion, challenger):
-                onnx_path, metadata = self._download_model_files(
-                    info.artifact_uri, Path(tmp) / info.deployed_model_id
-                )
-                probs = score_onnx_on_split(onnx_path, metadata, df)
-                info.test_metrics = compute_metrics(y_true, probs)
-                logger.info(
-                    "Rescored %s: AUPRC=%.4f AUC=%.4f Brier=%.4f",
-                    info.deployed_model_id, info.test_metrics["auprc"],
-                    info.test_metrics["auc_roc"], info.test_metrics["brier"],
-                )
-        return len(df)
+    def _fetch_model(self, info: DeployedModelInfo, workdir: Path) -> tuple[Path, dict]:
+        """align_metrics() callback: a deployed model's files come from its GCS artifact URI."""
+        return self._download_model_files(info.artifact_uri, workdir / info.deployed_model_id)
 
     def _download_model_files(self, artifact_uri: str, dest: Path) -> tuple[Path, dict]:
         """Fetch model.onnx (+ sidecar if any) and feature_metadata.json into dest."""
@@ -393,50 +335,6 @@ class ModelPromoter:
         with open(dest / "feature_metadata.json") as f:
             metadata = json.load(f)
         return dest / "model.onnx", metadata
-
-    def _compare_metrics(
-        self,
-        champion: DeployedModelInfo,
-        challenger: DeployedModelInfo,
-    ) -> tuple[bool, dict[str, dict]]:
-        """
-        Returns (all_pass, per_metric_summary).
-        all_pass is True only if challenger beats champion on ALL metrics.
-        """
-        summary: dict[str, dict] = {}
-        all_pass = True
-
-        for metric in _HIGHER_IS_BETTER:
-            champ_val = champion.test_metrics[metric]
-            chal_val  = challenger.test_metrics[metric]
-            delta     = chal_val - champ_val
-            passes    = delta > 0
-            if not passes:
-                all_pass = False
-            summary[metric] = {
-                "champion":   champ_val,
-                "challenger": chal_val,
-                "delta":      delta,
-                "passes":     passes,
-                "criterion":  "higher is better",
-            }
-
-        for metric in _LOWER_IS_BETTER:
-            champ_val = champion.test_metrics[metric]
-            chal_val  = challenger.test_metrics[metric]
-            delta     = chal_val - champ_val
-            passes    = delta < 0
-            if not passes:
-                all_pass = False
-            summary[metric] = {
-                "champion":   champ_val,
-                "challenger": chal_val,
-                "delta":      delta,
-                "passes":     passes,
-                "criterion":  "lower is better",
-            }
-
-        return all_pass, summary
 
     def _apply_traffic_split(
         self,
@@ -485,32 +383,213 @@ class ModelPromoter:
         print(f"               {challenger.model_resource_name}")
         print(f"               deployed {challenger.create_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-    def _print_metric_comparison(
-        self,
-        champion: DeployedModelInfo,
-        challenger: DeployedModelInfo,
-        summary: dict[str, dict],
-        basis: str,
-    ) -> None:
-        print()
-        print(f"  Basis: {basis}")
-        print()
-        print(f"  {'Metric':<10} {'Champion':>10} {'Challenger':>12} {'Delta':>10}  Pass")
-        print(f"  {'-'*10} {'-'*10} {'-'*12} {'-'*10}  ----")
-        for metric, data in summary.items():
-            sign   = "+" if data["delta"] > 0 else ""
-            status = "YES" if data["passes"] else "NO "
-            print(
-                f"  {metric:<10} {data['champion']:>10.4f} {data['challenger']:>12.4f} "
-                f"{sign}{data['delta']:>9.4f}  {status}"
+
+# ── Offline gate: two artifact directories ───────────────────────────────────
+
+def local_model_info(artifacts_dir: str | Path) -> LocalModelInfo:
+    """One training run's artifacts directory (train.py output) as a candidate."""
+    artifacts_dir = Path(artifacts_dir)
+    for fname in ("model.onnx", "feature_metadata.json", "evaluation_test.json"):
+        if not (artifacts_dir / fname).is_file():
+            raise FileNotFoundError(
+                f"{fname} not found in {artifacts_dir}: pass a train.py artifacts directory"
             )
-        all_pass = all(d["passes"] for d in summary.values())
-        verdict  = "PROMOTE" if all_pass else "BLOCKED"
-        print(f"\n  Verdict: {verdict}")
-        print("=" * 68)
+    evaluation = parse_evaluation(_read_json(artifacts_dir / "evaluation_test.json"), str(artifacts_dir))
+    return LocalModelInfo(
+        artifacts_dir=artifacts_dir,
+        test_metrics=evaluation["metrics"],
+        split_sha256=evaluation["split_sha256"],
+    )
+
+
+def _local_model_files(info: LocalModelInfo, workdir: Path) -> tuple[Path, dict]:
+    """align_metrics() callback: a local candidate's files are already on disk."""
+    return info.artifacts_dir / "model.onnx", _read_json(info.artifacts_dir / "feature_metadata.json")
+
+
+def promote_local(
+    champion_dir: str | Path,
+    challenger_dir: str | Path,
+    dataset_dir: str | Path = "ml_training/artifacts/dataset",
+) -> bool:
+    """
+    The promotion gate between two training runs, with nothing deployed.
+
+    Same decision as ModelPromoter.promote(): the stored evaluation_test.json
+    metrics when both runs were evaluated on the same test split, otherwise
+    both models rescored on the challenger's split (dataset_dir/test.parquet)
+    with onnxruntime. Returns True when the challenger wins on all three metrics.
+    """
+    champion   = local_model_info(champion_dir)
+    challenger = local_model_info(challenger_dir)
+
+    sep = "=" * 68
+    print(f"\n{sep}")
+    print("  Champion/Challenger Promotion Check (local artifacts)")
+    print(sep)
+    print(f"  Champion   : {champion.label}")
+    print(f"  Challenger : {challenger.label}")
+
+    basis = align_metrics(champion, challenger, Path(dataset_dir), _local_model_files)
+    passes, summary = compare_metrics(champion.test_metrics, challenger.test_metrics)
+    print_metric_comparison(summary, basis)
+
+    if not passes:
+        logger.warning(
+            "PROMOTION BLOCKED — challenger did not beat champion on all metrics. "
+            "Keep serving the champion."
+        )
+        return False
+    logger.info(
+        "PROMOTE — challenger beats champion on AUPRC, AUC-ROC and Brier. "
+        "Serve %s (MODEL_LOCAL_PATH for the local container).",
+        challenger.label,
+    )
+    return True
 
 
 # ── Module helpers (pure; unit-tested without GCP) ────────────────────────────
+
+def _read_json(path: Path) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+
+def parse_evaluation(data: dict, where: str) -> dict:
+    """
+    The promotion-relevant part of an evaluation_test.json document:
+    {"metrics": {"auprc", "auc_roc", "brier"}, "split_sha256": str | None}.
+    """
+    metrics  = data.get("model", {})
+    required = {"auprc", "auc_roc", "brier"}
+    missing  = required - set(metrics)
+    if missing:
+        raise ValueError(
+            f"evaluation_test.json at {where} is missing keys: {missing}. "
+            f"Found: {list(metrics.keys())}"
+        )
+    return {
+        "metrics":      {k: float(metrics[k]) for k in required},
+        "split_sha256": data.get("split_sha256"),
+    }
+
+
+def load_challenger_split(dataset_dir: Path, challenger_hash: str | None) -> pd.DataFrame:
+    """dataset_dir/test.parquet, verified by sha256 to be the challenger's own split."""
+    test_path = dataset_dir / "test.parquet"
+    if not test_path.exists():
+        raise FileNotFoundError(
+            f"{test_path} not found. Rescoring needs the challenger's test split; "
+            "pass --dataset pointing at the dataset directory it was trained from."
+        )
+    if challenger_hash is None:
+        raise ValueError(
+            "The challenger's evaluation_test.json has no split_sha256, so the "
+            "local test.parquet cannot be verified as its split. Re-run evaluate.py "
+            "for the challenger."
+        )
+    local_hash = file_sha256(test_path)
+    if local_hash != challenger_hash:
+        raise ValueError(
+            f"{test_path} (sha256 {local_hash[:12]}…) is not the split the challenger "
+            f"was evaluated on ({challenger_hash[:12]}…). Point --dataset at the "
+            "challenger's dataset directory; refusing to compare on a different holdout."
+        )
+    return pd.read_parquet(test_path)
+
+
+def align_metrics(champion, challenger, dataset_dir: Path, fetch_model) -> str:
+    """
+    Make champion.test_metrics and challenger.test_metrics comparable (in place).
+
+    Same split hash → the stored metrics already are. Otherwise rescore both
+    models on the challenger's test split. `fetch_model(info, workdir)` returns
+    (model.onnx path, feature_metadata dict) for a candidate: downloaded from
+    GCS for deployed models, read from disk for local ones. Returns a one-line
+    description of the basis for the report.
+    """
+    if not needs_rescore(champion.split_sha256, challenger.split_sha256):
+        return (
+            "stored evaluation_test.json metrics — both models were evaluated "
+            f"on the same test split (sha256 {challenger.split_sha256[:12]}…)"
+        )
+
+    logger.info(
+        "Test splits differ (champion %s, challenger %s) — rescoring both models "
+        "on the challenger's split with onnxruntime",
+        (champion.split_sha256 or "unknown")[:12], (challenger.split_sha256 or "unknown")[:12],
+    )
+    df     = load_challenger_split(dataset_dir, challenger.split_sha256)
+    y_true = df[TARGET_COL].to_numpy(dtype=float)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for info in (champion, challenger):
+            onnx_path, metadata = fetch_model(info, Path(tmp))
+            info.test_metrics = compute_metrics(y_true, score_onnx_on_split(onnx_path, metadata, df))
+            logger.info(
+                "Rescored %s: AUPRC=%.4f AUC=%.4f Brier=%.4f",
+                info.label, info.test_metrics["auprc"],
+                info.test_metrics["auc_roc"], info.test_metrics["brier"],
+            )
+    return (
+        f"both models rescored locally on the challenger's test split "
+        f"(n={len(df)}, sha256 {challenger.split_sha256[:12]}…)"
+    )
+
+
+def compare_metrics(champion: dict, challenger: dict) -> tuple[bool, dict[str, dict]]:
+    """
+    Returns (all_pass, per_metric_summary).
+    all_pass is True only if challenger beats champion on ALL metrics.
+    """
+    summary: dict[str, dict] = {}
+    all_pass = True
+
+    for metric in _HIGHER_IS_BETTER:
+        delta  = challenger[metric] - champion[metric]
+        passes = delta > 0
+        all_pass &= passes
+        summary[metric] = {
+            "champion":   champion[metric],
+            "challenger": challenger[metric],
+            "delta":      delta,
+            "passes":     passes,
+            "criterion":  "higher is better",
+        }
+
+    for metric in _LOWER_IS_BETTER:
+        delta  = challenger[metric] - champion[metric]
+        passes = delta < 0
+        all_pass &= passes
+        summary[metric] = {
+            "champion":   champion[metric],
+            "challenger": challenger[metric],
+            "delta":      delta,
+            "passes":     passes,
+            "criterion":  "lower is better",
+        }
+
+    return all_pass, summary
+
+
+def print_metric_comparison(summary: dict[str, dict], basis: str) -> None:
+    print()
+    print(f"  Basis: {basis}")
+    print()
+    print(f"  {'Metric':<10} {'Champion':>10} {'Challenger':>12} {'Delta':>10}  Pass")
+    print(f"  {'-'*10} {'-'*10} {'-'*12} {'-'*10}  ----")
+    for metric, data in summary.items():
+        sign   = "+" if data["delta"] > 0 else ""
+        status = "YES" if data["passes"] else "NO "
+        print(
+            f"  {metric:<10} {data['champion']:>10.4f} {data['challenger']:>12.4f} "
+            f"{sign}{data['delta']:>9.4f}  {status}"
+        )
+    all_pass = all(d["passes"] for d in summary.values())
+    verdict  = "PROMOTE" if all_pass else "BLOCKED"
+    print(f"\n  Verdict: {verdict}")
+    print("=" * 68)
+
 
 def needs_rescore(champion_hash: str | None, challenger_hash: str | None) -> bool:
     """Stored metrics are comparable only when both hashes exist and match."""

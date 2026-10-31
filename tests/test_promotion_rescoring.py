@@ -1,11 +1,14 @@
 """
 Tests for the pure parts of model_serving/registry/promote_model.py that make
-champion/challenger comparison happen on one holdout.
+champion/challenger comparison happen on one holdout, and for promote_local(),
+the same gate run between two artifact directories with nothing deployed.
 
 ModelPromoter itself needs Vertex AI and GCS clients, so these tests cover
 the module-level helpers it composes: the split-hash guard, the file hash,
-and scoring an exported ONNX model over a raw-unit split.
+scoring an exported ONNX model over a raw-unit split, and the metric gate.
 """
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -98,3 +101,83 @@ def test_score_onnx_on_split_refuses_entities_outside_the_vocab(tmp_path):
     df.loc[0, "warehouse_id"] = "W-009"
     with pytest.raises(ValueError, match="W-009"):
         pm.score_onnx_on_split(path, metadata, df)
+
+
+# ── Metric gate and the offline (--local) promotion ──────────────────────────
+
+_CHAMPION = {"auprc": 0.60, "auc_roc": 0.80, "brier": 0.15}
+
+
+def test_compare_metrics_requires_a_win_on_all_three():
+    better = {"auprc": 0.65, "auc_roc": 0.82, "brier": 0.14}
+    passes, summary = pm.compare_metrics(_CHAMPION, better)
+    assert passes and all(d["passes"] for d in summary.values())
+
+    worse_brier = {"auprc": 0.65, "auc_roc": 0.82, "brier": 0.16}
+    passes, summary = pm.compare_metrics(_CHAMPION, worse_brier)
+    assert not passes
+    assert summary["brier"]["passes"] is False and summary["auprc"]["passes"] is True
+
+
+def _artifacts_dir(tmp_path, name: str, seed: int, metrics: dict, split_sha256: str | None):
+    """A train.py-shaped artifacts directory: model.onnx, feature_metadata.json, evaluation_test.json."""
+    d = tmp_path / name
+    d.mkdir()
+    metadata = _metadata()
+    _, onnx_path = _export(d, metadata, seed=seed)
+    onnx_path.rename(d / "model.onnx")
+    (d / "feature_metadata.json").write_text(json.dumps(metadata))
+    (d / "evaluation_test.json").write_text(json.dumps({"model": metrics, "split_sha256": split_sha256}))
+    return d
+
+
+def test_promote_local_uses_stored_metrics_on_the_same_split(tmp_path, capsys):
+    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "a" * 64)
+    chal  = _artifacts_dir(tmp_path, "challenger", 1, {"auprc": 0.70, "auc_roc": 0.85, "brier": 0.10}, "a" * 64)
+
+    assert pm.promote_local(champ, chal, dataset_dir=tmp_path / "no-dataset-needed") is True
+    out = capsys.readouterr().out
+    assert "stored evaluation_test.json metrics" in out
+    assert "Verdict: PROMOTE" in out
+
+
+def test_promote_local_blocks_a_weaker_challenger(tmp_path, capsys):
+    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "a" * 64)
+    chal  = _artifacts_dir(tmp_path, "challenger", 1, {"auprc": 0.55, "auc_roc": 0.85, "brier": 0.10}, "a" * 64)
+
+    assert pm.promote_local(champ, chal, dataset_dir=tmp_path) is False
+    assert "Verdict: BLOCKED" in capsys.readouterr().out
+
+
+def test_promote_local_rescores_both_models_when_splits_differ(tmp_path, capsys):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    _split(seed=3).to_parquet(dataset / "test.parquet")
+    challenger_hash = pm.file_sha256(dataset / "test.parquet")
+
+    # Stored metrics would promote, but they are from different splits, so
+    # both models are rescored on the challenger's split and the stored
+    # numbers are ignored.
+    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "b" * 64)
+    chal  = _artifacts_dir(tmp_path, "challenger", 1, {"auprc": 0.99, "auc_roc": 0.99, "brier": 0.01}, challenger_hash)
+
+    verdict = pm.promote_local(champ, chal, dataset_dir=dataset)
+    out = capsys.readouterr().out
+    assert isinstance(verdict, bool)
+    assert "rescored locally on the challenger's test split (n=64" in out
+    assert "0.9900" not in out   # stored challenger metrics were replaced
+
+
+def test_promote_local_refuses_a_dataset_that_is_not_the_challengers_split(tmp_path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    _split(seed=3).to_parquet(dataset / "test.parquet")
+    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "b" * 64)
+    chal  = _artifacts_dir(tmp_path, "challenger", 1, _CHAMPION, "c" * 64)
+    with pytest.raises(ValueError, match="not the split the challenger"):
+        pm.promote_local(champ, chal, dataset_dir=dataset)
+
+
+def test_local_model_info_needs_a_complete_artifacts_dir(tmp_path):
+    with pytest.raises(FileNotFoundError, match="model.onnx"):
+        pm.local_model_info(tmp_path)
