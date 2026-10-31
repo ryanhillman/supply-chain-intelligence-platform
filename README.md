@@ -166,7 +166,19 @@ The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, abou
 - AdamW optimizer
 - Early stopping on validation performance
 - ONNX export for production inference
-  
+
+### Test Results
+
+Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8% of them followed by a stockout within 7 days. The in-stock columns cover the 5,464 rows with `current_qty > 0`, where the outcome is not already decided.
+
+| Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
+|---|---|---|---|---|---|---|
+| Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
+| PyTorch MLP (served model) | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
+| LightGBM (comparison, ADR-004) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
+
+The data is simulated, so these numbers describe the model on the simulated world, not on real inventory.
+
 ---
 
 ## Model Serving Pipeline
