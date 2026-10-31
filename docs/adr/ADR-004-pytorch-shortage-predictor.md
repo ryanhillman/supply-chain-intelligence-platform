@@ -94,6 +94,6 @@ Retraining is manual. The drift monitor recommends it (ADR-005 Decision 7), and 
 ## Consequences
 
 - The model is measured against the strongest simple baseline, so a win is meaningful.
-- The benchmark makes the cost of the learning objective explicit: a simpler model with no endpoint performs as well.
+- The benchmark shows the learning objective added complexity, not accuracy.
 - The Normal approximation behind the baseline and `stockout_risk_score` degrades when daily demand has heavy tails.
 - The sampler computes rolling features in pandas. That is adequate at this data size; at millions of events it would move to Spark.
