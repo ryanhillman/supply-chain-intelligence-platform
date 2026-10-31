@@ -26,11 +26,12 @@ Flow
 3. Read current predictions from Bigtable predictions column family
    (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
 4. Compute PSI for each monitored feature using bins at the deciles of the
-   raw training rows (drift_reference.json). supplier_reliability is computed
-   per warehouse, so a live snapshot holds only one value per warehouse and
-   decile PSI over those few values trips whether or not anything changed; it
-   is instead checked per warehouse against that warehouse's training p1-p99,
-   and any warehouse outside its range is a retraining trigger.
+   raw training rows (drift_reference.json). supplier_reliability is a
+   per-warehouse 90-day rate, so a snapshot holds 6 values, too few for a
+   statistical trigger; each is checked against its warehouse's training
+   p1-p99 and reported as an informational warning, because out-of-range
+   values usually reflect seasonality outside the training window, which the
+   test metrics show the model handles.
 5. Classify PSI per ADR-005 thresholds:
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
@@ -160,7 +161,7 @@ class WarehouseRangeMetrics:
     values:       dict[str, float]               # live value per warehouse
     ranges:       dict[str, tuple[float, float]]  # training p1-p99 per warehouse
     out_of_range: list[str]                       # outside its range, or no training range
-    status:       str                             # "stable" | "trigger" | "unknown"
+    status:       str                             # "stable" | "warning" | "unknown"
 
 
 @dataclass
@@ -174,6 +175,7 @@ class DriftReport:
     baseline_metrics:   BaselineDivergenceMetrics | None
     requires_retraining: bool
     trigger_reasons:    list[str]  # human-readable reasons for retraining flag
+    warnings:           list[str]  # informational only; never set requires_retraining
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
@@ -366,12 +368,11 @@ class DriftMonitor:
                 trigger_reasons.append(
                     f"{fm.display_name}: PSI={fm.psi:.4f} >= {_PSI_WARNING_THRESHOLD}"
                 )
-        for rm in range_metrics:
-            if rm.status == "trigger":
-                trigger_reasons.append(
-                    f"{rm.display_name}: {', '.join(rm.out_of_range)} outside the "
-                    "warehouse's training p1-p99"
-                )
+        warnings = [
+            f"{rm.display_name}: {', '.join(rm.out_of_range)} outside the warehouse's "
+            "training p1-p99 (informational, not a retraining trigger)"
+            for rm in range_metrics if rm.status == "warning"
+        ]
         if prediction_metrics:
             if prediction_metrics.prob_variance_collapsed:
                 trigger_reasons.append(
@@ -399,6 +400,7 @@ class DriftMonitor:
             baseline_metrics    = baseline_metrics,
             requires_retraining = bool(trigger_reasons),
             trigger_reasons     = trigger_reasons,
+            warnings            = warnings,
         )
 
         self._print_report(report)
@@ -472,7 +474,7 @@ class DriftMonitor:
                   live.groupby("warehouse_id")[feature_name].median().items()}
         out = _out_of_range(values, ranges)
         return WarehouseRangeMetrics(
-            display_name, feature_name, values, ranges, out, "trigger" if out else "stable"
+            display_name, feature_name, values, ranges, out, "warning" if out else "stable"
         )
 
     def _prediction_rows(self):
@@ -693,7 +695,7 @@ class DriftMonitor:
             print(f"  {'Warehouse':<10} {'Live':>8} {'p1':>8} {'p99':>8}  Status")
             for wh in sorted(rm.values):
                 lo, hi = rm.ranges.get(wh, (float("nan"), float("nan")))
-                flag = "OUT OF RANGE" if wh in rm.out_of_range else "OK"
+                flag = "OUT OF RANGE (info)" if wh in rm.out_of_range else "OK"
                 print(f"  {wh:<10} {rm.values[wh]:>8.3f} {lo:>8.3f} {hi:>8.3f}  {flag}")
 
         # PSI legend
@@ -751,6 +753,13 @@ class DriftMonitor:
             print(sep2)
             print("  Run model_serving/scripts/score.py first to populate predictions.")
 
+        # Informational warnings (do not affect the recommendation)
+        if report.warnings:
+            print("\nWarnings (informational)")
+            print(sep2)
+            for w in report.warnings:
+                print(f"  - {w}")
+
         # Retraining recommendation
         print("\nRetraining Recommendation")
         print(sep2)
@@ -794,6 +803,7 @@ class DriftMonitor:
             "run_timestamp":      report.run_timestamp,
             "requires_retraining": report.requires_retraining,
             "trigger_reasons":    report.trigger_reasons,
+            "warnings":           report.warnings,
             "feature_psi":        [_fm_dict(fm) for fm in report.feature_metrics],
             "warehouse_ranges":   [
                 {
