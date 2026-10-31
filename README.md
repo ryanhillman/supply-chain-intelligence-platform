@@ -13,8 +13,6 @@ This project demonstrates an end-to-end machine learning platform to predict the
 
 The historical training data is simulated to create realistic warehouse, inventory, supplier, and demand behavior. 
 
-The focus of the project is the platform architecture and MLOps lifecycle rather than validation of inventory data.
-
 ---
 
 ## [Demo](https://www.youtube.com/watch?v=fpe3sHeRTNs)
