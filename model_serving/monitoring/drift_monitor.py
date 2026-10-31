@@ -18,8 +18,9 @@ predictions today. A human has to act on the report.
 Flow
 ----
 1. Load feature_metadata.json (feature_mean / feature_scale fit on the train
-   split, reported next to the live mean/std) and the raw train.parquet rows
-   (the PSI bins; required, no approximate fallback).
+   split, reported next to the live mean/std) and drift_reference.json (PSI
+   bins computed from the raw training split when the model was trained;
+   required, no approximate fallback).
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
    - fill_defaults() + engineer_features() derive all 21 features.
@@ -27,7 +28,7 @@ Flow
 3. Read current predictions from Bigtable predictions column family
    (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
 4. Compute PSI for each monitored feature using bins at the deciles of the
-   raw training rows (train.parquet).
+   raw training rows (drift_reference.json).
 5. Classify PSI per ADR-005 thresholds:
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
@@ -46,15 +47,15 @@ PSI formula
 
     Where:
       N     = up to 10 bins with edges at the (deduplicated) deciles of the
-              raw training rows in train.parquet — correct for any feature
-              shape, and in the same units as the live Bigtable values.
+              raw training rows, stored in drift_reference.json — correct for
+              any feature shape, and in the same units as the live values.
       E_i   = the actual training fraction in bin i (not assumed uniform:
               clustered features such as supplier_reliability collapse
               several decile edges onto one value)
       A_i   = actual fraction of current Bigtable values in bin i
 
-    Zero-count bins replaced with ε=1e-4 to avoid log(0). train.parquet is
-    required; there is no approximate fallback.
+    Zero-count bins replaced with ε=1e-4 to avoid log(0). drift_reference.json
+    is required; there is no approximate fallback.
 
 Required packages:
     numpy>=1.26.0
@@ -76,6 +77,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ml_training.evaluation.drift_reference import (
+    MONITORED_FEATURES as _MONITORED_FEATURES,
+    load_drift_reference,
+)
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -94,16 +100,8 @@ _BASELINE_DIVERGENCE_THRESHOLD = 0.95
 _BASELINE_PROB_THRESHOLD       = 0.5   # shortage_prob_7d >= this → model says "at risk"
 _BASELINE_AT_RISK_URGENCY_MIN  = 2     # urgency >= REORDER(2) → heuristic says "at risk"
 
-# Monitored features: (display_name, flat_feature_name)
-# The flat name must appear in NUMERIC_FEATURE_COLS from feature_engineer.py.
-# days_of_supply is a derived feature computed by engineer_features();
-# it is not read directly from Bigtable but re-derived for consistency.
-_MONITORED_FEATURES: list[tuple[str, str]] = [
-    ("inventory__days_of_supply",       "days_of_supply"),
-    ("velocity__sales_7d",              "sales_7d"),
-    ("velocity__avg_daily_sales_7d",    "avg_daily_sales_7d"),
-    ("supplier__supplier_reliability",  "supplier_reliability"),
-]
+# Monitored features come from ml_training.evaluation.drift_reference, shared
+# with the trainer, which writes their PSI bins next to the model.
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -174,11 +172,9 @@ class DriftMonitor:
     instance_id:
         Bigtable instance ID (e.g. "scip-feature-store").
     artifacts_dir:
-        Directory containing feature_metadata.json.
+        Directory containing feature_metadata.json and drift_reference.json,
+        both written next to model.pt by the trainer.
         Default: "ml_training/artifacts"
-    dataset_dir:
-        Directory containing train.parquet (raw training rows for the PSI bins).
-        Default: "ml_training/artifacts/dataset"
     table_id:
         Bigtable table ID (default "inventory_features").
     credentials_path:
@@ -190,7 +186,6 @@ class DriftMonitor:
         project_id: str,
         instance_id: str,
         artifacts_dir: str | Path = "ml_training/artifacts",
-        dataset_dir:   str | Path = "ml_training/artifacts/dataset",
         table_id: str = "inventory_features",
         credentials_path: str | None = None,
     ) -> None:
@@ -199,12 +194,11 @@ class DriftMonitor:
         self.table_id    = table_id
 
         self._artifacts_dir = Path(artifacts_dir)
-        self._dataset_dir   = Path(dataset_dir)
 
         self._metadata      = self._load_metadata()
         self._feature_mean  = np.asarray(self._metadata["feature_mean"],  dtype=float)
         self._feature_scale = np.asarray(self._metadata["feature_scale"], dtype=float)
-        self._training_quantiles = self._load_training_quantiles()
+        self._training_quantiles, self._reference_info = self._load_drift_reference()
 
         # Import from ml_training — sys.path must include the repo root.
         from ml_training.datasets.feature_engineer import (
@@ -249,7 +243,7 @@ class DriftMonitor:
 
         logger.info(
             "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
-            instance_id, table_id, self._dataset_dir,
+            instance_id, table_id, self._artifacts_dir,
             len(self._NUMERIC_FEATURE_COLS),
         )
 
@@ -502,8 +496,8 @@ class DriftMonitor:
         Compute PSI and status for one monitored feature.
 
         μ and σ (training_mean / training_std in the report) come from
-        feature_metadata.json; the PSI bins themselves come from the raw
-        training rows loaded by _load_training_quantiles.
+        feature_metadata.json; the PSI bins themselves come from
+        drift_reference.json (_load_drift_reference).
         """
         idx          = self._feature_to_idx[feature_name]
         train_mean   = float(self._feature_mean[idx])
@@ -548,7 +542,7 @@ class DriftMonitor:
         """
         Population Stability Index using the training data's own bins.
 
-        bin_edges/expected come from _load_training_quantiles: bin_edges
+        bin_edges/expected come from _load_drift_reference: bin_edges
         are the training distribution's own (deduplicated) decile edges,
         and expected is the ACTUAL fraction of training rows that fall in
         each of those bins — not assumed to be a uniform 1/10, since
@@ -557,9 +551,9 @@ class DriftMonitor:
         in a warehouse, so one value alone can be ~50% of all rows) and
         naive equal-frequency binning degenerates in that case.
 
-        Both sides are in raw feature units: train.parquet holds raw rows
-        (DatasetBuilder no longer standardizes the splits) and the live
-        values come from engineer_features() on raw Bigtable cells. An
+        Both sides are in raw feature units: the reference bins come from the
+        raw training split (DatasetBuilder no longer standardizes the splits)
+        and the live values from engineer_features() on raw Bigtable cells. An
         earlier version binned raw live values against standardized
         training rows and reported PSI 2–8 (TRIGGER) for the training data
         compared with itself; before that, a normal-quantile approximation
@@ -604,6 +598,11 @@ class DriftMonitor:
         print(f"\n{sep}")
         print(f"  SCIP Drift Monitor Report  —  {report.run_timestamp}")
         print(sep)
+        info = self._reference_info
+        print(
+            f"  Reference: drift_reference.json — {info.get('n_rows')} training rows, "
+            f"created {info.get('created_at')}"
+        )
 
         # Feature PSI table
         print("\nFeature Distribution Shift (PSI)")
@@ -903,65 +902,38 @@ class DriftMonitor:
         with open(path) as f:
             return json.load(f)
 
-    def _load_training_quantiles(self) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    def _load_drift_reference(self) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], dict]:
         """
-        Empirical bin edges AND expected fractions for each monitored
-        feature, computed from the real training distribution
-        (train.parquet in dataset_dir; raw feature units).
+        PSI bins for the monitored features from drift_reference.json, which
+        the trainer writes next to model.pt from the raw training split (see
+        ml_training/evaluation/drift_reference.py). The bins are the training
+        rows' deduplicated deciles with each bin's actual training fraction as
+        `expected`, so they are correct for skewed and clustered features and
+        give PSI ~0 for training-vs-itself.
 
-        These are the correct PSI bins regardless of the feature's shape
-        — unlike bins derived from a normal-distribution assumption (which
-        an earlier version of this monitor used), which badly misrepresents skewed
-        features such as sales_7d, avg_daily_sales_7d, and
-        supplier_reliability and causes false "retraining required"
-        triggers even on in-distribution data.
-
-        Quantile edges are deduplicated before use: several monitored
-        features are heavily clustered (e.g. supplier_reliability is a
-        per-supplier value shared by every SKU in a warehouse until the
-        next PERFORMANCE_UPDATE event, so one value alone can account for
-        ~50% of all training rows). Naively using 10 quantile edges on
-        such a feature produces repeated edges and collapses most of the
-        mass into one degenerate bin. Deduplicating the edges and then
-        computing each bin's *actual* training fraction (instead of
-        assuming a uniform 1/10 per bin) keeps PSI correct — and ~0 for
-        training-vs-itself — however the mass happens to be distributed.
-
-        Raises FileNotFoundError if train.parquet isn't available. There is
-        no approximate fallback: the normal-quantile approximation this
-        monitor used to fall back on produced spurious TRIGGERs on the
-        skewed features monitored here.
+        Reading the reference from the model's artifacts directory, rather than
+        from a dataset directory, means the baseline is the one the deployed
+        model was trained on. Raises FileNotFoundError if absent: there is no
+        approximate fallback.
         """
-        train_path = self._dataset_dir / "train.parquet"
-        if not train_path.exists():
+        path = self._artifacts_dir / "drift_reference.json"
+        if not path.exists():
             raise FileNotFoundError(
-                f"train.parquet not found at {train_path}. The PSI bins are the raw "
-                "training rows' deciles; run ml_training/scripts/build_dataset.py or "
-                "copy train.parquet into the dataset directory."
+                f"drift_reference.json not found at {path}. It is written by "
+                "ml_training/scripts/train.py next to model.pt; retrain or copy it "
+                "into the artifacts directory."
             )
 
-        feature_names = [fname for _, fname in _MONITORED_FEATURES]
-        train_df = pd.read_parquet(train_path, columns=feature_names)
-
-        quantile_points = np.linspace(0.0, 1.0, _N_BINS + 1)
-        quantiles: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        for feature_name in feature_names:
-            values = train_df[feature_name].dropna().to_numpy(dtype=float)
-            edges  = np.unique(np.quantile(values, quantile_points))
-            edges[0]  = -np.inf
-            edges[-1] =  np.inf
-
-            train_counts, _ = np.histogram(values, bins=edges)
-            expected = train_counts.astype(float) / len(values)
-
-            quantiles[feature_name] = (edges, expected)
+        bins, info = load_drift_reference(path)
+        missing = [name for _, name in _MONITORED_FEATURES if name not in bins]
+        if missing:
+            raise ValueError(f"drift_reference.json lacks monitored features {missing}")
 
         logger.info(
-            "Loaded empirical training quantiles for %d monitored features from %s",
-            len(quantiles), train_path,
+            "Loaded drift reference (%d features, %s training rows, created %s) from %s",
+            len(bins), info.get("n_rows"), info.get("created_at"), path,
         )
-        return quantiles
-
+        return bins, info
 
 # ── Module helpers ─────────────────────────────────────────────────────────────
 
