@@ -3,14 +3,12 @@ drift_monitor.py — feature distribution shift and prediction variance monitori
 
 Background (ADR-005 Decision 7)
 ---------------------------------
-The Phase 4 model was trained on 60x-tiled Bronze data:
-  avg_daily_sales_7d (training) ≈ 2,785  units/day
-  avg_daily_sales_7d (real)     ≈   207  units/day
-  deviation                     ≈ -9.5 σ
-
-This 13× velocity inflation collapses model predictions to prob≈0, score≈1 for all
-120 entities. PSI monitoring detects this shift and flags it in the printed
-report / drift_report.json. This is advisory only -- per ADR-005 Decision 7's
+The June 2026 model was trained on tiled events whose velocity features sat
+far outside the live ones (days_of_supply +46σ), and every prediction
+collapsed to the same value. This monitor detects that kind of shift: feature
+PSI against the training split, prediction spread, and agreement with the
+reorder-urgency rule, flagged in the printed report / drift_report.json.
+This is advisory only -- per ADR-005 Decision 7's
 implementation note, nothing in score.py, batch_scorer.py, or promote_model.py
 reads requires_retraining back, so it does not actually block or reject
 predictions today. A human has to act on the report.
@@ -24,11 +22,15 @@ Flow
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
    - fill_defaults() + engineer_features() derive all 21 features.
-   - Extract the 4 monitored features.
+   - Extract the PSI features and the warehouse-grain features.
 3. Read current predictions from Bigtable predictions column family
    (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
 4. Compute PSI for each monitored feature using bins at the deciles of the
-   raw training rows (drift_reference.json).
+   raw training rows (drift_reference.json). supplier_reliability is computed
+   per warehouse, so a live snapshot holds only one value per warehouse and
+   decile PSI over those few values trips whether or not anything changed; it
+   is instead checked per warehouse against that warehouse's training p1-p99,
+   and any warehouse outside its range is a retraining trigger.
 5. Classify PSI per ADR-005 thresholds:
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
@@ -50,8 +52,8 @@ PSI formula
               raw training rows, stored in drift_reference.json — correct for
               any feature shape, and in the same units as the live values.
       E_i   = the actual training fraction in bin i (not assumed uniform:
-              clustered features such as supplier_reliability collapse
-              several decile edges onto one value)
+              clustered features such as days_of_supply, capped at 365,
+              collapse several decile edges onto one value)
       A_i   = actual fraction of current Bigtable values in bin i
 
     Zero-count bins replaced with ε=1e-4 to avoid log(0). drift_reference.json
@@ -79,7 +81,9 @@ import pandas as pd
 
 from ml_training.evaluation.drift_reference import (
     MONITORED_FEATURES as _MONITORED_FEATURES,
+    WAREHOUSE_RANGE_FEATURES as _WAREHOUSE_RANGE_FEATURES,
     load_drift_reference,
+    load_warehouse_ranges,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,11 +152,24 @@ class BaselineDivergenceMetrics:
 
 
 @dataclass
+class WarehouseRangeMetrics:
+    """Per-warehouse range check for one warehouse-grain feature."""
+
+    display_name: str
+    feature_name: str
+    values:       dict[str, float]               # live value per warehouse
+    ranges:       dict[str, tuple[float, float]]  # training p1-p99 per warehouse
+    out_of_range: list[str]                       # outside its range, or no training range
+    status:       str                             # "stable" | "trigger" | "unknown"
+
+
+@dataclass
 class DriftReport:
     """Full output of a DriftMonitor.run() call."""
 
     run_timestamp:      str
     feature_metrics:    list[FeatureMetrics]
+    range_metrics:      list[WarehouseRangeMetrics]
     prediction_metrics: PredictionMetrics | None
     baseline_metrics:   BaselineDivergenceMetrics | None
     requires_retraining: bool
@@ -199,6 +216,7 @@ class DriftMonitor:
         self._feature_mean  = np.asarray(self._metadata["feature_mean"],  dtype=float)
         self._feature_scale = np.asarray(self._metadata["feature_scale"], dtype=float)
         self._training_quantiles, self._reference_info = self._load_drift_reference()
+        self._warehouse_ranges = load_warehouse_ranges(self._artifacts_dir / "drift_reference.json")
 
         # Import from ml_training — sys.path must include the repo root.
         from ml_training.datasets.feature_engineer import (
@@ -282,7 +300,8 @@ class DriftMonitor:
         # Step 1: collect current feature values from Bigtable.
         logger.info("Reading feature distribution from Bigtable %s/%s ...",
                     self.instance_id, self.table_id)
-        feature_values = self._collect_feature_values()
+        live = self._live_features()
+        feature_values = self._collect_feature_values(live)
 
         # Step 2: compute PSI for each monitored feature.
         feature_metrics: list[FeatureMetrics] = []
@@ -294,6 +313,12 @@ class DriftMonitor:
                 "  %-40s n=%-4d  PSI=%.4f  %s",
                 display_name, fm.current_n, fm.psi, fm.status.upper(),
             )
+
+        # Step 2b: warehouse-grain features against each warehouse's training range.
+        range_metrics = [
+            self._check_warehouse_range(display_name, name, live)
+            for display_name, name in _WAREHOUSE_RANGE_FEATURES
+        ]
 
         # Step 3: collect prediction variance (optional).
         prediction_metrics: PredictionMetrics | None = None
@@ -341,6 +366,12 @@ class DriftMonitor:
                 trigger_reasons.append(
                     f"{fm.display_name}: PSI={fm.psi:.4f} >= {_PSI_WARNING_THRESHOLD}"
                 )
+        for rm in range_metrics:
+            if rm.status == "trigger":
+                trigger_reasons.append(
+                    f"{rm.display_name}: {', '.join(rm.out_of_range)} outside the "
+                    "warehouse's training p1-p99"
+                )
         if prediction_metrics:
             if prediction_metrics.prob_variance_collapsed:
                 trigger_reasons.append(
@@ -363,6 +394,7 @@ class DriftMonitor:
         report = DriftReport(
             run_timestamp       = run_ts,
             feature_metrics     = feature_metrics,
+            range_metrics       = range_metrics,
             prediction_metrics  = prediction_metrics,
             baseline_metrics    = baseline_metrics,
             requires_retraining = bool(trigger_reasons),
@@ -390,19 +422,19 @@ class DriftMonitor:
 
     # ── Bigtable reads ─────────────────────────────────────────────────────────
 
-    def _collect_feature_values(self) -> dict[str, list[float]]:
+    def _live_features(self) -> pd.DataFrame:
         """
-        Scan all feature rows via FeatureClient, run engineer_features(), and
-        return {flat_feature_name: [float, ...]} for the monitored features.
-        Same read path and derivation as RequestBuilder.build(), so the
-        monitor sees exactly what the scorer scores.
+        Scan all feature rows via FeatureClient and run fill_defaults() and
+        engineer_features(): the same read path and derivation as
+        RequestBuilder.build(), so the monitor sees exactly what the scorer
+        scores. One row per (warehouse_id, sku_id).
         """
         from model_serving.pipeline.request_builder import _RAW_FEATURES
 
         feature_rows = self._feature_client.scan_all()
         if not feature_rows:
             logger.warning("No feature rows returned from Bigtable")
-            return {}
+            return pd.DataFrame()
 
         records = []
         for fr in feature_rows:
@@ -413,18 +445,35 @@ class DriftMonitor:
 
         df = pd.DataFrame(records)
         self._fill_defaults(df)
-        df = self._engineer_features(df)
+        return self._engineer_features(df)
 
+    @staticmethod
+    def _collect_feature_values(live: pd.DataFrame) -> dict[str, list[float]]:
+        """{flat_feature_name: [float, ...]} for the PSI features."""
         result: dict[str, list[float]] = {}
         for _, feature_name in _MONITORED_FEATURES:
-            vals = df[feature_name].dropna().tolist() if feature_name in df.columns else []
+            vals = live[feature_name].dropna().tolist() if feature_name in live.columns else []
             result[feature_name] = [float(v) for v in vals]
-
-        logger.info(
-            "Feature values collected: %d entities, %d monitored features",
-            len(feature_rows), sum(1 for v in result.values() if v),
-        )
+        logger.info("Feature values collected: %d entities", len(live))
         return result
+
+    def _check_warehouse_range(
+        self, display_name: str, feature_name: str, live: pd.DataFrame
+    ) -> WarehouseRangeMetrics:
+        """
+        One live value per warehouse (the median over its SKUs, which all carry
+        the same value) against that warehouse's training p1-p99. A warehouse
+        with no training range counts as out of range.
+        """
+        ranges = self._warehouse_ranges.get(feature_name, {})
+        if live.empty or feature_name not in live.columns:
+            return WarehouseRangeMetrics(display_name, feature_name, {}, ranges, [], "unknown")
+        values = {str(wh): float(v) for wh, v in
+                  live.groupby("warehouse_id")[feature_name].median().items()}
+        out = _out_of_range(values, ranges)
+        return WarehouseRangeMetrics(
+            display_name, feature_name, values, ranges, out, "trigger" if out else "stable"
+        )
 
     def _prediction_rows(self):
         """One read of the predictions family and risk:urgency per run, shared
@@ -546,9 +595,8 @@ class DriftMonitor:
         are the training distribution's own (deduplicated) decile edges,
         and expected is the ACTUAL fraction of training rows that fall in
         each of those bins — not assumed to be a uniform 1/10, since
-        several monitored features are heavily clustered (e.g.
-        supplier_reliability is a per-supplier value shared by every SKU
-        in a warehouse, so one value alone can be ~50% of all rows) and
+        a monitored feature can be heavily clustered (days_of_supply is
+        capped at 365, so that one value can hold a large share of rows) and
         naive equal-frequency binning degenerates in that case.
 
         Both sides are in raw feature units: the reference bins come from the
@@ -635,6 +683,19 @@ class DriftMonitor:
                 f" {fm.psi:>7.4f}  {status_icon}"
             )
 
+        # Per-warehouse range checks
+        for rm in report.range_metrics:
+            print(f"\nPer-Warehouse Range  {rm.display_name}  (training p1-p99)")
+            print(sep2)
+            if rm.status == "unknown":
+                print("  (no data)")
+                continue
+            print(f"  {'Warehouse':<10} {'Live':>8} {'p1':>8} {'p99':>8}  Status")
+            for wh in sorted(rm.values):
+                lo, hi = rm.ranges.get(wh, (float("nan"), float("nan")))
+                flag = "OUT OF RANGE" if wh in rm.out_of_range else "OK"
+                print(f"  {wh:<10} {rm.values[wh]:>8.3f} {lo:>8.3f} {hi:>8.3f}  {flag}")
+
         # PSI legend
         print()
         print(
@@ -659,9 +720,9 @@ class DriftMonitor:
 
             if pm.prob_variance_collapsed or pm.score_variance_collapsed:
                 print(
-                    "\n  [NOTE] Variance collapse with prob~0 + score~1 is expected given the\n"
-                    "         current model's training/inference distribution mismatch\n"
-                    "         (ADR-005 Decision 7). This confirms retraining is required."
+                    "\n  [NOTE] Near-constant predictions mean the model no longer separates\n"
+                    "         entities. Check the feature PSI above and retrain\n"
+                    "         (ADR-005 Decision 7)."
                 )
         else:
             print("\nPrediction Variance  — no predictions in Bigtable yet")
@@ -699,14 +760,13 @@ class DriftMonitor:
                 print(f"     - {reason}")
             print()
             print(
-                "  Retraining gate (ADR-005 Decision 7):\n"
-                "    1. Accumulate >= 38 real Bronze days (no --simulate-days flag)\n"
+                "  Retraining (ADR-005 Decision 7):\n"
+                "    1. Rebuild:  python ml_training/scripts/build_dataset.py --bronze-path ...\n"
                 "    2. Retrain:  python ml_training/scripts/train.py\n"
-                "    3. Register: python model_serving/scripts/register.py ...\n"
-                "    4. Deploy:   python model_serving/scripts/deploy.py deploy --traffic 0\n"
-                "    5. Promote:  python model_serving/scripts/deploy.py promote\n"
-                "    6. Re-score: python model_serving/scripts/score.py ...\n"
-                "    7. Re-monitor (this script): PSI should drop below 0.10"
+                "    3. Gate:     python model_serving/scripts/deploy.py promote --local ...\n"
+                "                 (Vertex AI: register.py, deploy.py deploy --traffic 0, then promote)\n"
+                "    4. Re-score: python model_serving/scripts/score.py ...\n"
+                "    5. Re-monitor (this script): PSI should drop below 0.10"
             )
         else:
             print("  No retraining required. All PSI values within stable thresholds.")
@@ -735,6 +795,17 @@ class DriftMonitor:
             "requires_retraining": report.requires_retraining,
             "trigger_reasons":    report.trigger_reasons,
             "feature_psi":        [_fm_dict(fm) for fm in report.feature_metrics],
+            "warehouse_ranges":   [
+                {
+                    "display_name": rm.display_name,
+                    "feature_name": rm.feature_name,
+                    "values":       rm.values,
+                    "ranges":       {wh: list(r) for wh, r in rm.ranges.items()},
+                    "out_of_range": rm.out_of_range,
+                    "status":       rm.status,
+                }
+                for rm in report.range_metrics
+            ],
             "prediction_variance": {
                 "prob_mean":               report.prediction_metrics.prob_mean,
                 "prob_std":                report.prediction_metrics.prob_std,
@@ -936,6 +1007,16 @@ class DriftMonitor:
         return bins, info
 
 # ── Module helpers ─────────────────────────────────────────────────────────────
+
+def _out_of_range(values: dict[str, float], ranges: dict[str, tuple[float, float]]) -> list[str]:
+    """Warehouses whose live value is outside their training range, or that have none."""
+    out = []
+    for wh, v in sorted(values.items()):
+        lo, hi = ranges.get(wh, (None, None))
+        if lo is None or not (lo <= v <= hi):
+            out.append(wh)
+    return out
+
 
 def _classify_psi(psi: float) -> str:
     """Classify a PSI value as stable / warning / trigger."""

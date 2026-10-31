@@ -92,7 +92,6 @@ class DatasetBuilder:
         credentials_path: str | None = None,
         output_dir:       str | Path  = "ml_training/artifacts/dataset",
         horizon_days:     int         = 7,
-        simulate_days:    int         = 0,
         bronze_path:      str | Path | None = None,
     ) -> None:
         self.bucket           = bucket
@@ -100,7 +99,6 @@ class DatasetBuilder:
         self.credentials_path = credentials_path
         self.output_dir       = Path(output_dir)
         self.horizon_days     = horizon_days
-        self.simulate_days    = simulate_days
 
     def build(self) -> DatasetManifest:
         """Run the full pipeline from Bronze (local or GCS) and return a DatasetManifest."""
@@ -111,28 +109,8 @@ class DatasetBuilder:
             bucket=self.bucket,
             bronze_path=self.bronze_path,
             credentials_path=self.credentials_path,
-            simulate_days=self.simulate_days,
         )
         feature_rows, inv_events = sampler.build()
-        return self._build_from_raw(feature_rows, inv_events)
-
-    def build_from_synthetic(self, generator: object) -> DatasetManifest:
-        """
-        Build the dataset from a SyntheticDataGenerator instead of Bronze.
-
-        The generator must implement .build() returning (feature_rows, inv_events)
-        with the same column contract as BronzeTemporalSampler.build().
-        All downstream steps (label generation, feature engineering, split,
-        StandardScaler, parquet output) are reused unchanged.
-
-        Parameters
-        ----------
-        generator:
-            SyntheticDataGenerator instance (or any object with a compatible
-            .build() -> tuple[pd.DataFrame, pd.DataFrame] method).
-        """
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        feature_rows, inv_events = generator.build()
         return self._build_from_raw(feature_rows, inv_events)
 
     def _build_from_raw(
@@ -141,10 +119,8 @@ class DatasetBuilder:
         inv_events:   "pd.DataFrame",
     ) -> DatasetManifest:
         """
-        Steps 2–11 of the original build() pipeline, shared by both data paths.
-
-        Accepts (feature_rows, inv_events) in BronzeTemporalSampler format and
-        produces the full set of dataset artifacts in self.output_dir.
+        Steps 2-8: labels, derived features, split, statistics, baselines and
+        output files, from BronzeTemporalSampler's (feature_rows, inv_events).
         """
         # ── Step 2: Generate labels ────────────────────────────────────────────
         labeled = generate_labels(feature_rows, inv_events, self.horizon_days)

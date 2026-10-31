@@ -11,10 +11,8 @@
       4. Silver schema validation — PySpark reads Silver and checks schema/nulls
       5. Bigtable row count — cbt count on inventory_features table
 
-    Designed for Docker Desktop environments where running Bronze + Silver
-    streaming jobs simultaneously exceeds available memory (>3 GB combined).
-    The production architecture (silver_feature_engineering.py) is unchanged;
-    this script uses silver_batch.py as a low-memory one-shot alternative.
+    Silver is the batch job silver_batch.py (features as of the latest day
+    in Bronze).
 
     This is the only verification script. verify_silver.ps1 and
     verify_bigtable.ps1 duplicated checks 2, 4 and 5 (plus cbt inspection of

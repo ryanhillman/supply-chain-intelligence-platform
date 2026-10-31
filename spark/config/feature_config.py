@@ -19,7 +19,7 @@ BIGTABLE_BATCH_SIZE: int = 500
 ROW_KEY_SEPARATOR: str = "#"
 
 # ── Stockout risk thresholds ──────────────────────────────────────────────────
-# Used by the risk feature derivations in silver_feature_engineering.py.
+# Used by the risk feature derivations in spark/jobs/silver_features.py.
 # Reorder urgency levels written to risk#reorder_urgency:
 #   0 = OK        days_of_supply > REORDER_WATCH_DAYS
 #   1 = WATCH     days_of_supply in (REORDER_CRITICAL_DAYS, REORDER_WATCH_DAYS]

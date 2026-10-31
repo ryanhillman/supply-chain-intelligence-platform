@@ -57,8 +57,11 @@ services:
       # Disable auto-creation — topics are created explicitly by kafka-init
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
 
-      # Log retention — keep 7 days of data for Silver replay
-      KAFKA_LOG_RETENTION_HOURS: 168
+      # Log retention: 30 days, so Bronze can consume a replay well after it
+      # ran. Retention counts from the Kafka record timestamp (wall-clock produce
+      # time), not the simulated time inside each event. kafka-init sets the
+      # same value per topic.
+      KAFKA_LOG_RETENTION_HOURS: 720
       KAFKA_LOG_SEGMENT_BYTES: 104857600    # 100 MB segments
       KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
 
@@ -100,35 +103,35 @@ services:
           --topic inventory.events \
           --partitions 3 \
           --replication-factor 1 \
-          --config retention.ms=604800000
+          --config retention.ms=2592000000
 
         kafka-topics --bootstrap-server kafka:29092 \
           --create --if-not-exists \
           --topic shipments.events \
           --partitions 3 \
           --replication-factor 1 \
-          --config retention.ms=604800000
+          --config retention.ms=2592000000
 
         kafka-topics --bootstrap-server kafka:29092 \
           --create --if-not-exists \
           --topic purchase.orders.events \
           --partitions 3 \
           --replication-factor 1 \
-          --config retention.ms=604800000
+          --config retention.ms=2592000000
 
         kafka-topics --bootstrap-server kafka:29092 \
           --create --if-not-exists \
           --topic demand.signals \
           --partitions 3 \
           --replication-factor 1 \
-          --config retention.ms=86400000
+          --config retention.ms=2592000000
 
         kafka-topics --bootstrap-server kafka:29092 \
           --create --if-not-exists \
           --topic suppliers.events \
           --partitions 3 \
           --replication-factor 1 \
-          --config retention.ms=604800000
+          --config retention.ms=2592000000
 
         echo "=== Verifying topics ==="
         kafka-topics --bootstrap-server kafka:29092 --list
@@ -139,11 +142,13 @@ services:
       - scip-net
 
 
-  # ── Event producer (warehouse simulator) ─────────────────────────────────────
+  # ── Event producer (world-model replay) ──────────────────────────────────────
+  # Replays REPLAY_DAYS simulated days from simulation/world.py, then exits.
+  # Built from the repository root so the image can copy simulation/.
   producer:
     build:
-      context: ./producer
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kafka/producer/Dockerfile
     container_name: scip-producer
     depends_on:
       broker:
@@ -152,8 +157,10 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      EVENTS_PER_BATCH: 17      # events produced per 2-second cycle
-      BATCH_SLEEP_SECONDS: 2    # pause between production cycles
+      REPLAY_START: "2025-10-01"
+      REPLAY_DAYS: "365"
+      SEED: "42"
+      TICK_SECONDS_PER_DAY: "0"   # > 0 keeps ticking after the replay (live demos)
       LOG_LEVEL: INFO
     networks:
       - scip-net

@@ -91,7 +91,7 @@ Kafka ingests inventory, supplier, shipment, purchase order, and demand events g
 
 Spark Structured Streaming consumes Kafka topics and writes immutable raw events to the Bronze layer in Google Cloud Storage.
 
-A scheduled Silver processing job aggregates Bronze data into feature snapshots containing 29 supply-chain features for each warehouse-SKU entity.
+A Silver batch job computes, as of a given date, a snapshot of 29 supply-chain features for each warehouse-SKU entity from Bronze.
 
 Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for model training and inference.
 
@@ -146,7 +146,7 @@ After training, the model is exported to ONNX and validated with ONNX Runtime be
 
 ### Training Data
 
-Historical training data is generated using a synthetic supply-chain simulator that models:
+Training and scoring data come from one simulated supply chain (`simulation/world.py`) that models:
 
 - Demand seasonality
 - Supplier reliability variation
@@ -154,7 +154,7 @@ Historical training data is generated using a synthetic supply-chain simulator t
 - Demand spikes
 - Inventory replenishment behavior
 
-The simulator generates 365 days of history across 6 warehouses and 20 SKUs, producing approximately 43,800 training records.
+The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. The training sampler builds 39,360 labeled rows from Bronze, one per warehouse-SKU-day after a 30-day warm-up, with the same feature windows Silver uses for scoring (ADR-006).
 
 ### Training Configuration
 
@@ -196,9 +196,9 @@ The drift monitor compares the live feature distribution (read from Bigtable) ag
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-Four features are monitored: `days_of_supply`, `sales_7d`, `avg_daily_sales_7d`, and `supplier_reliability`. Two additional triggers run alongside feature PSI: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of the three is sufficient to recommend retraining.
+PSI covers `days_of_supply`, `sales_7d` and `avg_daily_sales_7d`. `supplier_reliability` is computed per warehouse, so a snapshot holds only six values and PSI over them is meaningless; each warehouse's live value is instead checked against that warehouse's training p1–p99. Two more triggers run alongside: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of these is sufficient to recommend retraining.
 
-The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the same metrics to Cloud Monitoring. All three triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
+The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the PSI, variance and divergence metrics to Cloud Monitoring. All triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
 
 ---
 

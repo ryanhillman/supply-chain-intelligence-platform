@@ -59,47 +59,13 @@ services:
       - "jobs/bronze_ingestion.py"
     restart: on-failure:3
 
-  # ── Silver Feature Engineering (streaming) ───────────────────────────────────
-  # Triggered by new inventory.events files in Bronze; writes Silver Parquet
-  # and feature vectors to Bigtable. No --packages (no Kafka reads).
-  spark-silver:
-    <<: *spark
-    command:
-      - "--master"
-      - "${SPARK_MASTER:-local[*]}"
-      - "--conf"
-      - "spark.jars.ivy=${IVY_CACHE:-/opt/ivy2}"
-      - "--conf"
-      - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
-      - "--conf"
-      - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
-      # ── GCS connector configuration (gs:// paths only) ──────────────────────
-      - "--conf"
-      - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
-      - "--conf"
-      - "spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
-      - "--conf"
-      - "spark.hadoop.google.cloud.auth.service.account.enable=true"
-      - "--conf"
-      - "spark.hadoop.google.cloud.auth.service.account.json.keyfile=${GOOGLE_APPLICATION_CREDENTIALS:-/opt/spark-app/keys/scip-spark-sa.json}"
-      - "--conf"
-      - "spark.hadoop.fs.gs.outputstream.type=FLUSHABLE_COMPOSITE"
-      - "--conf"
-      - "spark.hadoop.fs.gs.implicit.dir.infer.enable=true"
-      # ── Job entrypoint ──────────────────────────────────────────────────────
-      - "jobs/silver_feature_engineering.py"
-    # Silver depends on Bronze having written at least one file.
-    # Start Bronze first; Silver will wait for files on its first trigger.
-    depends_on:
-      - spark-bronze
-    restart: on-failure:3
-
-  # ── Silver Feature Engineering (one-shot batch) ──────────────────────────────
-  # jobs/silver_batch.py: reads everything in Bronze, writes one Silver epoch
-  # and the Bigtable rows, exits. Lighter than running both streaming jobs at
-  # once on Docker Desktop, which is why the local runbook uses it. Profile-
-  # gated so `up -d` does not start it; run it explicitly:
+  # ── Silver features (batch, as of a date) ───────────────────────────────────
+  # jobs/silver_batch.py: computes one feature snapshot per pair as of a date,
+  # writes Silver and the Bigtable rows, and exits. Profile-gated so `up -d`
+  # does not start it; run it explicitly (SILVER_AS_OF defaults to the latest
+  # day in Bronze):
   #   docker compose -f docker-compose.spark.yml run --rm spark-silver-batch
+  #   docker compose -f docker-compose.spark.yml run --rm -e SILVER_AS_OF=2026-09-30 spark-silver-batch
   spark-silver-batch:
     <<: *spark
     profiles: ["batch"]

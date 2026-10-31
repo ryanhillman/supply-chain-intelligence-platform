@@ -17,9 +17,13 @@ feature_engineer.py):
   velocity   : sales_7d, sales_30d, avg_daily_sales_7d, avg_daily_sales_30d,
                velocity_trend, stddev_daily_7d
   supplier   : lead_time_days, lead_time_stddev, supplier_reliability
-  po         : active_po_qty  (CREATED/SUBMITTED in last 90d)
-  shipment   : in_transit_qty (SHIPPED in last 30d)
-  demand     : demand_signal_count_24h
+  po         : active_po_qty  (created in the last 90d, not yet received)
+  shipment   : in_transit_qty (shipped in the last 30d, not yet delivered)
+  demand     : demand_signal_count_24h (signals on the sample date)
+
+Windows match spark/jobs/silver_features.py exactly, so a model trained on
+these rows is scored on the same features (tests/test_spark_parity.py).
+Duplicate event_ids (a repeated replay) are dropped on read.
 """
 from __future__ import annotations
 
@@ -38,25 +42,25 @@ logger = logging.getLogger(__name__)
 # Bronze partition columns injected by Parquet directory structure.
 # We keep them during read (PyArrow decodes them automatically) but they are
 # not used for feature computation — the `timestamp` string field is used instead.
-_PARTITION_COLS = {"year", "month", "day", "hour"}
+_PARTITION_COLS = {"year", "month", "day"}
 
 # Field subsets to load per topic (avoids reading unused columns from GCS).
 _INVENTORY_COLS = [
-    "warehouse_id", "sku_id", "event_type",
+    "event_id", "warehouse_id", "sku_id", "event_type",
     "quantity_after", "quantity_delta",
     "reorder_point", "safety_stock", "timestamp",
 ]
 _SUPPLIER_COLS = [
-    "warehouse_id", "lead_time_days", "on_time_delivery_rate", "timestamp",
+    "event_id", "warehouse_id", "lead_time_days", "on_time_delivery_rate", "timestamp",
 ]
 _PO_COLS = [
-    "warehouse_id", "sku_id", "event_type", "quantity_ordered", "timestamp",
+    "event_id", "warehouse_id", "sku_id", "event_type", "order_id", "quantity_ordered", "timestamp",
 ]
 _SHIPMENT_COLS = [
-    "warehouse_id", "sku_id", "event_type", "quantity", "timestamp",
+    "event_id", "warehouse_id", "sku_id", "event_type", "shipment_id", "quantity", "timestamp",
 ]
 _DEMAND_COLS = [
-    "warehouse_id", "sku_id", "timestamp",
+    "event_id", "warehouse_id", "sku_id", "timestamp",
 ]
 
 
@@ -77,7 +81,7 @@ class BronzeTemporalSampler:
         Default Credentials (bucket mode only).
     min_lookback_days:
         Days of history required before the first sample date (default 30,
-        matches the 30d velocity window in silver_feature_engineering.py).
+        matches the 30d velocity window in spark/jobs/silver_features.py).
     min_lookahead_days:
         Days of future data required after the last sample date (default 7,
         matches the shortage prediction horizon).
@@ -89,7 +93,6 @@ class BronzeTemporalSampler:
         credentials_path: str | None = None,
         min_lookback_days: int = 30,
         min_lookahead_days: int = 7,
-        simulate_days: int = 0,
         bronze_path: str | Path | None = None,
     ) -> None:
         if bool(bucket) == bool(bronze_path):
@@ -101,7 +104,6 @@ class BronzeTemporalSampler:
         self._credentials_path = credentials_path
         self._min_lookback = min_lookback_days
         self._min_lookahead = min_lookahead_days
-        self._simulate_days = simulate_days
         self._fs = None
         if bucket:
             self._fs = gcsfs.GCSFileSystem(
@@ -131,18 +133,10 @@ class BronzeTemporalSampler:
         span_days = (inv["ts"].max() - inv["ts"].min()).days
         required = self._min_lookback + self._min_lookahead + 1
         if span_days < required:
-            if self._simulate_days > 0:
-                logger.warning(
-                    "Bronze data spans only %d day(s); need %d. "
-                    "Tiling events across %d simulated days for training.",
-                    span_days, required, self._simulate_days,
-                )
-                inv = self._tile_events(inv, self._simulate_days)
-            else:
-                raise ValueError(
-                    f"Bronze data spans only {span_days} day(s); need {required}. "
-                    "Pass --simulate-days N (e.g. 60) to tile the events for training."
-                )
+            raise ValueError(
+                f"Bronze data spans only {span_days} day(s); need {required}. "
+                "Replay more simulated days (REPLAY_DAYS in kafka/docker-compose.yml)."
+            )
 
         sample_dates = self._sample_date_range(inv)
         if len(sample_dates) == 0:
@@ -239,6 +233,8 @@ class BronzeTemporalSampler:
             requested = [c for c in columns if c in available]
             table = dataset.to_table(columns=requested)
             df = table.to_pandas()
+            if "event_id" in df.columns:
+                df = df.drop_duplicates("event_id")
             logger.info("Read %s: %d rows", topic, len(df))
             return df
         except Exception as exc:
@@ -313,7 +309,7 @@ class BronzeTemporalSampler:
         pair with sparse or late-starting history can still be sampled
         during its individual cold start). Dividing by a fixed constant in
         that case manufactures a velocity_trend artifact exactly like the
-        one fixed in spark/jobs/silver_feature_engineering.py's
+        one fixed in spark/jobs/silver_features.py's
         _compute_velocity: when sales_7d == sales_30d (no sales before the
         last 7 days), trend becomes a numeric artifact of the window-length
         ratio rather than a real trend. This matters more here than in the
@@ -385,7 +381,7 @@ class BronzeTemporalSampler:
     ) -> pd.DataFrame:
         """
         90-day rolling supplier lead time and reliability per (warehouse, date).
-        Aggregated at warehouse level, matching silver_feature_engineering.py.
+        Aggregated at warehouse level, matching spark/jobs/silver_features.py.
         """
         sup_sorted = sup.sort_values("ts")
         rows: list[dict] = []
@@ -420,102 +416,63 @@ class BronzeTemporalSampler:
         self, po: pd.DataFrame, sample_dates: pd.DatetimeIndex
     ) -> pd.DataFrame:
         """
-        Active PO quantity per (warehouse, sku, date): sum of quantity_ordered
-        from CREATED or SUBMITTED events in the last 90 days.
+        Open order quantity per (warehouse, sku, date): quantity_ordered of
+        orders created in the last 90 days whose RECEIVED event has not
+        happened by the end of the date (matched by order_id).
         """
-        active = po[po["event_type"].isin(["CREATED", "SUBMITTED"])].sort_values("ts")
-        rows: list[dict] = []
-
-        for (wh, sku), grp in active.groupby(["warehouse_id", "sku_id"], sort=False):
-            ts_ns  = grp["ts"].values.astype("int64")
-            qty    = grp["quantity_ordered"].fillna(0).values.astype(float)
-
-            for d in sample_dates:
-                eod_ns  = int((d + pd.Timedelta(days=1)).value)
-                ns_90d  = int((d - pd.Timedelta(days=90)).value)
-                end_pos = int(np.searchsorted(ts_ns, eod_ns, side="left"))
-                pos_90d = int(np.searchsorted(ts_ns, ns_90d, side="left"))
-
-                rows.append({
-                    "warehouse_id":  wh,
-                    "sku_id":        sku,
-                    "sample_date":   d.date(),
-                    "active_po_qty": float(qty[pos_90d:end_pos].sum()),
-                })
-
-        return pd.DataFrame(rows)
+        opened = (po[po["event_type"].isin(["CREATED", "SUBMITTED"])]
+                  .drop_duplicates("order_id")[["warehouse_id", "sku_id", "order_id", "quantity_ordered", "ts"]])
+        closed = po[po["event_type"] == "RECEIVED"].groupby("order_id")["ts"].min().rename("closed_ts")
+        orders = opened.join(closed, on="order_id").rename(columns={"quantity_ordered": "qty"})
+        return self._open_quantity(orders, sample_dates, window_days=90, out_col="active_po_qty")
 
     def _shipment_features(
         self, shp: pd.DataFrame, sample_dates: pd.DatetimeIndex
     ) -> pd.DataFrame:
         """
-        In-transit quantity per (warehouse, sku, date): sum of quantity from
-        SHIPPED events in the last 30 days.
+        In-transit quantity per (warehouse, sku, date): quantity of shipments
+        shipped in the last 30 days whose DELIVERED event has not happened by
+        the end of the date (matched by shipment_id).
         """
-        shipped = shp[shp["event_type"] == "SHIPPED"].sort_values("ts")
-        rows: list[dict] = []
-
-        for (wh, sku), grp in shipped.groupby(["warehouse_id", "sku_id"], sort=False):
-            ts_ns = grp["ts"].values.astype("int64")
-            qty   = grp["quantity"].fillna(0).values.astype(float)
-
-            for d in sample_dates:
-                eod_ns  = int((d + pd.Timedelta(days=1)).value)
-                ns_30d  = int((d - pd.Timedelta(days=30)).value)
-                end_pos = int(np.searchsorted(ts_ns, eod_ns, side="left"))
-                pos_30d = int(np.searchsorted(ts_ns, ns_30d, side="left"))
-
-                rows.append({
-                    "warehouse_id":  wh,
-                    "sku_id":        sku,
-                    "sample_date":   d.date(),
-                    "in_transit_qty": float(qty[pos_30d:end_pos].sum()),
-                })
-
-        return pd.DataFrame(rows)
+        opened = shp[shp["event_type"] == "SHIPPED"][["warehouse_id", "sku_id", "shipment_id", "quantity", "ts"]]
+        closed = shp[shp["event_type"] == "DELIVERED"].groupby("shipment_id")["ts"].min().rename("closed_ts")
+        shipments = opened.join(closed, on="shipment_id").rename(columns={"quantity": "qty"})
+        return self._open_quantity(shipments, sample_dates, window_days=30, out_col="in_transit_qty")
 
     @staticmethod
-    def _tile_events(inv: pd.DataFrame, n_days: int, seed: int = 42) -> pd.DataFrame:
+    def _open_quantity(
+        items: pd.DataFrame, sample_dates: pd.DatetimeIndex, window_days: int, out_col: str
+    ) -> pd.DataFrame:
         """
-        Tile a single day of events across n_days simulated days.
-
-        Each tile is shifted by i*24h from the original start.  quantity_after
-        and quantity_delta receive ±10% multiplicative noise per tile to produce
-        realistic variation in inventory levels across the simulated window.
-
-        This is a development-mode workaround for when Bronze data spans < 38 days.
-        Production Bronze data accumulates naturally over time and will not need this.
+        Sum of `qty` per (warehouse, sku, date) over items opened in
+        [date - window_days, end of date) and not closed before the end of the
+        date. `items` has warehouse_id, sku_id, qty, ts (opened) and closed_ts
+        (NaT while open).
         """
-        rng = np.random.default_rng(seed)
-        tiles: list[pd.DataFrame] = []
-
-        for i in range(n_days):
-            tile = inv.copy()
-            tile["ts"] = tile["ts"] + pd.Timedelta(days=i)
-            tile["timestamp"] = tile["ts"].dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "+00:00"
-
-            noise = rng.uniform(0.90, 1.10, size=len(tile))
-            for col in ("quantity_after", "quantity_delta"):
-                if col in tile.columns:
-                    tile[col] = (tile[col].astype(float) * noise).round().astype(
-                        tile[col].dtype
-                    )
-            tiles.append(tile)
-
-        tiled = pd.concat(tiles, ignore_index=True).sort_values("ts")
-        logger.info(
-            "Tiled events: %d rows across %d days (%s → %s)",
-            len(tiled), n_days,
-            tiled['ts'].min().date(), tiled['ts'].max().date(),
-        )
-        return tiled
+        rows: list[dict] = []
+        for (wh, sku), grp in items.groupby(["warehouse_id", "sku_id"], sort=False):
+            opened = grp["ts"].values.astype("int64")
+            closed = grp["closed_ts"].values.astype("datetime64[ns]").astype("int64")
+            closed = np.where(grp["closed_ts"].isna().values, np.iinfo(np.int64).max, closed)
+            qty    = grp["qty"].fillna(0).values.astype(float)
+            for d in sample_dates:
+                eod_ns   = int((d + pd.Timedelta(days=1)).value)
+                start_ns = int((d - pd.Timedelta(days=window_days)).value)
+                is_open  = (opened >= start_ns) & (opened < eod_ns) & (closed >= eod_ns)
+                rows.append({
+                    "warehouse_id": wh,
+                    "sku_id":       sku,
+                    "sample_date":  d.date(),
+                    out_col:        float(qty[is_open].sum()),
+                })
+        return pd.DataFrame(rows, columns=["warehouse_id", "sku_id", "sample_date", out_col])
 
     def _demand_features(
         self, dem: pd.DataFrame, sample_dates: pd.DatetimeIndex
     ) -> pd.DataFrame:
         """
-        Demand signal count per (warehouse, sku, date) in the 24h window
-        [T-1d, T], matching the demand__demand_signal_count_24h Silver column.
+        Demand signal count per (warehouse, sku, date) on the date itself
+        (midnight to midnight), matching demand__demand_signal_count_24h in Silver.
         """
         dem_sorted = dem.sort_values("ts")
         rows: list[dict] = []
@@ -525,7 +482,7 @@ class BronzeTemporalSampler:
 
             for d in sample_dates:
                 eod_ns  = int((d + pd.Timedelta(days=1)).value)
-                ns_24h  = int((d - pd.Timedelta(days=1)).value)
+                ns_24h  = int(d.value)
                 end_pos = int(np.searchsorted(ts_ns, eod_ns, side="left"))
                 pos_24h = int(np.searchsorted(ts_ns, ns_24h, side="left"))
 

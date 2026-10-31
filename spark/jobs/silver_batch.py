@@ -1,33 +1,35 @@
 """
-Silver Batch — one-shot batch validation for Phase 3.
+Silver job: one feature snapshot per (warehouse_id, sku_id) as of a date,
+written to Silver Parquet and then to the Bigtable feature store.
 
-Reads existing Bronze GCS Parquet in batch mode (spark.read, not readStream),
-computes the full 29-feature vector for every active (warehouse_id, sku_id)
-pair, writes Silver Parquet to GCS, and dual-writes to Bigtable.
+The features describe the end of the as-of day; Bronze events after it are
+never read (spark/jobs/silver_features.py). --as-of defaults to the latest
+day with inventory events in Bronze, which after a replay is the last
+simulated day.
 
-This is NOT the production job. Production uses streaming mode via
-silver_feature_engineering.py. This script exists specifically for local
-Phase 3 validation under Docker Desktop memory constraints where running
-Bronze and Silver streaming jobs simultaneously is not feasible.
+Usage (inside the scip-spark container; see spark/docker-compose.spark.yml):
+    spark-submit ... jobs/silver_batch.py [--as-of YYYY-MM-DD]
+    # or: docker compose -f docker-compose.spark.yml run --rm \
+    #         -e SILVER_AS_OF=2026-09-30 spark-silver-batch
 
-Usage (spark-submit inside the scip-spark container):
-    spark-submit --master local[2] \\
-        --conf spark.driver.memory=384m \\
-        jobs/silver_batch.py
-
-Key differences from silver_feature_engineering.py:
-    - Uses spark.read (batch) instead of readStream / foreachBatch
-    - No checkpoint state — safe to re-run; appends to Silver
-    - Processes ALL Bronze data in one pass (not micro-batch)
-    - Exits cleanly after one write cycle
-    - epoch_id=9000 in lineage to distinguish from streaming epochs
+Writes:
+  Silver    {SILVER_BASE_PATH}/warehouse_id=.../year=/month=/day=  (as-of date)
+            Rerunning the same as-of date replaces those partitions.
+  Bigtable  one row per pair, best-effort after the Silver write: a failed
+            Bigtable write leaves Silver intact, and rerunning the job
+            repopulates Bigtable. lineage:silver_ts is the wall-clock write
+            time, which the scorer's freshness check reads.
 """
 from __future__ import annotations
 
+import argparse
 import logging
+import os
 import sys
+from datetime import date, datetime, timedelta, timezone
 
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
+import pyspark.sql.functions as F
 
 sys.path.insert(0, "/opt/spark-app")
 
@@ -36,21 +38,15 @@ from config.bronze_config import (
     BIGTABLE_TABLE_ID,
     BRONZE_BASE_PATH,
     GCP_PROJECT_ID,
-)
-from jobs.schemas.inventory_schema import INVENTORY_EVENT_SCHEMA
-from jobs.silver_feature_engineering import (
     SILVER_BASE_PATH,
-    _add_lineage,
-    _add_partition_and_row_key,
-    _add_reserved_forecast_columns,
-    _compute_demand_features,
-    _compute_inventory_snapshot,
-    _compute_supplier_features,
-    _compute_velocity,
-    _derive_risk_features,
-    _read_bronze,
-    write_silver,
 )
+from config.feature_config import PIPELINE_VERSION, ROW_KEY_SEPARATOR
+from jobs.schemas.feature_schema import (
+    SILVER_DEDUP_COLS,
+    SILVER_PARTITION_COLS,
+    conform_to_silver_schema,
+)
+from jobs.silver_features import compute_features, latest_event_date
 from utils.bigtable_writer import write_to_bigtable
 
 logging.basicConfig(
@@ -59,15 +55,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("silver_batch")
 
+# Written to lineage:bronze_epoch. A batch run has no streaming epoch; the
+# constant marks rows as written by this job.
 BATCH_EPOCH_ID: int = 9000
 
 
 def create_spark_session() -> SparkSession:
     return (
         SparkSession.builder
-        .appName("scip-silver-batch-validation")
+        .appName("scip-silver-batch")
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.sql.shuffle.partitions", "6")
+        # Day boundaries in the feature windows are UTC midnights.
+        .config("spark.sql.session.timeZone", "UTC")
+        # mode("overwrite") replaces only the partitions being written.
+        .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
         .config("spark.hadoop.fs.gs.impl",
                 "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
         .config("spark.hadoop.fs.AbstractFileSystem.gs.impl",
@@ -77,81 +79,77 @@ def create_spark_session() -> SparkSession:
     )
 
 
+def add_lineage(df: DataFrame, epoch_id: int, event_count: int) -> DataFrame:
+    """
+    Provenance columns. event_count is the number of inventory events this
+    run read (the 30-day window), the same value on every row.
+    """
+    return (
+        df
+        .withColumn("lineage__last_bronze_epoch", F.lit(epoch_id).cast("long"))
+        .withColumn("lineage__last_silver_write", F.lit(datetime.now(timezone.utc).isoformat()))
+        .withColumn("lineage__source_event_count", F.lit(event_count).cast("long"))
+        .withColumn("lineage__pipeline_version", F.lit(PIPELINE_VERSION))
+    )
+
+
+def add_row_key_and_partitions(df: DataFrame, as_of: date) -> DataFrame:
+    """Bigtable row key, the snapshot time (end of the as-of day), and Silver partitions."""
+    window_end = (as_of + timedelta(days=1)).isoformat()
+    return (
+        df
+        .withColumn("row_key", F.concat_ws(ROW_KEY_SEPARATOR, F.col("warehouse_id"), F.col("sku_id")))
+        .withColumn("window_end", F.lit(window_end).cast("timestamp"))
+        .withColumn("year",  F.lit(as_of.year))
+        .withColumn("month", F.lit(as_of.month))
+        .withColumn("day",   F.lit(as_of.day))
+    )
+
+
+def write_silver(feature_df: DataFrame, epoch_id: int) -> int:
+    """Write the snapshot to Silver Parquet, replacing the as-of date's partitions."""
+    deduped = feature_df.dropDuplicates(SILVER_DEDUP_COLS)
+    row_count = deduped.count()
+    if row_count:
+        deduped.write.mode("overwrite").partitionBy(*SILVER_PARTITION_COLS).parquet(SILVER_BASE_PATH)
+    logger.info("write_silver | epoch=%d rows=%d path=%s", epoch_id, row_count, SILVER_BASE_PATH)
+    return row_count
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Compute Silver features as of a date")
+    p.add_argument(
+        "--as-of",
+        default=os.environ.get("SILVER_AS_OF") or None,
+        help="Feature date YYYY-MM-DD (default: latest day with inventory events in Bronze)",
+    )
+    return p.parse_args()
+
+
 def main() -> None:
+    args  = parse_args()
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
 
-    logger.info(
-        "Silver batch starting | bronze=%s silver=%s",
-        BRONZE_BASE_PATH, SILVER_BASE_PATH,
-    )
+    as_of = date.fromisoformat(args.as_of) if args.as_of else latest_event_date(spark, BRONZE_BASE_PATH)
+    if as_of is None:
+        logger.error("No inventory events in %s — has the Bronze job run?", BRONZE_BASE_PATH)
+        spark.stop()
+        sys.exit(1)
+    logger.info("Silver batch starting | as_of=%s bronze=%s silver=%s",
+                as_of, BRONZE_BASE_PATH, SILVER_BASE_PATH)
 
-    # ── Step 1: Read ALL Bronze inventory events (batch, not stream) ──────────
-    inventory_path = f"{BRONZE_BASE_PATH}/inventory.events"
-    inventory_all = (
-        spark.read
-        .schema(INVENTORY_EVENT_SCHEMA)
-        .parquet(inventory_path)
-    )
-
-    # Passed to _add_lineage() as lineage__source_event_count. This is the
-    # count for this whole one-shot backfill run (all historical events),
-    # not a per-micro-batch count — see _add_lineage()'s docstring for why
-    # that differs from the streaming job's scope for the same column.
-    event_count = inventory_all.count()
-    logger.info("Bronze inventory events read | count=%d", event_count)
-
+    features, event_count = compute_features(spark, BRONZE_BASE_PATH, as_of)
     if event_count == 0:
-        logger.error(
-            "No Bronze inventory events at %s — has the Bronze job run?",
-            inventory_path,
-        )
+        logger.error("No inventory events in the 30 days up to %s", as_of)
         spark.stop()
         sys.exit(1)
 
-    # ── Step 2: Derive active (warehouse_id, sku_id) pairs ───────────────────
-    hot_pairs = inventory_all.select("warehouse_id", "sku_id").distinct()
-    pair_count = hot_pairs.count()
-    logger.info("Active (warehouse, sku) pairs | count=%d", pair_count)
-
-    # ── Step 3: Batch-read Bronze sources (same logic as streaming job) ───────
-    inventory_30d = (
-        _read_bronze(spark, "inventory.events", INVENTORY_EVENT_SCHEMA, days_back=30)
-        .join(hot_pairs, ["warehouse_id", "sku_id"], "inner")
-    )
-
-    # ── Step 4: Compute feature groups ───────────────────────────────────────
-    snapshot_df  = _compute_inventory_snapshot(inventory_30d)
-    velocity_df  = _compute_velocity(inventory_30d)
-    demand_df    = _compute_demand_features(spark, hot_pairs)
-    supplier_df  = _compute_supplier_features(spark, hot_pairs)
-
-    # ── Step 5: Join all feature groups ──────────────────────────────────────
-    feature_df = (
-        snapshot_df
-        .join(velocity_df,  ["warehouse_id", "sku_id"], "left")
-        .join(demand_df,    ["warehouse_id", "sku_id"], "left")
-        .join(supplier_df,  ["warehouse_id", "sku_id"], "left")
-    )
-
-    # ── Step 6: Risk features ─────────────────────────────────────────────────
-    feature_df = _derive_risk_features(feature_df)
-
-    # ── Step 7: Reserved demand forecast columns ─────────────────────────────
-    feature_df = _add_reserved_forecast_columns(feature_df)
-
-    # ── Step 8: Lineage + partition columns + Bigtable row key ───────────────
-    feature_df = _add_lineage(feature_df, BATCH_EPOCH_ID, event_count)
-    feature_df = _add_partition_and_row_key(feature_df)
-
-    # Cache before dual-write to avoid recomputing the DAG twice
-    feature_df = feature_df.cache()
-
+    feature_df = conform_to_silver_schema(add_row_key_and_partitions(
+        add_lineage(features, BATCH_EPOCH_ID, event_count), as_of
+    )).cache()
     try:
-        # ── Step 9: Write Silver GCS (primary durable store) ─────────────────
         write_silver(feature_df, BATCH_EPOCH_ID)
-
-        # ── Step 10: Dual-write Bigtable (online feature store) ───────────────
         try:
             write_to_bigtable(
                 df=feature_df,
@@ -162,15 +160,15 @@ def main() -> None:
             )
         except Exception as bt_exc:
             logger.error(
-                "Bigtable write FAILED | error=%s | Silver succeeded — "
-                "Bigtable can be rebuilt from Silver.",
+                "Bigtable write FAILED | error=%s | Silver succeeded — rerun this job "
+                "to repopulate Bigtable.",
                 bt_exc,
             )
     finally:
         feature_df.unpersist()
         spark.stop()
 
-    logger.info("Silver batch complete.")
+    logger.info("Silver batch complete | as_of=%s", as_of)
 
 
 if __name__ == "__main__":

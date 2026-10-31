@@ -13,7 +13,7 @@ Architecture:
 Bronze contract:
   - Raw and immutable — no field transformations beyond type casting
   - May contain duplicates — event_id is the dedup key for Silver
-  - Partitioned by event_type / year / month / day / hour
+  - Partitioned by event_type / year / month / day (event time; events are day-level)
   - demand.signals: signal_type normalised → event_type column for
     consistent partitioning across all topics
 """
@@ -94,7 +94,7 @@ def prepare_bronze_df(validated_df: DataFrame, topic: str) -> DataFrame:
     Steps:
       1. Normalise event_type — demand.signals uses signal_type; rename to event_type
          so all Bronze topics partition on the same column name.
-      2. Extract year/month/day/hour partition columns from timestamp.
+      2. Extract year/month/day partition columns from timestamp.
       3. Drop internal validation columns (_is_valid, _error_*, _corrupt_record).
       4. Retain kafka_* metadata columns for lineage and DLQ replay.
     """
@@ -111,7 +111,6 @@ def prepare_bronze_df(validated_df: DataFrame, topic: str) -> DataFrame:
         .withColumn("year",  F.year(ts_col))
         .withColumn("month", F.month(ts_col))
         .withColumn("day",   F.dayofmonth(ts_col))
-        .withColumn("hour",  F.hour(ts_col))
     )
 
     # Drop validation internals — Bronze stores clean parsed records only
@@ -126,17 +125,22 @@ def write_bronze(df: DataFrame, topic: str, epoch_id: int) -> None:
     """
     Write a validated DataFrame to Bronze GCS as Parquet.
 
-    Partition layout: {BRONZE_BASE_PATH}/{topic}/event_type={t}/year={y}/month={m}/day={d}/hour={h}/
+    Partition layout: {BRONZE_BASE_PATH}/{topic}/event_type={t}/year={y}/month={m}/day={d}/
     Mode: append — Bronze is immutable; duplicates are expected and tolerated.
+
+    Rows are repartitioned by the partition columns first, so each directory
+    gets one file from one task. A replay batch spans weeks of simulated days;
+    without this every input task writes a file into every date directory.
     """
     output_path = f"{BRONZE_BASE_PATH}/{topic}"
     row_count = df.count()
 
     (
         df
+        .repartition("event_type", "year", "month", "day")
         .write
         .mode("append")
-        .partitionBy("event_type", "year", "month", "day", "hour")
+        .partitionBy("event_type", "year", "month", "day")
         .parquet(output_path)
     )
     logger.info(
