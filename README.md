@@ -20,7 +20,7 @@ The focus of the project is the platform architecture and MLOps lifecycle rather
 
 **https://www.youtube.com/watch?v=fpe3sHeRTNs**
 
-The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06), which also matches the model version currently deployed on the endpoint. `main` has moved on since (review remediation; see the ADRs and the cost section below). Check out that tag to reproduce the demo exactly.
+The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06), which also matches the model version currently deployed on the endpoint. `main` has moved on since (review remediation; see the ADRs below). Check out that tag to reproduce the demo exactly.
 
 ---
 
@@ -205,33 +205,15 @@ The monitor produces a structured JSON report (`drift_report.json`) and can opti
 
 ---
 
-## Running Cost and Teardown
+## Teardown
 
-Approximate idle run-rate at us-central1 list prices (October 2026):
+Deployed models and the Bigtable node bill while idle. Between sessions, undeploy the endpoint's models (the endpoint resource stays):
 
-| Resource | Idle cost per month | Note |
-|---|---|---|
-| Bigtable, 1 node, SSD | ~$475 | ~$0.65 per node-hour; there is no free tier |
-| Vertex AI endpoint, n1-standard-2 | ~$80 per deployed model | Billed while deployed, even with no traffic; champion + challenger ≈ $160 |
-| GCS, Pub/Sub, Artifact Registry | a few dollars | |
+```
+python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <endpoint-resource-name>
+```
 
-The model itself costs nothing to run. Between demo sessions:
-
-1. Undeploy the endpoint's models (the endpoint resource stays):
-
-   ```
-   python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <endpoint-resource-name>
-   ```
-
-2. Destroy the Bigtable instance. Silver is the durable source of truth, and the next Silver run rebuilds it:
-
-   ```
-   terraform -chdir=infrastructure/gcp destroy -target=google_bigtable_instance.feature_store
-   ```
-
-   A full `terraform destroy` also removes the data-lake bucket in the `dev` environment (`force_destroy = true`), including Bronze, Silver and the registered model artifacts.
-
-3. Before the next session: `terraform apply`, re-run the Silver job, redeploy, then score.
+The Bigtable instance can also be destroyed. After `terraform apply` recreates it, re-running the Silver job repopulates it from Bronze.
 
 ---
 

@@ -10,7 +10,7 @@ Silver computes 29 features per (warehouse, SKU) pair and writes them as Parquet
 
 Bigtable was selected as a learning objective: row-key design, column families, GC policies, and writes from Spark executors. The data volume does not require it. 120 rows fit in Postgres, in Redis, or in the Silver Parquet output read directly by the scorer. The system is sized for the stack, not for the data.
 
-Cost: a single node bills about $0.65 per hour (about $475 per month at us-central1 list price) regardless of row count, and there is no free tier. It is the dominant cost line, so the instance is destroyed between demo sessions and rebuilt from Silver.
+A node bills by the hour regardless of row count and is the deployment's largest cost, so the instance is destroyed between demo sessions and repopulated by re-running the Silver job.
 
 The data model does fit Bigtable: one wide row per entity, features grouped into families, and only the latest value read.
 

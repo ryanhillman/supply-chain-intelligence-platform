@@ -6,7 +6,7 @@
 
 Training produces `model.onnx`. Serving needs a runtime for it, a store for its predictions, and a way to detect when those predictions stop being trustworthy. The batch scorer reads 120 feature rows from Bigtable, scores them, and stores one prediction per (warehouse, SKU) pair.
 
-Vertex AI (Model Registry and an online endpoint) was selected as a learning objective: model registration, deployment, traffic splitting and promotion on a managed platform. The workload does not require it. A 21 KB model scoring 120 rows once a day can run inside the scorer process. An endpoint bills about $80 per month per deployed model regardless of traffic, so models are undeployed between demo sessions (`deploy.py undeploy`).
+Vertex AI (Model Registry and an online endpoint) was selected as a learning objective: model registration, deployment, traffic splitting and promotion on a managed platform. The workload does not require it: a model this small scoring 120 rows can run inside the scorer process. An endpoint bills by the node-hour while a model is deployed, regardless of traffic, so models are undeployed between demo sessions (`deploy.py undeploy`).
 
 ## Decision 1 — Predictions are not written back to Silver
 
