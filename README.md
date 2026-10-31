@@ -160,8 +160,12 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 | Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
 |---|---|---|---|---|---|---|
 | Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
-| PyTorch MLP (served model) | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
-| LightGBM (comparison only) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
+| PyTorch MLP | 0.941 | 0.838 | 0.079 | 0.934 | 0.774 | 0.072 |
+| LightGBM (comparison only) | 0.945 | 0.849 | 0.078 | 0.938 | 0.791 | 0.070 |
+
+MLP and LightGBM rows are the mean of five training runs with different random seeds. LightGBM was better by small margins.
+
+The model was built in PyTorch for hands-on experience.
 
 ---
 
