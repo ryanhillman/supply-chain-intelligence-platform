@@ -302,7 +302,7 @@ class BatchScorer:
         ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         futures = []
 
-        for req, prob, score in zip(batch, probs, scores):
+        for req, prob, score in zip(batch, probs, scores, strict=True):
             message = {
                 "warehouse_id":         req.warehouse_id,
                 "sku_id":               req.sku_id,

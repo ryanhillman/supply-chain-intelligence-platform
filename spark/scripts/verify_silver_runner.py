@@ -43,7 +43,7 @@ print(f"{'='*55}")
 print("\n-- Row count --")
 df = spark.read.parquet(SILVER_PATH)
 total = df.count()
-check(total > 0, f"Total rows: {total}", f"Silver has 0 rows — job may not have run")
+check(total > 0, f"Total rows: {total}", "Silver has 0 rows — job may not have run")
 
 # ── Schema check ──────────────────────────────────────────────────────────────
 print("\n-- Schema --")
