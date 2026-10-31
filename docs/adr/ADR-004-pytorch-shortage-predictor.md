@@ -4,22 +4,19 @@
 
 ## Context
 
-The model predicts, for each (warehouse, SKU) pair, the probability that stock runs out within the next 7 days. Inputs are 21 numeric features plus the warehouse and SKU identities. Training data comes from a simulator covering 365 days and 120 pairs, about 43,800 labeled rows.
+The model predicts, for each (warehouse, SKU) pair, the probability that stock runs out within the next 7 days. Inputs are 21 numeric features plus the warehouse and SKU identities. Training data comes from the replayed simulation (ADR-006): 365 days and 120 pairs, 39,360 labeled rows.
 
 ## Decision 1 — PyTorch as a learning objective
 
 PyTorch was selected to gain experience training a network end to end: embeddings, a training loop, early stopping, and ONNX export to a serving container. The problem does not require a neural network.
 
-A same-split benchmark confirms this. Synthetic test split, 6,600 rows, 17.3% positive:
+A same-split benchmark confirms this. Test split of the replayed world, 6,000 rows, 21.8% positive; the in-stock columns cover the 5,464 rows with `current_qty > 0` (16.5% positive):
 
-| Model | AUC-ROC | AUPRC | Brier |
-|---|---|---|---|
-| Rule: `days_of_supply < 7` | 0.842 | 0.446 | 0.184 |
-| Normal-approximation formula | 0.871 | 0.593 | 0.166 |
-| Logistic regression | 0.928 | 0.688 | 0.080 |
-| LightGBM (120 trees) | 0.936 | 0.740 | 0.075 |
-| PyTorch MLP, weighted BCE (original default) | 0.933 | 0.719 | 0.117 |
-| PyTorch MLP, unweighted BCE (current default) | 0.932 | 0.732 | 0.076 |
+| Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
+|---|---|---|---|---|---|---|
+| Normal-approximation formula | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
+| PyTorch MLP | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
+| LightGBM (69 trees) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
 
 LightGBM slightly exceeds the MLP on all three metrics and needs no standardization layer or embeddings. It is the recommended model for a production version of this system.
 
@@ -39,7 +36,7 @@ A 7-day warning leaves time to reorder only when the supplier lead time is 7 day
 
 Labeling a Silver row by `days_of_supply < 7` makes the label a threshold on a feature the model already sees, so the model would learn the rule back. Instead, each sample at date T takes its features from events at or before T and its label from events in (T, T+7d]. The model predicts the future from the present, which is the operational task.
 
-The original plan sampled real Bronze history, which required weeks of accumulated events. The training set comes from the simulator instead. The leakage rule is identical for either source.
+The original plan sampled real Bronze history, which required weeks of accumulated events. The training set comes from the simulator, replayed through Kafka and Bronze (ADR-006). The leakage rule is identical for either source.
 
 ## Decision 4 — Features and a time-based split
 
@@ -61,7 +58,7 @@ numeric (21) → Standardize      ┘
   → logit → shortage_prob_7d
 ```
 
-Standardization is a fixed layer inside the model, so the exported graph takes raw features (ADR-005 Decision 3). Training uses AdamW, unweighted BCE, cosine LR decay over the full run, and early stopping on validation AUPRC. Class weighting did not improve ranking and degraded calibration (Brier 0.117 vs 0.076), so it is off by default.
+Standardization is a fixed layer inside the model, so the exported graph takes raw features (ADR-005 Decision 3). Training uses AdamW, unweighted BCE, cosine LR decay over the full run, and early stopping on validation AUPRC. Class weighting did not improve ranking and degraded calibration (Brier 0.095 vs 0.078), so it is off by default.
 
 ## Decision 6 — Beat the formula, not the rule
 
@@ -73,7 +70,7 @@ continuous_risk_score = Φ((7 − μ) / σ)
 σ = current_qty · stddev_daily_7d / avg_daily_sales_7d²
 ```
 
-The formula is the strongest prediction available without a model, computed from three features the model also sees. The initial version compared against the 0/1 rule `days_of_supply < 7`. A binary predictor has structurally low AUC and AUPRC (0.84 / 0.45 on the test split, against 0.87 / 0.59 for the formula and 0.92 / 0.65 for ranking by `days_of_supply`), so beating it demonstrated little. The rule is still reported for context.
+The formula is the strongest prediction available without a model, computed from three features the model also sees. The initial version compared against the 0/1 rule `days_of_supply < 7`. A binary predictor has structurally low AUC and AUPRC (0.83 / 0.51 on the test split, against 0.87 / 0.64 for the formula and 0.91 / 0.69 for ranking by `days_of_supply`), so beating it demonstrated little. The rule is still reported for context.
 
 Evaluation also reports in-stock rows separately. Rows already at zero stock are easy positives and inflate the headline metrics.
 
