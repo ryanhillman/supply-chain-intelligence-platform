@@ -76,7 +76,7 @@ FEATURE_REGISTRY: dict[str, dict[str, str]] = {
         "in_transit_qty":           "transit_qty",
     },
     "risk": {
-        "stockout_risk_score":      "risk_score",   # 0.0–1.0, ML output (Phase 4)
+        "stockout_risk_score":      "risk_score",   # 0.0–1.0, reserved; Silver leaves it empty
         "shortage_prob_7d":         "short_p7d",    # 0.0–1.0
         "reorder_urgency":          "urgency",      # 0|1|2|3
     },
