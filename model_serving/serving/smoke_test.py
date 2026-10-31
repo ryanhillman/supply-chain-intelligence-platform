@@ -8,12 +8,8 @@ Flow
 2. Try to read up to N rows from Bigtable inventory_features table.
    - If Bigtable is unavailable: fall back to synthetic zero-vector instances
      with a clear warning. See note below on expected outputs.
-3. For each Bigtable row (read through FeatureClient.scan_all, the same
-   decoder the batch scorer uses):
-   - Fill missing raw features with safe domain defaults (_fill_defaults).
-   - Compute derived features (days_of_supply, effective_supply, etc.) via
-     engineer_features() from ml_training.datasets.feature_engineer.
-   - Map warehouse_id / sku_id strings to vocab ints.
+3. Turn the rows into endpoint instances with RequestBuilder: the same
+   defaults, derived features and vocab mapping the batch scorer applies.
 4. POST to /predict via aiplatform.Endpoint.predict(), or LocalEndpoint when
    endpoint_url is given (same request/response shape).
 5. Assert all shortage_prob_7d values are:
@@ -42,20 +38,16 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 # Allow importing from ml_training when running from the repo root.
 _REPO_ROOT = Path(__file__).parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from ml_training.datasets.feature_engineer import (
-    NUMERIC_FEATURE_COLS,
-    engineer_features,
-    fill_defaults,
-)
+from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from model_serving.pipeline.feature_client import FeatureClient
 from model_serving.pipeline.local_endpoint import LocalEndpoint
+from model_serving.pipeline.request_builder import RequestBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -116,8 +108,6 @@ class SmokeTest:
             aiplatform.init(**init_kwargs)
 
         self._metadata = self._load_feature_metadata()
-        self._wh_vocab : dict[str, int] = self._metadata["warehouse_vocab"]
-        self._sku_vocab: dict[str, int] = self._metadata["sku_vocab"]
 
     def run(
         self,
@@ -195,7 +185,12 @@ class SmokeTest:
         table_id: str,
         n_samples: int,
     ) -> list[dict]:
-        """Sample n rows through FeatureClient and turn them into endpoint instances."""
+        """
+        Sample n rows through FeatureClient and build endpoint instances with
+        RequestBuilder, so the smoke test sends exactly what the batch scorer
+        sends (absent raw features defaulted, derived features computed,
+        vocab mapped; unknown entities skipped with a warning).
+        """
         with FeatureClient(
             project_id=self.project_id,
             instance_id=instance_id,
@@ -204,50 +199,11 @@ class SmokeTest:
         ) as client:
             rows = client.scan_all(limit=n_samples)
 
-        instances: list[dict] = []
-        for fr in rows:
-            instance = self._features_to_instance(fr.features, fr.warehouse_id, fr.sku_id)
-            if instance is not None:
-                instances.append(instance)
-                logger.info("  Row %-20s -> wh_vocab=%d  sku_vocab=%d",
-                            fr.row_key, instance["warehouse_id"], instance["sku_id"])
-        return instances
-
-    def _features_to_instance(
-        self,
-        raw_features: dict[str, float],
-        warehouse_id: str,
-        sku_id: str,
-    ) -> dict | None:
-        """Apply fill_defaults → engineer_features → vocab mapping (raw units)."""
-        wh_vocab_id  = self._wh_vocab.get(warehouse_id)
-        sku_vocab_id = self._sku_vocab.get(sku_id)
-
-        if wh_vocab_id is None or sku_vocab_id is None:
-            logger.warning(
-                "Unknown warehouse_id=%s or sku_id=%s — not in training vocab. Skipping.",
-                warehouse_id, sku_id,
-            )
-            return None
-
-        # Build a single-row DataFrame so engineer_features() can run
-        row = {**raw_features, "warehouse_id": warehouse_id, "sku_id": sku_id}
-        df  = pd.DataFrame([row])
-
-        # Fill missing raw features with domain defaults
-        fill_defaults(df)
-
-        # Compute derived features (days_of_supply, effective_supply, etc.)
-        df = engineer_features(df)
-
-        # Raw numeric features; the ONNX graph standardizes (ADR-005 Decision 3).
-        x_raw = df[NUMERIC_FEATURE_COLS].values.astype(np.float32).squeeze(0).tolist()
-
-        return {
-            "numeric_features": x_raw,
-            "warehouse_id":     wh_vocab_id,
-            "sku_id":           sku_vocab_id,
-        }
+        requests = RequestBuilder(artifacts_dir=self.artifacts_dir).build(rows)
+        for req in requests:
+            logger.info("  Row %-20s -> wh_vocab=%d  sku_vocab=%d",
+                        req.row_key, req.instance["warehouse_id"], req.instance["sku_id"])
+        return [req.instance for req in requests]
 
     def _synthetic_instances(self, n_samples: int) -> list[dict]:
         """
