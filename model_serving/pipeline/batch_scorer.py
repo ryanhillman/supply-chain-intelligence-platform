@@ -374,9 +374,7 @@ class BatchScorer:
             logger.warning(
                 "DISTRIBUTION SHIFT ALERT: shortage_prob_7d std=%.4f < %.2f. "
                 "Model predictions have collapsed to a near-constant value. "
-                "This is expected with the simulated-data model on real Silver data "
-                "(ADR-005 Decision 7). "
-                "Trigger Phase 5.5 drift monitoring and retraining gate.",
+                "Run monitor.py to check feature drift (ADR-005 Decision 7).",
                 stats.prob_std, _VARIANCE_COLLAPSE_THRESHOLD,
             )
 

@@ -48,7 +48,34 @@ jobs:
         run: ruff check .
 
       - name: Tests (pytest)
-        run: pytest -q
+        run: pytest -q -m "not slow"
+
+  spark-parity:
+    name: Spark parity (Silver vs training sampler)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # PySpark 3.5.3 matches the scip-spark image (apache/spark:3.5.3) and
+      # supports Java 17.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Only what Silver and the sampler import: no torch, no cloud clients.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pyspark==3.5.3" "pandas>=2.1,<3" numpy scipy pyarrow gcsfs pytest
+
+      - name: Parity test
+        run: pytest -q -m slow tests/test_spark_parity.py
 
   terraform:
     name: terraform fmt + validate

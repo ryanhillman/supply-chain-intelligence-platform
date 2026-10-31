@@ -5,7 +5,7 @@ Writes Silver feature DataFrames to Bigtable using the Google Cloud Bigtable
 Python client's mutate_rows batch API.
 
 Design:
-  - Called from foreachBatch inside silver_feature_engineering.py
+  - Called by spark/jobs/silver_batch.py after the Silver write
   - Uses foreachPartition so each Spark executor opens its own Bigtable client
     (avoids serialising the client object across the network)
   - Values encoded as big-endian double (numeric) or UTF-8 bytes (string)
@@ -204,14 +204,14 @@ def write_to_bigtable(
     """
     Write a Silver feature DataFrame to Bigtable.
 
-    Called from foreachBatch in silver_feature_engineering.py.
+    Called by spark/jobs/silver_batch.py.
 
     Args:
         df:          Silver feature DataFrame (conforms to SILVER_FEATURE_SCHEMA).
         project_id:  GCP project ID.
         instance_id: Bigtable instance ID (e.g. "scip-feature-store").
         table_id:    Bigtable table ID (e.g. "inventory_features").
-        epoch_id:    Spark micro-batch epoch (logged for observability).
+        epoch_id:    Writer's epoch id (logged for observability).
 
     The DataFrame must contain:
       - row_key  (string): pre-computed as "{warehouse_id}#{sku_id}"
