@@ -174,8 +174,6 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 | PyTorch MLP (served model) | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
 | LightGBM (comparison only) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
 
-The data is simulated, so these numbers describe the model on the simulated world, not on real inventory.
-
 ---
 
 ## Model Serving Pipeline
