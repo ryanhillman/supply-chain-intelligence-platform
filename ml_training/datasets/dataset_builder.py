@@ -73,9 +73,13 @@ class DatasetBuilder:
     Parameters
     ----------
     bucket:
-        GCS bucket name.
+        GCS bucket name (Bronze under gs://<bucket>/bronze/). Mutually
+        exclusive with bronze_path.
+    bronze_path:
+        Local Bronze directory written by the Spark job (e.g. spark/data/bronze).
+        Mutually exclusive with bucket.
     credentials_path:
-        Service account JSON path, or None for ADC.
+        Service account JSON path, or None for ADC (bucket mode only).
     output_dir:
         Local directory for all output files.
     horizon_days:
@@ -84,25 +88,28 @@ class DatasetBuilder:
 
     def __init__(
         self,
-        bucket:           str,
+        bucket:           str | None = None,
         credentials_path: str | None = None,
         output_dir:       str | Path  = "ml_training/artifacts/dataset",
         horizon_days:     int         = 7,
         simulate_days:    int         = 0,
+        bronze_path:      str | Path | None = None,
     ) -> None:
         self.bucket           = bucket
+        self.bronze_path      = bronze_path
         self.credentials_path = credentials_path
         self.output_dir       = Path(output_dir)
         self.horizon_days     = horizon_days
         self.simulate_days    = simulate_days
 
     def build(self) -> DatasetManifest:
-        """Run the full pipeline from GCS Bronze and return a DatasetManifest."""
+        """Run the full pipeline from Bronze (local or GCS) and return a DatasetManifest."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # ── Step 1: Sample Bronze temporal features ───────────────────────────
         sampler = BronzeTemporalSampler(
             bucket=self.bucket,
+            bronze_path=self.bronze_path,
             credentials_path=self.credentials_path,
             simulate_days=self.simulate_days,
         )
@@ -111,7 +118,7 @@ class DatasetBuilder:
 
     def build_from_synthetic(self, generator: object) -> DatasetManifest:
         """
-        Build the dataset from a SyntheticDataGenerator instead of GCS Bronze.
+        Build the dataset from a SyntheticDataGenerator instead of Bronze.
 
         The generator must implement .build() returning (feature_rows, inv_events)
         with the same column contract as BronzeTemporalSampler.build().
