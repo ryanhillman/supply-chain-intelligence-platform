@@ -4,7 +4,7 @@
 # prediction-writer service account + IAM.
 #
 # Decouples batch scoring from Bigtable writes: batch_scorer.py publishes;
-# prediction_writer.py subscribes. See ADR-005, Decision 5.
+# prediction_writer.py subscribes.
 ###############################################################################
 
 ###############################################################################

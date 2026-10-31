@@ -357,7 +357,7 @@ def _run_scoring(
         print(
             "\n  [WARNING] prediction variance collapsed (std < 0.01).\n"
             "  Run model_serving/scripts/monitor.py to check feature drift\n"
-            "  (ADR-005 Decision 7) before using these predictions."
+            "  before using these predictions."
         )
 
     if stats.predictions_published == 0:

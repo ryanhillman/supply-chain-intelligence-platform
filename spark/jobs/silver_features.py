@@ -220,7 +220,7 @@ def _risk(df: DataFrame) -> DataFrame:
     """
     days_of_supply and reorder_urgency (0 OK, 1 WATCH, 2 REORDER, 3 CRITICAL).
     stockout_risk_score and shortage_prob_7d stay null in Silver: predictions
-    are stored in Bigtable, never written back here (ADR-005 Decision 1).
+    are stored in Bigtable, never written back here.
     """
     dos = F.when(
         F.col("velocity__avg_daily_sales_7d") > 0,

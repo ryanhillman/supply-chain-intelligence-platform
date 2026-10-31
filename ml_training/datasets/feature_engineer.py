@@ -19,7 +19,7 @@ Leakage columns explicitly absent from NUMERIC_FEATURE_COLS:
 Also home to normal_stockout_prob(): the closed-form P(stockout ≤ horizon)
 used as the continuous_risk_score label column, the baseline the model must
 beat, and the stockout_risk_score the batch scorer publishes — one definition
-for all three (ADR-004 Decision 6).
+for all three.
 """
 from __future__ import annotations
 

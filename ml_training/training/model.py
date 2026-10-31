@@ -13,7 +13,7 @@ Architecture:
 The model owns standardization. μ and σ are registered buffers — saved in the
 checkpoint and exported inside the ONNX graph — so every consumer (trainer,
 evaluator, ONNX export, serving container, batch scorer) feeds raw feature
-units. See ADR-005 Decision 3.
+units.
 
 There is one output. stockout_risk_score, the second value the pipeline
 publishes, is the closed-form Normal-approximation P(stockout ≤ 7d) computed

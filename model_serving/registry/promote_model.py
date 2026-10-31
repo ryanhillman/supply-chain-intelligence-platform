@@ -34,13 +34,6 @@ The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
 SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
 method in all SDK versions. The gapic PATCH call is the canonical approach.
 
-Distribution-shift note (ADR-005 Decision 7)
---------------------------------------------
-A model trained on simulated data and then evaluated on real Bronze data WILL
-fail the PSI check in drift_monitor.py before reaching this promotion gate.
-The metrics comparison here is a secondary gate for ML quality, not a substitute
-for the distribution-shift check.
-
 Required packages:
     google-cloud-aiplatform>=1.38.0
     google-cloud-storage>=2.16.0
@@ -609,7 +602,7 @@ def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np
     """
     Run one exported model over a raw-unit split and return shortage_prob_7d.
 
-    The graph standardizes internally (ADR-005 Decision 3), so the parquet's
+    The graph standardizes internally, so the parquet's
     raw columns go straight in, in the model's own numeric_features order and
     with its own vocab. Any entity the model has never seen is an error, not
     a silent default: the comparison must cover the same rows for both models.

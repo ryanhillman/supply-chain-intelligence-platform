@@ -202,8 +202,7 @@ class ModelRegistrar:
             display_name=f"shortage-predictor-{version}",
             description=(
                 f"ShortagePredictor ONNX model, version {version}. "
-                "Trained on Phase 4 dataset (simulated Bronze data). "
-                "See ADR-005 for distribution-shift caveats."
+                "Trained on simulated data."
             ),
             artifact_uri=gcs_artifact_uri,
             serving_container_image_uri=image_uri,

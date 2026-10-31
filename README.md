@@ -91,11 +91,11 @@ Kafka ingests inventory, supplier, shipment, purchase order, and demand events g
 
 Spark Structured Streaming consumes Kafka topics and writes immutable raw events to the Bronze layer in Google Cloud Storage.
 
-A Silver batch job computes, as of a given date, a snapshot of 29 supply-chain features for each warehouse-SKU entity from Bronze.
+A Silver batch job computes, as of a given date, a feature snapshot for each warehouse-SKU entity from Bronze.
 
-Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for model training and inference.
+Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for scoring and drift monitoring.
 
-A PyTorch shortage prediction model is trained on historical feature data and exported to ONNX for portable deployment.
+A PyTorch shortage prediction model is trained on rows the training sampler builds from Bronze and exported to ONNX for portable deployment.
 
 The model is deployed to Vertex AI Endpoints using a containerized FastAPI application powered by ONNX Runtime.
 
@@ -103,7 +103,7 @@ The batch scoring pipeline reads features from Bigtable, generates predictions t
 
 A prediction writer consumes Pub/Sub messages and stores shortage-risk predictions back into Bigtable for downstream consumers.
 
-A drift monitoring service evaluates live feature distributions against training baselines and reports potential model degradation.
+A drift monitor compares live feature distributions with the training data and reports potential model degradation.
 
 GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were provisioned with Terraform.
 
@@ -113,36 +113,27 @@ GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were 
 
 ### Problem Formulation
 
-The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a stockout within the next 7 days. Predictions are returned as:
+The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a stockout within the next 7 days. The scorer publishes two values per entity:
 
-- **shortage_prob_7d** — probability of a shortage event
-- **stockout_risk_score** — closed-form P(stockout ≤ 7d) under a Normal approximation of days-to-zero, computed from current stock, 7-day average sales and their spread
+- **shortage_prob_7d** — the model's probability of a stockout within 7 days
+- **stockout_risk_score** — the baseline: closed-form P(stockout ≤ 7d) under a Normal approximation, computed from current stock and the 7-day mean and standard deviation of daily sales. It is not a model output.
 
 ### Features
 
-The training dataset is built from Silver-layer snapshots containing 29 engineered supply chain features across six domains:
+Silver writes 29 columns per warehouse-SKU entity in six groups:
 
 - Inventory position
 - Demand velocity
-- Demand forecasts
+- Demand signals
 - Supplier performance
 - Risk metrics
 - Data lineage
 
-The model consumes 21 numeric features along with warehouse and SKU embeddings.
+Five are reserved and left empty: the three demand-forecast columns and the two prediction columns. The model takes 21 numeric features plus the warehouse and SKU IDs, for which it learns embeddings.
 
 ### Model
 
-The shortage predictor is implemented in PyTorch as a feed-forward neural network with learned warehouse and SKU embeddings.
-
-**Key characteristics:**
-
-- 21 engineered numeric features
-- Warehouse embeddings
-- SKU embeddings
-- Single output: the shortage probability. The risk score is a closed-form formula computed at scoring time, not a second head
-
-After training, the model is exported to ONNX and validated with ONNX Runtime before deployment.
+The shortage predictor is a PyTorch feed-forward network (MLP) with learned warehouse and SKU embeddings and one output, the shortage probability. After training, it is exported to ONNX and its output is checked against PyTorch's with ONNX Runtime.
 
 ### Training Data
 
@@ -154,15 +145,13 @@ Training and scoring data come from one simulated supply chain (`simulation/worl
 - Demand spikes
 - Inventory replenishment behavior
 
-The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. The training sampler builds 39,360 labeled rows from Bronze, one per warehouse-SKU-day after a 30-day warm-up, with the same feature windows Silver uses for scoring (ADR-006).
+The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. The training sampler builds 39,360 labeled rows from Bronze, one per warehouse-SKU-day, leaving out the first 30 days (feature warm-up) and the last 7 (no outcome yet), with the same feature windows Silver uses for scoring.
 
 ### Training Configuration
 
-- Temporal train / validation / test split
-- 7-day shortage prediction horizon
+- Time-based 70 / 15 / 15 train / validation / test split, with a 7-day gap before each cutoff
 - AdamW optimizer
-- Early stopping on validation performance
-- ONNX export for production inference
+- Early stopping on validation AUPRC
 
 ### Test Results
 
@@ -171,10 +160,12 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 | Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
 |---|---|---|---|---|---|---|
 | Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
-| PyTorch MLP (served model) | 0.942 | 0.839 | 0.078 | 0.935 | 0.776 | 0.071 |
-| LightGBM (comparison, ADR-004) | 0.944 | 0.849 | 0.076 | 0.937 | 0.790 | 0.069 |
+| PyTorch MLP | 0.941 | 0.838 | 0.079 | 0.934 | 0.774 | 0.072 |
+| LightGBM (comparison only) | 0.945 | 0.849 | 0.078 | 0.938 | 0.791 | 0.070 |
 
-The data is simulated, so these numbers describe the model on the simulated world, not on real inventory.
+MLP and LightGBM rows are the mean of five training runs with different random seeds. LightGBM was better by small margins.
+
+The model was built in PyTorch for hands-on experience.
 
 ---
 
@@ -185,22 +176,12 @@ The data is simulated, so these numbers describe the model on the simulated worl
 3. The serving container performs inference using ONNX Runtime.
 4. Prediction results are published to Pub/Sub.
 5. The prediction writer stores predictions back into Bigtable.
-6. Drift monitoring evaluates live feature distributions against training baselines.
-
-### Serving Components
-
-- Vertex AI Model Registry
-- Vertex AI Endpoint
-- FastAPI Serving Container
-- ONNX Runtime
-- Pub/Sub Prediction Pipeline
-- Bigtable Prediction Store
 
 ---
 
 ## Drift Monitoring
 
-The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw training split, written next to the model as `drift_reference.json` so the reference travels with the model, and both sides share units) using **Population Stability Index (PSI)**. PSI thresholds follow industry convention:
+The drift monitor compares live features in Bigtable with the training split using the Population Stability Index (PSI). Its reference bins (deciles of the raw training split) are written next to the model as `drift_reference.json`, so the reference travels with the model. PSI thresholds:
 
 | PSI | Interpretation |
 |---|---|
@@ -208,9 +189,15 @@ The drift monitor compares the live feature distribution (read from Bigtable) ag
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-PSI covers `days_of_supply`, `sales_7d` and `avg_daily_sales_7d`. `supplier_reliability` is computed per warehouse, so a snapshot holds only six values and PSI over them is meaningless; each warehouse's live value is instead checked against that warehouse's training p1–p99 and an out-of-range warehouse is reported as an informational warning, not a retraining trigger. Two more triggers run alongside: **prediction variance collapse** (a `shortage_prob_7d` standard deviation below 0.01 across the scored population means the model has lost discriminative power) and **baseline divergence** (if the model agrees with the rule-based `risk__reorder_urgency` heuristic on more than 95% of entities, it isn't adding signal over the heuristic). Any one of these is sufficient to recommend retraining.
+Retraining is recommended when any of these trips:
 
-The monitor produces a structured JSON report (`drift_report.json`) and can optionally emit the PSI, variance and divergence metrics to Cloud Monitoring. All triggers are advisory — the report flags a retraining recommendation for a human to act on; nothing in the scoring or promotion scripts reads it back to block anything automatically yet.
+- PSI ≥ 0.20 on `days_of_supply`, `sales_7d` or `avg_daily_sales_7d`
+- Prediction variance collapse: standard deviation of `shortage_prob_7d` or `stockout_risk_score` below 0.01 across scored entities
+- Baseline divergence: the model agrees with the `risk__reorder_urgency` rule on more than 95% of entities
+
+`supplier_reliability` is computed per warehouse, so a snapshot holds only six values, too few for PSI. Each warehouse's value is checked against its training p1–p99, and an out-of-range warehouse is reported as a warning, not a trigger.
+
+The monitor writes `drift_report.json` and can emit its metrics to Cloud Monitoring. The report is advisory: nothing reads it back to block scoring or promotion.
 
 ---
 
@@ -223,13 +210,3 @@ python model_serving/scripts/deploy.py undeploy --project <project> --endpoint <
 ```
 
 The Bigtable instance can also be destroyed. After `terraform apply` recreates it, re-running the Silver job repopulates it from Bronze.
-
----
-
-## Key Design Decisions
-
-The stack (Kafka, Spark, Bigtable, PyTorch, Vertex AI) was selected for hands-on experience with each technology, not because 6 warehouses and 20 SKUs require it. The system is sized for the stack, not the data: 120 feature rows fit in Postgres or a Parquet file, and the model could be scored inside the batch job instead of behind an endpoint. On the same test split, LightGBM matches the PyTorch model (AUPRC 0.849 vs 0.839, Brier 0.076 vs 0.078) and is the recommended production choice. The MLP is retained as the learning artifact and comparison row. The decision records document each choice, including designs that were later corrected:
-
-- [ADR-003 — Bigtable as the online feature store](docs/adr/ADR-003-bigtable-feature-store.md)
-- [ADR-004 — PyTorch shortage predictor](docs/adr/ADR-004-pytorch-shortage-predictor.md)
-- [ADR-005 — Vertex AI serving and prediction storage](docs/adr/ADR-005-vertex-ai-serving.md)
