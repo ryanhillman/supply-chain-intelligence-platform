@@ -8,16 +8,26 @@ sees the future. spark/jobs/silver_batch.py is the job that calls it and
 writes the result; tests/test_spark_parity.py calls it directly and compares
 the output with the training sampler's features for the same date.
 
-Feature groups and their Bronze windows (as-of date D):
-  inventory   latest event in the last 30 days      current_qty, reorder_point,
-                                                    safety_stock, last event
-  velocity    SALE postings, last 7 and 30 days     sales, averages, trend, stddev
-  demand      demand signals, last 24 hours         signal count, last signal type
-  supplier    supplier events, last 90 days          lead time, stddev, reliability
-              (aggregated per warehouse)
-  pipeline    purchase orders, last 90 days          active_po_qty
-              shipments, last 30 days                in_transit_qty
-  risk        derived                               days_of_supply, reorder_urgency
+Feature groups and their Bronze windows (as-of date D; every window ends at
+midnight after D). ml_training/datasets/bronze_temporal_sampler.py computes
+the same features for training with the same windows; tests/test_spark_parity.py
+checks that the two agree.
+
+  inventory   latest event, D-29..D             current_qty, reorder_point,
+                                                safety_stock, last event
+  velocity    SALE postings, D-6..D and D-29..D sales, averages, trend, stddev
+  demand      demand signals on D               signal count, last signal type
+  supplier    supplier events, D-90..D          lead time, stddev, reliability
+              (per warehouse)
+  pipeline    orders created D-90..D and not    active_po_qty
+              yet received
+              shipments shipped D-30..D and     in_transit_qty
+              not yet delivered
+  risk        derived                           days_of_supply, reorder_urgency
+
+The world model posts one SALE per pair per day, so the latest inventory
+event is always inside the 30-day window. Bronze may hold the same event
+twice (a repeated replay); reads drop duplicate event_ids.
 """
 from __future__ import annotations
 
@@ -53,7 +63,7 @@ def read_bronze(
 ) -> DataFrame:
     """
     Bronze events for `topic` from midnight `days_back` days before `as_of`
-    up to (not including) midnight after `as_of`.
+    up to (not including) midnight after `as_of`, one row per event_id.
 
     The year/month/day predicates prune partition directories before any file
     is opened; the timestamp predicates then apply the exact window.
@@ -70,6 +80,7 @@ def read_bronze(
         .parquet(path)
         .filter((part_date >= F.lit(start)) & (part_date < F.lit(end)))
         .filter((ts >= _midnight(start)) & (ts < _midnight(end)))
+        .dropDuplicates(["event_id"])
     )
 
 
@@ -128,7 +139,7 @@ def _velocity(inventory_30d: DataFrame, as_of: date) -> DataFrame:
     sales_30d = sales.groupBy(*PAIR).agg(F.sum(units).alias("velocity__sales_30d"))
 
     daily_7d = (
-        sales.filter(F.col("timestamp").cast("timestamp") >= _midnight(as_of - timedelta(days=7)))
+        sales.filter(F.col("timestamp").cast("timestamp") >= _midnight(as_of - timedelta(days=6)))
         .groupBy(*PAIR, F.to_date(F.col("timestamp").cast("timestamp")).alias("sale_date"))
         .agg(F.sum(units).alias("daily_units"))
     )
@@ -167,7 +178,11 @@ def _demand(demand_24h: DataFrame) -> DataFrame:
 
 def _supplier(supplier_90d: DataFrame, po_90d: DataFrame, shipments_30d: DataFrame,
               pairs: DataFrame) -> DataFrame:
-    """Lead time and reliability per warehouse; open order and in-transit quantity per pair."""
+    """
+    Lead time and reliability per warehouse; open order and in-transit quantity
+    per pair. An order counts until its RECEIVED event and a shipment until its
+    DELIVERED event (matched by order_id / shipment_id).
+    """
     supplier_agg = (
         supplier_90d.join(pairs.select("warehouse_id").distinct(), "warehouse_id", "inner")
         .groupBy("warehouse_id")
@@ -178,12 +193,17 @@ def _supplier(supplier_90d: DataFrame, po_90d: DataFrame, shipments_30d: DataFra
             F.avg("on_time_delivery_rate").alias("supplier__supplier_reliability"),
         )
     )
+    received = po_90d.filter(F.col("event_type") == "RECEIVED").select("order_id")
     active_po = (
         po_90d.filter(F.col("event_type").isin("CREATED", "SUBMITTED"))
+        .dropDuplicates(["order_id"])
+        .join(received, "order_id", "left_anti")
         .groupBy(*PAIR).agg(F.sum("quantity_ordered").cast("double").alias("supplier__active_po_qty"))
     )
+    delivered = shipments_30d.filter(F.col("event_type") == "DELIVERED").select("shipment_id")
     in_transit = (
         shipments_30d.filter(F.col("event_type") == "SHIPPED")
+        .join(delivered, "shipment_id", "left_anti")
         .groupBy(*PAIR).agg(F.sum("quantity").cast("double").alias("supplier__in_transit_qty"))
     )
     # Anchored on all pairs: a pair with no open order keeps its supplier and
@@ -230,10 +250,10 @@ def compute_features(spark: SparkSession, bronze_base: str, as_of: date) -> tupl
     Feature rows for every pair with inventory events in the 30 days up to
     `as_of`, plus the number of inventory events read (for lineage).
     """
-    inventory_30d = read_bronze(spark, bronze_base, "inventory.events", INVENTORY_EVENT_SCHEMA, as_of, 30)
+    inventory_30d = read_bronze(spark, bronze_base, "inventory.events", INVENTORY_EVENT_SCHEMA, as_of, 29)
     pairs = inventory_30d.select(*PAIR).distinct()
 
-    demand_24h    = read_bronze(spark, bronze_base, "demand.signals", DEMAND_SIGNAL_SCHEMA, as_of, 1)
+    demand_24h    = read_bronze(spark, bronze_base, "demand.signals", DEMAND_SIGNAL_SCHEMA, as_of, 0)
     supplier_90d  = read_bronze(spark, bronze_base, "suppliers.events", SUPPLIER_EVENT_SCHEMA, as_of, 90)
     po_90d        = read_bronze(spark, bronze_base, "purchase.orders.events",
                                 PURCHASE_ORDER_EVENT_SCHEMA, as_of, 90)

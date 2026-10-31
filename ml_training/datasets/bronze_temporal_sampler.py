@@ -17,9 +17,13 @@ feature_engineer.py):
   velocity   : sales_7d, sales_30d, avg_daily_sales_7d, avg_daily_sales_30d,
                velocity_trend, stddev_daily_7d
   supplier   : lead_time_days, lead_time_stddev, supplier_reliability
-  po         : active_po_qty  (CREATED/SUBMITTED in last 90d)
-  shipment   : in_transit_qty (SHIPPED in last 30d)
-  demand     : demand_signal_count_24h
+  po         : active_po_qty  (created in the last 90d, not yet received)
+  shipment   : in_transit_qty (shipped in the last 30d, not yet delivered)
+  demand     : demand_signal_count_24h (signals on the sample date)
+
+Windows match spark/jobs/silver_features.py exactly, so a model trained on
+these rows is scored on the same features (tests/test_spark_parity.py).
+Duplicate event_ids (a repeated replay) are dropped on read.
 """
 from __future__ import annotations
 
@@ -42,21 +46,21 @@ _PARTITION_COLS = {"year", "month", "day"}
 
 # Field subsets to load per topic (avoids reading unused columns from GCS).
 _INVENTORY_COLS = [
-    "warehouse_id", "sku_id", "event_type",
+    "event_id", "warehouse_id", "sku_id", "event_type",
     "quantity_after", "quantity_delta",
     "reorder_point", "safety_stock", "timestamp",
 ]
 _SUPPLIER_COLS = [
-    "warehouse_id", "lead_time_days", "on_time_delivery_rate", "timestamp",
+    "event_id", "warehouse_id", "lead_time_days", "on_time_delivery_rate", "timestamp",
 ]
 _PO_COLS = [
-    "warehouse_id", "sku_id", "event_type", "quantity_ordered", "timestamp",
+    "event_id", "warehouse_id", "sku_id", "event_type", "order_id", "quantity_ordered", "timestamp",
 ]
 _SHIPMENT_COLS = [
-    "warehouse_id", "sku_id", "event_type", "quantity", "timestamp",
+    "event_id", "warehouse_id", "sku_id", "event_type", "shipment_id", "quantity", "timestamp",
 ]
 _DEMAND_COLS = [
-    "warehouse_id", "sku_id", "timestamp",
+    "event_id", "warehouse_id", "sku_id", "timestamp",
 ]
 
 
@@ -239,6 +243,8 @@ class BronzeTemporalSampler:
             requested = [c for c in columns if c in available]
             table = dataset.to_table(columns=requested)
             df = table.to_pandas()
+            if "event_id" in df.columns:
+                df = df.drop_duplicates("event_id")
             logger.info("Read %s: %d rows", topic, len(df))
             return df
         except Exception as exc:
@@ -420,59 +426,56 @@ class BronzeTemporalSampler:
         self, po: pd.DataFrame, sample_dates: pd.DatetimeIndex
     ) -> pd.DataFrame:
         """
-        Active PO quantity per (warehouse, sku, date): sum of quantity_ordered
-        from CREATED or SUBMITTED events in the last 90 days.
+        Open order quantity per (warehouse, sku, date): quantity_ordered of
+        orders created in the last 90 days whose RECEIVED event has not
+        happened by the end of the date (matched by order_id).
         """
-        active = po[po["event_type"].isin(["CREATED", "SUBMITTED"])].sort_values("ts")
-        rows: list[dict] = []
-
-        for (wh, sku), grp in active.groupby(["warehouse_id", "sku_id"], sort=False):
-            ts_ns  = grp["ts"].values.astype("int64")
-            qty    = grp["quantity_ordered"].fillna(0).values.astype(float)
-
-            for d in sample_dates:
-                eod_ns  = int((d + pd.Timedelta(days=1)).value)
-                ns_90d  = int((d - pd.Timedelta(days=90)).value)
-                end_pos = int(np.searchsorted(ts_ns, eod_ns, side="left"))
-                pos_90d = int(np.searchsorted(ts_ns, ns_90d, side="left"))
-
-                rows.append({
-                    "warehouse_id":  wh,
-                    "sku_id":        sku,
-                    "sample_date":   d.date(),
-                    "active_po_qty": float(qty[pos_90d:end_pos].sum()),
-                })
-
-        return pd.DataFrame(rows)
+        opened = (po[po["event_type"].isin(["CREATED", "SUBMITTED"])]
+                  .drop_duplicates("order_id")[["warehouse_id", "sku_id", "order_id", "quantity_ordered", "ts"]])
+        closed = po[po["event_type"] == "RECEIVED"].groupby("order_id")["ts"].min().rename("closed_ts")
+        orders = opened.join(closed, on="order_id").rename(columns={"quantity_ordered": "qty"})
+        return self._open_quantity(orders, sample_dates, window_days=90, out_col="active_po_qty")
 
     def _shipment_features(
         self, shp: pd.DataFrame, sample_dates: pd.DatetimeIndex
     ) -> pd.DataFrame:
         """
-        In-transit quantity per (warehouse, sku, date): sum of quantity from
-        SHIPPED events in the last 30 days.
+        In-transit quantity per (warehouse, sku, date): quantity of shipments
+        shipped in the last 30 days whose DELIVERED event has not happened by
+        the end of the date (matched by shipment_id).
         """
-        shipped = shp[shp["event_type"] == "SHIPPED"].sort_values("ts")
+        opened = shp[shp["event_type"] == "SHIPPED"][["warehouse_id", "sku_id", "shipment_id", "quantity", "ts"]]
+        closed = shp[shp["event_type"] == "DELIVERED"].groupby("shipment_id")["ts"].min().rename("closed_ts")
+        shipments = opened.join(closed, on="shipment_id").rename(columns={"quantity": "qty"})
+        return self._open_quantity(shipments, sample_dates, window_days=30, out_col="in_transit_qty")
+
+    @staticmethod
+    def _open_quantity(
+        items: pd.DataFrame, sample_dates: pd.DatetimeIndex, window_days: int, out_col: str
+    ) -> pd.DataFrame:
+        """
+        Sum of `qty` per (warehouse, sku, date) over items opened in
+        [date - window_days, end of date) and not closed before the end of the
+        date. `items` has warehouse_id, sku_id, qty, ts (opened) and closed_ts
+        (NaT while open).
+        """
         rows: list[dict] = []
-
-        for (wh, sku), grp in shipped.groupby(["warehouse_id", "sku_id"], sort=False):
-            ts_ns = grp["ts"].values.astype("int64")
-            qty   = grp["quantity"].fillna(0).values.astype(float)
-
+        for (wh, sku), grp in items.groupby(["warehouse_id", "sku_id"], sort=False):
+            opened = grp["ts"].values.astype("int64")
+            closed = grp["closed_ts"].values.astype("datetime64[ns]").astype("int64")
+            closed = np.where(grp["closed_ts"].isna().values, np.iinfo(np.int64).max, closed)
+            qty    = grp["qty"].fillna(0).values.astype(float)
             for d in sample_dates:
-                eod_ns  = int((d + pd.Timedelta(days=1)).value)
-                ns_30d  = int((d - pd.Timedelta(days=30)).value)
-                end_pos = int(np.searchsorted(ts_ns, eod_ns, side="left"))
-                pos_30d = int(np.searchsorted(ts_ns, ns_30d, side="left"))
-
+                eod_ns   = int((d + pd.Timedelta(days=1)).value)
+                start_ns = int((d - pd.Timedelta(days=window_days)).value)
+                is_open  = (opened >= start_ns) & (opened < eod_ns) & (closed >= eod_ns)
                 rows.append({
-                    "warehouse_id":  wh,
-                    "sku_id":        sku,
-                    "sample_date":   d.date(),
-                    "in_transit_qty": float(qty[pos_30d:end_pos].sum()),
+                    "warehouse_id": wh,
+                    "sku_id":       sku,
+                    "sample_date":  d.date(),
+                    out_col:        float(qty[is_open].sum()),
                 })
-
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows, columns=["warehouse_id", "sku_id", "sample_date", out_col])
 
     @staticmethod
     def _tile_events(inv: pd.DataFrame, n_days: int, seed: int = 42) -> pd.DataFrame:
@@ -514,8 +517,8 @@ class BronzeTemporalSampler:
         self, dem: pd.DataFrame, sample_dates: pd.DatetimeIndex
     ) -> pd.DataFrame:
         """
-        Demand signal count per (warehouse, sku, date) in the 24h window
-        [T-1d, T], matching the demand__demand_signal_count_24h Silver column.
+        Demand signal count per (warehouse, sku, date) on the date itself
+        (midnight to midnight), matching demand__demand_signal_count_24h in Silver.
         """
         dem_sorted = dem.sort_values("ts")
         rows: list[dict] = []
@@ -525,7 +528,7 @@ class BronzeTemporalSampler:
 
             for d in sample_dates:
                 eod_ns  = int((d + pd.Timedelta(days=1)).value)
-                ns_24h  = int((d - pd.Timedelta(days=1)).value)
+                ns_24h  = int(d.value)
                 end_pos = int(np.searchsorted(ts_ns, eod_ns, side="left"))
                 pos_24h = int(np.searchsorted(ts_ns, ns_24h, side="left"))
 
