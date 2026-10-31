@@ -91,6 +91,17 @@ Evaluation also reports in-stock rows separately. Rows already at zero stock are
 
 Retraining is manual. The drift monitor recommends it (ADR-005 Decision 7), and a new model reaches traffic only if it beats the current one on the same test split (ADR-005 Decision 6). No scheduler triggers a retrain; at this scale none is needed.
 
+## At scale
+
+Replacing the MLP with LightGBM would keep the data path (Kafka, Spark, Bigtable, Pub/Sub, the feature client). Training, evaluation, ONNX export, the serving container's model loader and promotion rescoring are written for this network's graph (three inputs, one logit output) and would change.
+
+A neural model would be worth re-evaluating against LightGBM if the problem changed shape:
+
+- **Sequence input:** raw event history instead of 7- and 30-day window features.
+- **Large catalogs with cold start:** embeddings sharing signal across SKUs, including new ones.
+- **Multi-horizon or multi-task output:** several horizons or demand quantiles from one network.
+- **Unstructured input:** product text, images, supplier documents.
+
 ## Consequences
 
 - The model is measured against the strongest simple baseline, so a win is meaningful.
