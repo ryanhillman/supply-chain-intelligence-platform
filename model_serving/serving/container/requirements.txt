@@ -4,9 +4,8 @@
 # To regenerate: pip install -c constraints.txt -r requirements.txt && pip freeze
 #
 # onnxruntime-cpu: CPU-only wheel, ~25 MB vs ~600 MB for the CUDA variant.
-# Opset 18 is supported by onnxruntime >= 1.16.0.
-# The exported model.onnx uses opset 18 (auto-upgraded by torch.onnx.export
-# from requested 17; see ml_training/inference/onnx_export.py).
+# The exported model.onnx uses opset 17 (TorchScript exporter pinned in
+# ml_training/inference/onnx_export.py); onnxruntime >= 1.16.0 supports it.
 #
 # libgomp1 (system package) is required by onnxruntime-cpu on debian-slim.
 # It is installed in the Dockerfile RUN layer, not here.

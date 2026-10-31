@@ -54,15 +54,17 @@ defensible business justification that the model improves on a rule-based baseli
 Definition: did `quantity_after` reach 0 at any point in (T, T+7d] in the
 Bronze `inventory.events` event stream for the same (warehouse_id, sku_id)?
 
-**Secondary target:** `continuous_risk_score` (float ∈ [0, 1])  
+**Closed-form companion:** `continuous_risk_score` (float ∈ [0, 1])  
 Definition: P(days-to-stockout ≤ 7) under a Normal approximation, where
 `days-to-stockout ~ N(μ, σ²)`:
 ```
 μ = current_qty / avg_daily_sales_7d
 σ = current_qty × stddev_daily_7d / avg_daily_sales_7d²
 ```
-This is the regression target for the `risk__stockout_risk_score` output head.
-It provides a smooth training signal and handles demand uncertainty explicitly.
+This is not a model output. It is the baseline the model must beat (Decision 6)
+and the `stockout_risk_score` the batch scorer publishes next to the model's
+probability. An earlier version trained a second head to regress it, which could
+only approximate a formula of three of the model's own inputs.
 
 **Prediction horizon:** 7 calendar days.
 
@@ -122,7 +124,7 @@ re-evaluated at the larger scale — see that section's note.
 | Column | Reason |
 |---|---|
 | `risk__reorder_urgency` | Derived from the same threshold logic as the label |
-| `risk__stockout_risk_score` | Target output |
+| `risk__stockout_risk_score` | Closed-form score published by the scorer, not a model output |
 | `risk__shortage_prob_7d` | Target output |
 | `demand__demand_forecast_{7d,30d,multiplier}` | Reserved null columns |
 | All `lineage__*` | Pipeline metadata, no predictive value |
@@ -143,7 +145,7 @@ until final evaluation — it is not used for hyperparameter tuning or early sto
 ```
 warehouse_id  → Embedding(6,  dim=3)  ┐
 sku_id        → Embedding(20, dim=5)  ┤ concatenated → [29]
-numeric (21)  → StandardScaler        ┘
+numeric (21)  → Standardize(μ, σ)    ┘
                       ↓
     Linear(29→64) + BatchNorm1d + ReLU + Dropout(0.30)
                       ↓
@@ -152,7 +154,6 @@ numeric (21)  → StandardScaler        ┘
     Linear(32→16) + BatchNorm1d + ReLU
                       ↓
     prob_head  → logit  → BCEWithLogitsLoss  → shortage_prob_7d
-    score_head → sigmoid → MSELoss           → stockout_risk_score
 ```
 
 **Why not TabNet:** TabNet's sparse attention requires ≥10,000 training examples
@@ -182,14 +183,23 @@ unnecessary dimensionality for a small dataset.
 ## Decision 6 — Evaluation Metrics and Success Criterion
 
 **Phase 4 success criterion:** The trained PyTorch model must outperform the
-heuristic baseline on ALL three metrics on the held-out test split.
+closed-form baseline on ALL three metrics on the held-out test split.
 
 **Baseline:**
 ```python
-baseline_pred = float(days_of_supply < 7)
+continuous_risk_score = Φ((7 − μ) / σ)     # P(stockout ≤ 7d), Normal approximation
+μ = current_qty / avg_daily_sales_7d       # mean days to zero
+σ = current_qty · stddev_daily_7d / avg_daily_sales_7d²
 ```
-This is the simplest defensible business rule: flag any entity whose current
-stock is expected to run out within 7 days at the current average daily sales rate.
+This is the strongest thing the business could compute without a model: a
+calibrated probability from three features the model also sees. If the network
+cannot beat it, it is not adding value.
+
+The simpler 0/1 rule `baseline_pred = float(days_of_supply < 7)` is still
+computed and reported for context, but it is no longer the bar. A binary
+predictor has structurally low AUC-ROC and AUPRC (on the current synthetic test
+split: 0.84 / 0.45, versus 0.87 / 0.59 for the formula and 0.92 / 0.65 for
+simply ranking by `days_of_supply`), so outperforming it proved very little.
 
 | Metric | Direction | Rationale |
 |---|---|---|
@@ -227,10 +237,10 @@ gs://{bucket}/models/shortage-predictor/v{YYYYMMDD_HHMMSS}/
 ```
 Timestamped versioning enables champion/challenger comparison in Phase 5.
 
-**StandardScaler** (`preprocessor.pkl`) is written to `ml_training/artifacts/dataset/`
-(the dataset directory, not the model directory) because it is a dataset-level
-artifact. The `ShortagePredictor` inference class accepts a `dataset_dir` parameter
-to locate it.
+**Standardization statistics** (`feature_mean`, `feature_scale`) are fit on the
+train split and written to `feature_metadata.json`; the model registers them as
+fixed buffers, so they ship inside `model.pt` and `model.onnx`. There is no
+separate preprocessor artifact (see ADR-005 Decision 3).
 
 ---
 
@@ -272,6 +282,5 @@ to locate it.
   For the current Bronze dataset size (~53,000 events), Python + pandas is
   adequate. If Bronze grows to millions of events, the sampler should be
   reimplemented as a Spark batch job.
-- `continuous_risk_score` uses a Normal approximation for its label; this
-  approximation degrades when daily demand has heavy tails. The MSE loss weight
-  (0.3) keeps this secondary target from dominating training.
+- `continuous_risk_score` (the baseline and the published `stockout_risk_score`)
+  uses a Normal approximation; it degrades when daily demand has heavy tails.

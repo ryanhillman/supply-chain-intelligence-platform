@@ -7,7 +7,6 @@ GCS layout after registration:
     model.onnx            — ONNX model graph (required by serving container)
     model.onnx.data       — ONNX external weights sidecar (present when >~20 MB)
     feature_metadata.json — vocab mappings + feature list (used by batch_scorer)
-    preprocessor.pkl      — StandardScaler (used by batch_scorer, NOT the container)
     evaluation_test.json  — held-out test metrics for promote_model.py comparison
     registration_info.json — Vertex AI resource name + registration timestamp
 
@@ -39,11 +38,6 @@ _ARTIFACTS_TO_UPLOAD: list[str] = [
     "feature_metadata.json",
     "evaluation_test.json",
     "training_metrics.json",
-]
-
-# Uploaded from the dataset directory (separate from artifacts_dir).
-_DATASET_ARTIFACTS_TO_UPLOAD: list[str] = [
-    "preprocessor.pkl",
 ]
 
 _GCS_MODEL_PREFIX = "models/shortage-predictor"
@@ -91,7 +85,6 @@ class ModelRegistrar:
     def register(
         self,
         artifacts_dir: str | Path,
-        dataset_dir: str | Path,
         image_uri: str,
         version: str | None = None,
         dry_run: bool = False,
@@ -104,9 +97,6 @@ class ModelRegistrar:
         artifacts_dir:
             Local directory containing model.onnx, feature_metadata.json,
             evaluation_test.json (output of ml_training/scripts/train.py).
-        dataset_dir:
-            Local directory containing preprocessor.pkl
-            (output of ml_training/scripts/build_dataset.py).
         image_uri:
             Full Artifact Registry URI for the serving container image, e.g.
             us-central1-docker.pkg.dev/{project}/scip-serving/shortage-predictor-serving:latest
@@ -121,7 +111,6 @@ class ModelRegistrar:
                         image_uri, registered_at
         """
         artifacts_dir = Path(artifacts_dir)
-        dataset_dir   = Path(dataset_dir)
         version       = version or _make_version()
 
         gcs_prefix       = f"{_GCS_MODEL_PREFIX}/{version}"
@@ -138,9 +127,7 @@ class ModelRegistrar:
             return {"version": version, "gcs_artifact_uri": gcs_artifact_uri, "dry_run": True}
 
         # Upload artifacts
-        uploaded = self._upload_artifacts(
-            artifacts_dir, dataset_dir, gcs_prefix
-        )
+        uploaded = self._upload_artifacts(artifacts_dir, gcs_prefix)
         logger.info("Uploaded %d files to %s", len(uploaded), gcs_artifact_uri)
 
         # Register with Vertex AI Model Registry
@@ -185,7 +172,6 @@ class ModelRegistrar:
     def _upload_artifacts(
         self,
         artifacts_dir: Path,
-        dataset_dir: Path,
         gcs_prefix: str,
     ) -> list[str]:
         bucket = self._storage_client.bucket(self.bucket_name)
@@ -198,16 +184,6 @@ class ModelRegistrar:
                     logger.debug("model.onnx.data not present — single-file ONNX export")
                     continue
                 logger.warning("Expected artifact not found, skipping: %s", src)
-                continue
-            blob = bucket.blob(f"{gcs_prefix}/{fname}")
-            blob.upload_from_filename(str(src))
-            logger.info("  Uploaded %-30s  (%s bytes)", fname, src.stat().st_size)
-            uploaded.append(fname)
-
-        for fname in _DATASET_ARTIFACTS_TO_UPLOAD:
-            src = dataset_dir / fname
-            if not src.exists():
-                logger.warning("Dataset artifact not found, skipping: %s", src)
                 continue
             blob = bucket.blob(f"{gcs_prefix}/{fname}")
             blob.upload_from_filename(str(src))

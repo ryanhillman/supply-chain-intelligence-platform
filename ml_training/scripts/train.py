@@ -57,8 +57,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patience",   type=int,   default=10)
     p.add_argument(
         "--loss",
-        choices=["weighted_bce", "focal"],
-        default="weighted_bce",
+        choices=["bce", "weighted_bce", "focal"],
+        default="bce",
     )
     p.add_argument(
         "--upload-bucket",

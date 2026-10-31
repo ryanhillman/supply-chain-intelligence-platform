@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--dataset",
         default="ml_training/artifacts/dataset",
-        help="Directory containing preprocessor.pkl (default: ml_training/artifacts/dataset)",
+        help="Directory containing train.parquet for the PSI bins (default: ml_training/artifacts/dataset)",
     )
 
     # ── Monitoring options ────────────────────────────────────────────────────
@@ -211,14 +211,14 @@ def main() -> None:
 
 def _preflight_check(artifacts_dir: Path, dataset_dir: Path) -> None:
     required = [
-        (dataset_dir   / "preprocessor.pkl",      "preprocessor.pkl"),
+        (dataset_dir   / "train.parquet",         "train.parquet"),
         (artifacts_dir / "feature_metadata.json", "feature_metadata.json"),
     ]
     missing = [(path, name) for path, name in required if not path.exists()]
     if missing:
         for path, name in missing:
             logger.error("Required artifact not found: %s  (expected at %s)", name, path)
-        logger.error("Run ml_training/scripts/train.py to generate Phase 4 artifacts.")
+        logger.error("Run ml_training/scripts/build_dataset.py and train.py to generate Phase 4 artifacts.")
         sys.exit(2)
 
     for path, name in required:

@@ -7,9 +7,12 @@ Pipeline per entity
 2. Call fill_defaults() to replace NaN with safe domain defaults.
 3. Call engineer_features() to compute 6 derived features, yielding all 21
    NUMERIC_FEATURE_COLS expected by the ONNX model.
-4. Apply StandardScaler.transform() — the container does NOT scale; client is responsible.
-5. Map warehouse_id / sku_id strings to integer vocab indices.
-6. Return a ScoringRequest containing the endpoint instance dict and entity metadata.
+4. Map warehouse_id / sku_id strings to integer vocab indices. Numeric features
+   are sent in raw units — the ONNX graph standardizes them (ADR-005 Decision 3).
+5. Compute stockout_risk_score with feature_engineer.normal_stockout_prob —
+   the closed-form Normal approximation, not a model output.
+6. Return a ScoringRequest containing the endpoint instance dict, the risk
+   score and entity metadata.
 
 All 15 raw feature names and their defaults mirror
 ml_training/datasets/feature_engineer.fill_defaults().
@@ -17,13 +20,11 @@ ml_training/datasets/feature_engineer.fill_defaults().
 Required packages:
     numpy>=1.26.0
     pandas>=2.1.0
-    scikit-learn>=1.3.0
 """
 from __future__ import annotations
 
 import json
 import logging
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,15 +70,21 @@ class ScoringRequest:
         Bigtable row key ("W-001#SKU-005").
     instance:
         Endpoint-ready dict:
-          {"numeric_features": [21 floats],
+          {"numeric_features": [21 raw floats],
            "warehouse_id": int,
            "sku_id": int}
+    stockout_risk_score:
+        Closed-form Normal-approximation P(stockout ≤ horizon) from the raw
+        current_qty / avg_daily_sales_7d / stddev_daily_7d — the same formula
+        as the continuous_risk_score training column. Published next to the
+        endpoint's shortage_prob_7d; not a model output.
     """
 
-    warehouse_id: str
-    sku_id:       str
-    row_key:      str
-    instance:     dict
+    warehouse_id:        str
+    sku_id:              str
+    row_key:             str
+    instance:            dict
+    stockout_risk_score: float
 
 
 class RequestBuilder:
@@ -89,21 +96,15 @@ class RequestBuilder:
     artifacts_dir:
         Directory containing feature_metadata.json.
         Default: "ml_training/artifacts"
-    dataset_dir:
-        Directory containing preprocessor.pkl.
-        Default: "ml_training/artifacts/dataset"
     """
 
     def __init__(
         self,
         artifacts_dir: str | Path = "ml_training/artifacts",
-        dataset_dir: str | Path = "ml_training/artifacts/dataset",
     ) -> None:
         self._artifacts_dir = Path(artifacts_dir)
-        self._dataset_dir   = Path(dataset_dir)
 
         self._metadata    = self._load_metadata()
-        self._scaler      = self._load_scaler()
         self._wh_vocab:  dict[str, int] = self._metadata["warehouse_vocab"]
         self._sku_vocab: dict[str, int] = self._metadata["sku_vocab"]
 
@@ -112,10 +113,13 @@ class RequestBuilder:
             NUMERIC_FEATURE_COLS,
             engineer_features,
             fill_defaults,
+            normal_stockout_prob,
         )
-        self._NUMERIC_FEATURE_COLS = NUMERIC_FEATURE_COLS
-        self._engineer_features    = engineer_features
-        self._fill_defaults        = fill_defaults
+        self._NUMERIC_FEATURE_COLS  = NUMERIC_FEATURE_COLS
+        self._engineer_features     = engineer_features
+        self._fill_defaults         = fill_defaults
+        self._normal_stockout_prob  = normal_stockout_prob
+        self._horizon_days: int     = int(self._metadata["horizon_days"])
 
         logger.info(
             "RequestBuilder ready: %d numeric features, %d warehouses, %d SKUs",
@@ -194,15 +198,23 @@ class RequestBuilder:
         # Compute 6 derived features (days_of_supply, effective_supply, etc.).
         df = self._engineer_features(df)
 
-        # Scale all 21 numeric features in one vectorized call.
-        x_raw    = df[self._NUMERIC_FEATURE_COLS].values.astype(np.float32)
-        x_scaled = self._scaler.transform(x_raw)
+        # Raw numeric features in NUMERIC_FEATURE_COLS order. No scaling here:
+        # the ONNX graph carries the training mean/scale (ADR-005 Decision 3).
+        x_raw = df[self._NUMERIC_FEATURE_COLS].values.astype(np.float32)
+
+        # Closed-form risk score from the raw features (ADR-004 Decision 6).
+        risk_scores = self._normal_stockout_prob(
+            df["current_qty"].values,
+            df["avg_daily_sales_7d"].values,
+            df["stddev_daily_7d"].values,
+            self._horizon_days,
+        )
 
         # Assemble ScoringRequest objects.
         requests: list[ScoringRequest] = []
         for i, (fr, wh_id, sku_id) in enumerate(zip(valid_rows, wh_vocab_ids, sku_vocab_ids)):
             instance = {
-                "numeric_features": x_scaled[i].tolist(),
+                "numeric_features": x_raw[i].tolist(),
                 "warehouse_id":     wh_id,
                 "sku_id":           sku_id,
             }
@@ -211,6 +223,7 @@ class RequestBuilder:
                 sku_id=fr.sku_id,
                 row_key=fr.row_key,
                 instance=instance,
+                stockout_risk_score=float(risk_scores[i]),
             ))
 
         logger.info("Built %d scoring requests", len(requests))
@@ -227,13 +240,3 @@ class RequestBuilder:
             )
         with open(path) as f:
             return json.load(f)
-
-    def _load_scaler(self):
-        path = self._dataset_dir / "preprocessor.pkl"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"preprocessor.pkl not found at {path}. "
-                "Run ml_training/scripts/build_dataset.py or download from GCS."
-            )
-        with open(path, "rb") as f:
-            return pickle.load(f)

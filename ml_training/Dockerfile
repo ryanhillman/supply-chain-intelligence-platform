@@ -12,11 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pinning the CPU build avoids pulling the 2+ GB CUDA variant
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cpu \
-    torch==2.3.1+cpu
+    torch==2.5.1+cpu
 
 # Install remaining dependencies from the pinned requirements file.
 # torch is already installed above via the CPU wheel index; pip sees the
-# installed 2.3.1+cpu already satisfies requirements.txt's "torch>=2.2.0"
+# installed 2.5.1+cpu already satisfies requirements.txt's "torch>=2.5.0,<3"
 # version-constraint-only line and leaves it alone (no --upgrade passed).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

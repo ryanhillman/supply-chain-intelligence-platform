@@ -20,9 +20,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
 from ml_training.datasets.feature_engineer import (
-    BASELINE_COL,
     NUMERIC_FEATURE_COLS,
-    RISK_SCORE_COL,
     TARGET_COL,
 )
 from ml_training.evaluation.metrics import compute_metrics
@@ -39,8 +37,8 @@ class ShortageDataset(Dataset):
     """
     Wraps a Parquet-split DataFrame for DataLoader consumption.
 
-    Numeric features are expected to already be scaled (StandardScaler applied
-    in DatasetBuilder). Categorical IDs are mapped to integer indices via the
+    Numeric features are passed through in raw units; the model's Standardize
+    layer scales them. Categorical IDs are mapped to integer indices via the
     vocabularies stored in feature_metadata.json.
     """
 
@@ -60,9 +58,6 @@ class ShortageDataset(Dataset):
         self.y_binary = torch.tensor(
             df[TARGET_COL].values.astype(float), dtype=torch.float32
         ).unsqueeze(1)
-        self.y_risk   = torch.tensor(
-            df[RISK_SCORE_COL].values.astype(float), dtype=torch.float32
-        ).unsqueeze(1)
 
     def __len__(self) -> int:
         return len(self.x_num)
@@ -73,7 +68,6 @@ class ShortageDataset(Dataset):
             self.wh_ids[idx],
             self.sku_ids[idx],
             self.y_binary[idx],
-            self.y_risk[idx],
         )
 
 
@@ -99,8 +93,8 @@ class Trainer:
     config:
         TrainingConfig with all hyperparameters.
     dataset_dir:
-        Path to the directory containing train.parquet, val.parquet,
-        feature_metadata.json, and preprocessor.pkl.
+        Path to the directory containing train.parquet, val.parquet and
+        feature_metadata.json.
     output_dir:
         Directory where model.pt and training_metrics.json are written.
     """
@@ -130,19 +124,16 @@ class Trainer:
         train_ds = ShortageDataset(train_df, wh_vocab, sku_vocab)
         val_ds   = ShortageDataset(val_df,   wh_vocab, sku_vocab)
 
+        # drop_last=True: BatchNorm1d raises on a training batch of size 1,
+        # which happens whenever len(train) % batch_size == 1.
         train_loader = DataLoader(
-            train_ds, batch_size=self.config.batch_size, shuffle=True,  drop_last=False
+            train_ds, batch_size=self.config.batch_size, shuffle=True,  drop_last=True
         )
         val_loader = DataLoader(
             val_ds,   batch_size=self.config.batch_size, shuffle=False, drop_last=False
         )
 
-        model = ShortagePredictor(
-            n_numeric    = metadata["n_numeric_features"],
-            n_warehouses = metadata["n_warehouses"],
-            n_skus       = metadata["n_skus"],
-            config       = self.config,
-        )
+        model = ShortagePredictor.from_metadata(metadata, self.config)
 
         pos_weight = float(metadata.get("pos_weight", 1.0))
         criterion  = build_loss(self.config, pos_weight)
@@ -225,10 +216,10 @@ class Trainer:
         model.train()
         total_loss = 0.0
 
-        for x_num, wh_ids, sku_ids, y_binary, y_risk in loader:
+        for x_num, wh_ids, sku_ids, y_binary in loader:
             optimizer.zero_grad()
-            logit_prob, pred_score = model(x_num, wh_ids, sku_ids)
-            loss, _, _ = criterion(logit_prob, pred_score, y_binary, y_risk)
+            logit_prob = model(x_num, wh_ids, sku_ids)
+            loss = criterion(logit_prob, y_binary)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -248,9 +239,9 @@ class Trainer:
         all_probs:  list[float] = []
         all_labels: list[float] = []
 
-        for x_num, wh_ids, sku_ids, y_binary, y_risk in loader:
-            logit_prob, pred_score = model(x_num, wh_ids, sku_ids)
-            loss, _, _ = criterion(logit_prob, pred_score, y_binary, y_risk)
+        for x_num, wh_ids, sku_ids, y_binary in loader:
+            logit_prob = model(x_num, wh_ids, sku_ids)
+            loss = criterion(logit_prob, y_binary)
             total_loss += loss.item()
             all_probs.extend(torch.sigmoid(logit_prob).squeeze(1).tolist())
             all_labels.extend(y_binary.squeeze(1).tolist())
@@ -297,8 +288,11 @@ def _build_scheduler(
             optimizer, mode="max", factor=config.lr_factor,
             patience=config.lr_patience,
         )
+    # One cosine period over the whole epoch budget. A shorter T_max (the old
+    # default of 20 against max_epochs=100) restarts the schedule every T_max
+    # epochs, cycling the LR back up to its initial value.
     return torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config.T_max, eta_min=1e-6,
+        optimizer, T_max=config.T_max or config.max_epochs, eta_min=1e-6,
     )
 
 

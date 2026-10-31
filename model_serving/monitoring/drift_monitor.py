@@ -17,16 +17,17 @@ predictions today. A human has to act on the report.
 
 Flow
 ----
-1. Load StandardScaler (mean_, scale_) from preprocessor.pkl.
-   These encode the training distribution for all 21 NUMERIC_FEATURE_COLS.
+1. Load feature_metadata.json (feature_mean / feature_scale fit on the train
+   split, reported next to the live mean/std) and the raw train.parquet rows
+   (the PSI bins; required, no approximate fallback).
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
    - fill_defaults() + engineer_features() derive all 21 features.
    - Extract the 4 monitored features.
 3. Read current predictions from Bigtable predictions column family
    (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
-4. Compute PSI for each monitored feature using 10 equal-frequency bins
-   derived from the training normal distribution.
+4. Compute PSI for each monitored feature using bins at the deciles of the
+   raw training rows (train.parquet).
 5. Classify PSI per ADR-005 thresholds:
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
@@ -44,22 +45,20 @@ PSI formula
     PSI = Σ_i (A_i - E_i) × ln(A_i / E_i)
 
     Where:
-      N     = 10 equal-probability bins, edges at the training data's own
-              deciles (train.parquet) — correct for any feature shape.
-              Falls back to normal quantiles of (μ, σ) only if
-              train.parquet is unavailable; that fallback understates
-              drift for skewed features (sales, supplier_reliability).
-      E_i   = 0.10 (expected training fraction per bin, equal by construction)
+      N     = up to 10 bins with edges at the (deduplicated) deciles of the
+              raw training rows in train.parquet — correct for any feature
+              shape, and in the same units as the live Bigtable values.
+      E_i   = the actual training fraction in bin i (not assumed uniform:
+              clustered features such as supplier_reliability collapse
+              several decile edges onto one value)
       A_i   = actual fraction of current Bigtable values in bin i
-      μ, σ  = scaler.mean_[feature_idx], scaler.scale_[feature_idx]
 
-    Zero-count bins replaced with ε=1e-4 to avoid log(0).
+    Zero-count bins replaced with ε=1e-4 to avoid log(0). train.parquet is
+    required; there is no approximate fallback.
 
 Required packages:
     numpy>=1.26.0
     pandas>=2.1.0
-    scipy>=1.11.0          (for normal quantile bins)
-    scikit-learn>=1.3.0
     google-cloud-bigtable>=2.22.0
 
 Optional:
@@ -70,14 +69,12 @@ from __future__ import annotations
 import json
 import logging
 import math
-import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy import stats as scipy_stats
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +184,7 @@ class DriftMonitor:
         Directory containing feature_metadata.json.
         Default: "ml_training/artifacts"
     dataset_dir:
-        Directory containing preprocessor.pkl.
+        Directory containing train.parquet (raw training rows for the PSI bins).
         Default: "ml_training/artifacts/dataset"
     table_id:
         Bigtable table ID (default "inventory_features").
@@ -211,8 +208,9 @@ class DriftMonitor:
         self._artifacts_dir = Path(artifacts_dir)
         self._dataset_dir   = Path(dataset_dir)
 
-        self._scaler   = self._load_scaler()
-        self._metadata = self._load_metadata()
+        self._metadata      = self._load_metadata()
+        self._feature_mean  = np.asarray(self._metadata["feature_mean"],  dtype=float)
+        self._feature_scale = np.asarray(self._metadata["feature_scale"], dtype=float)
         self._training_quantiles = self._load_training_quantiles()
 
         # Import from ml_training — sys.path must include the repo root.
@@ -257,7 +255,7 @@ class DriftMonitor:
         self._table     = self._bigtable_client.instance(instance_id).table(table_id)
 
         logger.info(
-            "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  scaler_features=%d",
+            "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
             instance_id, table_id, self._dataset_dir,
             len(self._NUMERIC_FEATURE_COLS),
         )
@@ -633,16 +631,14 @@ class DriftMonitor:
         """
         Compute PSI and status for one monitored feature.
 
-        The training distribution is approximated as N(μ, σ) where μ and σ
-        are taken from StandardScaler.mean_[i] and StandardScaler.scale_[i].
-        This is an approximation — actual training data is not needed at
-        inference time, but the scaler's fit statistics encode the same
-        distributional information.
+        μ and σ (training_mean / training_std in the report) come from
+        feature_metadata.json; the PSI bins themselves come from the raw
+        training rows loaded by _load_training_quantiles.
         """
         idx          = self._feature_to_idx[feature_name]
-        train_mean   = float(self._scaler.mean_[idx])
-        train_std    = float(self._scaler.scale_[idx])
-        bin_edges, expected = self._training_quantiles.get(feature_name, (None, None))
+        train_mean   = float(self._feature_mean[idx])
+        train_std    = float(self._feature_scale[idx])
+        bin_edges, expected = self._training_quantiles[feature_name]
 
         if not current_values:
             logger.warning("No current values for %s — PSI set to NaN", display_name)
@@ -659,7 +655,7 @@ class DriftMonitor:
             )
 
         arr = np.array(current_values, dtype=float)
-        psi = self._compute_psi(train_mean, train_std, arr, bin_edges, expected)
+        psi = self._compute_psi(arr, bin_edges, expected)
 
         return FeatureMetrics(
             display_name  = display_name,
@@ -675,11 +671,9 @@ class DriftMonitor:
 
     def _compute_psi(
         self,
-        training_mean: float,
-        training_std:  float,
         current_values: np.ndarray,
-        bin_edges: np.ndarray | None = None,
-        expected: np.ndarray | None = None,
+        bin_edges: np.ndarray,
+        expected: np.ndarray,
     ) -> float:
         """
         Population Stability Index using the training data's own bins.
@@ -693,16 +687,14 @@ class DriftMonitor:
         in a warehouse, so one value alone can be ~50% of all rows) and
         naive equal-frequency binning degenerates in that case.
 
-        If the training parquet isn't available, falls back to bins at
-        the 10th, 20th, ..., 90th percentile of a normal distribution
-        N(training_mean, training_std) with a uniform 1/10 expected
-        fraction per bin; this is only a good approximation for
-        roughly-Gaussian features. Several monitored features here
-        (sales, days_of_supply, supplier_reliability) are heavily
-        skewed, so the normal approximation packs most of the training
-        mass into one or two bins and makes PSI blow up (>> 0.20) even
-        when the current data is drawn from the exact same distribution
-        as training — see the ADR-005 drift-monitor postmortem.
+        Both sides are in raw feature units: train.parquet holds raw rows
+        (DatasetBuilder no longer standardizes the splits) and the live
+        values come from engineer_features() on raw Bigtable cells. An
+        earlier version binned raw live values against standardized
+        training rows and reported PSI 2–8 (TRIGGER) for the training data
+        compared with itself; before that, a normal-quantile approximation
+        of the training distribution did the same for skewed features.
+        Neither path exists any more — see tests/test_drift_monitor_psi.py.
 
         PSI = Σ_i (A_i - E_i) × ln(A_i / E_i)
 
@@ -715,27 +707,6 @@ class DriftMonitor:
         Siddiqi, N. (2006). Credit Risk Scorecards.
         Industry convention: PSI < 0.10 stable, ≥ 0.20 requires retraining.
         """
-        if bin_edges is None:
-            if training_std <= 0:
-                logger.warning(
-                    "Training std=%.6f <= 0 for this feature — cannot compute PSI",
-                    training_std,
-                )
-                return float("nan")
-
-            # Equal-probability bin edges based on training normal distribution.
-            # quantile_points: [0, 0.1, 0.2, ..., 1.0] → 11 values, 10 intervals.
-            quantile_points = np.linspace(0.0, 1.0, _N_BINS + 1)
-            bin_edges       = scipy_stats.norm.ppf(
-                quantile_points, loc=training_mean, scale=training_std
-            )
-            # Force true infinity at the tails to capture all current values.
-            bin_edges[0]  = -np.inf
-            bin_edges[-1] =  np.inf
-            # Only the normal-approximation fallback assumes a uniform
-            # 1/N_BINS split; the empirical path always supplies its own.
-            expected = np.full(_N_BINS, 1.0 / _N_BINS)
-
         # Actual fraction of current Bigtable values per bin.
         counts, _  = np.histogram(current_values, bins=bin_edges)
         n          = len(current_values)
@@ -1054,21 +1025,6 @@ class DriftMonitor:
 
     # ── Artifact loading ───────────────────────────────────────────────────────
 
-    def _load_scaler(self):
-        path = self._dataset_dir / "preprocessor.pkl"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"preprocessor.pkl not found at {path}. "
-                "Run ml_training/scripts/build_dataset.py or download from GCS."
-            )
-        with open(path, "rb") as f:
-            scaler = pickle.load(f)
-        logger.info(
-            "Loaded StandardScaler: %d features, mean range [%.2f, %.2f]",
-            len(scaler.mean_), float(scaler.mean_.min()), float(scaler.mean_.max()),
-        )
-        return scaler
-
     def _load_metadata(self) -> dict:
         path = self._artifacts_dir / "feature_metadata.json"
         if not path.exists():
@@ -1083,11 +1039,11 @@ class DriftMonitor:
         """
         Empirical bin edges AND expected fractions for each monitored
         feature, computed from the real training distribution
-        (train.parquet, alongside preprocessor.pkl in dataset_dir).
+        (train.parquet in dataset_dir; raw feature units).
 
         These are the correct PSI bins regardless of the feature's shape
-        — unlike bins derived from a normal-distribution assumption (the
-        fallback in _compute_psi), which badly misrepresents skewed
+        — unlike bins derived from a normal-distribution assumption (which
+        an earlier version of this monitor used), which badly misrepresents skewed
         features such as sales_7d, avg_daily_sales_7d, and
         supplier_reliability and causes false "retraining required"
         triggers even on in-distribution data.
@@ -1103,20 +1059,18 @@ class DriftMonitor:
         assuming a uniform 1/10 per bin) keeps PSI correct — and ~0 for
         training-vs-itself — however the mass happens to be distributed.
 
-        Returns {} (triggering the normal-distribution fallback, with a
-        warning) if train.parquet isn't available — e.g. a deployment
-        that ships only preprocessor.pkl and feature_metadata.json.
+        Raises FileNotFoundError if train.parquet isn't available. There is
+        no approximate fallback: the normal-quantile approximation this
+        monitor used to fall back on produced spurious TRIGGERs on the
+        skewed features monitored here.
         """
         train_path = self._dataset_dir / "train.parquet"
         if not train_path.exists():
-            logger.warning(
-                "train.parquet not found at %s — PSI will fall back to a "
-                "normal-distribution approximation, which overstates drift "
-                "for skewed features. Copy train.parquet alongside "
-                "preprocessor.pkl to fix this.",
-                train_path,
+            raise FileNotFoundError(
+                f"train.parquet not found at {train_path}. The PSI bins are the raw "
+                "training rows' deciles; run ml_training/scripts/build_dataset.py or "
+                "copy train.parquet into the dataset directory."
             )
-            return {}
 
         feature_names = [fname for _, fname in _MONITORED_FEATURES]
         train_df = pd.read_parquet(train_path, columns=feature_names)

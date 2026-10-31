@@ -4,8 +4,7 @@ FastAPI serving container for the SCIP ShortagePredictor.
 Vertex AI contract:
   GET  /health  -> 200 {"status": "ok", "model_version": str}
                    503 if the model has not loaded yet
-  POST /predict -> 200 {"predictions": [{"shortage_prob_7d": float,
-                                          "stockout_risk_score": float}, ...]}
+  POST /predict -> 200 {"predictions": [{"shortage_prob_7d": float}, ...]}
                    422 if request schema is invalid
                    500 on inference error
 
@@ -14,8 +13,9 @@ Vertex AI deploy flags (set in model_serving/scripts/deploy.py):
   --predict-route  /predict
   --port           8080
 
-The container does NOT apply StandardScaler or vocab mapping — those are
-the caller's responsibility (see batch_scorer.py and ADR-005 Decision 3).
+The container does NOT apply vocab mapping — that is the caller's
+responsibility (see request_builder.py). Numeric features arrive in raw
+units; the ONNX graph standardizes them itself (ADR-005 Decision 3).
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
-from predictor import ONNXPredictor, _N_NUMERIC_FEATURES
+from predictor import ONNXPredictor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,9 +68,10 @@ class Instance(BaseModel):
     Fields
     ------
     numeric_features:
-        21 floats in the same order as NUMERIC_FEATURE_COLS, already
-        StandardScaler-transformed. Sending raw Silver values will produce
-        wrong predictions (see ADR-005 Decision 7 — distribution shift).
+        Raw feature values in the same order as NUMERIC_FEATURE_COLS. Do not
+        pre-scale: the ONNX graph standardizes with the training statistics.
+        The count must match the loaded model's input width (reported by
+        /health as n_numeric_features); a mismatch is rejected with 422.
     warehouse_id:
         Integer vocab index from feature_metadata.json["warehouse_vocab"].
         NOT the string ID "W-001".
@@ -81,16 +82,6 @@ class Instance(BaseModel):
     numeric_features: list[float]
     warehouse_id: int
     sku_id: int
-
-    @field_validator("numeric_features")
-    @classmethod
-    def check_feature_count(cls, v: list[float]) -> list[float]:
-        if len(v) != _N_NUMERIC_FEATURES:
-            raise ValueError(
-                f"numeric_features must have exactly {_N_NUMERIC_FEATURES} elements "
-                f"(one per NUMERIC_FEATURE_COL), got {len(v)}."
-            )
-        return v
 
     @field_validator("warehouse_id", "sku_id")
     @classmethod
@@ -113,7 +104,6 @@ class PredictRequest(BaseModel):
 
 class Prediction(BaseModel):
     shortage_prob_7d: float
-    stockout_risk_score: float
 
 
 class PredictResponse(BaseModel):
@@ -143,10 +133,26 @@ def predict(request: PredictRequest) -> dict[str, Any]:
       {"instances": [{...}, {...}]}
 
     Returns:
-      {"predictions": [{"shortage_prob_7d": float, "stockout_risk_score": float}]}
+      {"predictions": [{"shortage_prob_7d": float}]}
     """
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model not yet loaded")
+
+    expected_width = _predictor.n_numeric_features
+    bad_width = [
+        (i, len(inst.numeric_features))
+        for i, inst in enumerate(request.instances)
+        if len(inst.numeric_features) != expected_width
+    ]
+    if bad_width:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"numeric_features must have exactly {expected_width} elements "
+                f"(the loaded model's input width). Offending instances "
+                f"(index, length): {bad_width}"
+            ),
+        )
 
     out_of_range = [
         (i, inst.warehouse_id, inst.sku_id)
@@ -181,25 +187,18 @@ def predict(request: PredictRequest) -> dict[str, Any]:
     )
 
     try:
-        probs, scores = _predictor.predict(numeric_features, warehouse_ids, sku_ids)
+        probs = _predictor.predict(numeric_features, warehouse_ids, sku_ids)
     except Exception as exc:
         logger.exception("Inference failed for batch_size=%d", batch_size)
         raise HTTPException(status_code=500, detail=f"Inference error: {exc}") from exc
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(
-        "Predicted batch_size=%d | prob_mean=%.3f | score_mean=%.3f | latency=%.1fms",
+        "Predicted batch_size=%d | prob_mean=%.3f | latency=%.1fms",
         batch_size,
         float(probs.mean()),
-        float(scores.mean()),
         elapsed_ms,
     )
 
-    predictions = [
-        Prediction(
-            shortage_prob_7d=float(p),
-            stockout_risk_score=float(s),
-        )
-        for p, s in zip(probs.tolist(), scores.tolist())
-    ]
+    predictions = [Prediction(shortage_prob_7d=float(p)) for p in probs.tolist()]
     return {"predictions": predictions}

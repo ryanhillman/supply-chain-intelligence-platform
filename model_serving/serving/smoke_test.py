@@ -3,7 +3,7 @@ SmokeTest — validates the deployed Vertex AI endpoint with real Bigtable rows.
 
 Flow
 ----
-1. Load preprocessor.pkl and feature_metadata.json (from GCS or local artifacts).
+1. Load feature_metadata.json (vocab maps) from the local artifacts directory.
 2. Try to read up to N rows from Bigtable inventory_features table.
    - If Bigtable is unavailable: fall back to synthetic zero-vector instances
      with a clear warning. See note below on expected outputs.
@@ -13,32 +13,23 @@ Flow
    - Fill missing raw features with safe domain defaults (_fill_defaults).
    - Compute derived features (days_of_supply, effective_supply, etc.) via
      engineer_features() from ml_training.datasets.feature_engineer.
-   - Apply StandardScaler.transform() to get scaled inputs.
    - Map warehouse_id / sku_id strings to vocab ints.
 4. POST to /predict via aiplatform.Endpoint.predict().
-5. Assert all shortage_prob_7d and stockout_risk_score values are:
+5. Assert all shortage_prob_7d values are:
    - finite (not NaN, not inf)
    - in [0.0, 1.0]
 6. Print a per-instance results table.
 
-Expected outputs with current Phase 4 model (trained on simulated data)
------------------------------------------------------------------------
-Because the model was trained on tiled Bronze data (avg_daily_sales_7d ~2785)
-and the real Silver/Bigtable data has avg_daily_sales_7d ~207, the model is
-46 sigma outside its training distribution. Expected results:
-  shortage_prob_7d    = ~0.0  (model sees low-risk on heavily over-stocked entities)
-  stockout_risk_score = ~1.0  (score_head saturates on OOD input)
-
-These values confirm the pipeline is working correctly — the distribution-shift
-warning in ADR-005 Decision 7 describes exactly this behaviour. The smoke test
-PASSES as long as outputs are finite floats in [0, 1]. It does not assert
-meaningful probability values.
+Pass criterion
+--------------
+The smoke test PASSES as long as every shortage_prob_7d is a finite float in
+[0, 1]. It does not assert meaningful probability values; use evaluate.py and
+the drift monitor for that.
 
 Required packages:
     google-cloud-aiplatform>=1.38.0
     google-cloud-bigtable>=2.22.0
     google-cloud-storage>=2.16.0
-    scikit-learn>=1.3.0
     numpy>=1.26.0
     pandas>=2.1.0
 """
@@ -46,7 +37,6 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 import struct
 import sys
 from pathlib import Path
@@ -92,8 +82,6 @@ class SmokeTest:
     artifacts_dir:
         Local or GCS path to feature_metadata.json.
         If local, checked first; GCS used as fallback.
-    dataset_dir:
-        Local or GCS path to preprocessor.pkl.
     credentials_path:
         Path to SA key JSON. None = application default credentials.
     """
@@ -104,14 +92,12 @@ class SmokeTest:
         region: str,
         endpoint_resource_name: str,
         artifacts_dir: str | Path = "ml_training/artifacts",
-        dataset_dir: str | Path = "ml_training/artifacts/dataset",
         credentials_path: str | None = None,
     ) -> None:
         self.project_id             = project_id
         self.region                 = region
         self.endpoint_resource_name = endpoint_resource_name
         self.artifacts_dir          = Path(artifacts_dir)
-        self.dataset_dir            = Path(dataset_dir)
 
         if credentials_path:
             from google.oauth2 import service_account
@@ -129,7 +115,6 @@ class SmokeTest:
         aiplatform.init(**init_kwargs)
 
         self._metadata = self._load_feature_metadata()
-        self._scaler   = self._load_scaler()
         self._wh_vocab : dict[str, int] = self._metadata["warehouse_vocab"]
         self._sku_vocab: dict[str, int] = self._metadata["sku_vocab"]
 
@@ -260,7 +245,7 @@ class SmokeTest:
         warehouse_id: str,
         sku_id: str,
     ) -> dict | None:
-        """Apply fill_defaults → engineer_features → scaler → vocab mapping."""
+        """Apply fill_defaults → engineer_features → vocab mapping (raw units)."""
         wh_vocab_id  = self._wh_vocab.get(warehouse_id)
         sku_vocab_id = self._sku_vocab.get(sku_id)
 
@@ -281,12 +266,11 @@ class SmokeTest:
         # Compute derived features (days_of_supply, effective_supply, etc.)
         df = engineer_features(df)
 
-        # Scale numeric features
-        x_raw    = df[NUMERIC_FEATURE_COLS].values.astype(np.float32)
-        x_scaled = self._scaler.transform(x_raw).squeeze(0).tolist()
+        # Raw numeric features; the ONNX graph standardizes (ADR-005 Decision 3).
+        x_raw = df[NUMERIC_FEATURE_COLS].values.astype(np.float32).squeeze(0).tolist()
 
         return {
-            "numeric_features": x_scaled,
+            "numeric_features": x_raw,
             "warehouse_id":     wh_vocab_id,
             "sku_id":           sku_vocab_id,
         }
@@ -295,13 +279,12 @@ class SmokeTest:
         """
         Generate zero-vector instances as a minimal connectivity check.
 
-        Note: with the current simulated-data model, zero-vector inputs are
-        out-of-distribution and will produce saturation outputs (prob~0, score~1).
-        This is expected — the smoke test only checks shape and range validity.
+        Note: an all-zero raw feature vector (no stock, no sales) is a
+        degenerate entity; the smoke test only checks shape and range validity.
         """
         logger.warning(
             "Using synthetic zero-vector instances. "
-            "Outputs will be out-of-distribution (see ADR-005 Decision 7). "
+            "The resulting probabilities are not meaningful. "
             "Provide --bigtable-instance for real data."
         )
         return [
@@ -325,24 +308,21 @@ class SmokeTest:
         print(f"\n{sep}")
         print(f"  Smoke Test Results  (source: {source})")
         print(sep)
-        print(f"  {'#':<3} {'WH-vocab':>8} {'SKU-vocab':>9} {'prob_7d':>10} {'risk_score':>11}  OK")
-        print(f"  {'-'*3} {'-'*8} {'-'*9} {'-'*10} {'-'*11}  --")
+        print(f"  {'#':<3} {'WH-vocab':>8} {'SKU-vocab':>9} {'prob_7d':>10}  OK")
+        print(f"  {'-'*3} {'-'*8} {'-'*9} {'-'*10}  --")
 
         all_pass = True
         for i, (inst, pred) in enumerate(zip(instances, predictions)):
-            prob  = pred.get("shortage_prob_7d",    float("nan"))
-            score = pred.get("stockout_risk_score", float("nan"))
+            prob = pred.get("shortage_prob_7d", float("nan"))
 
-            ok = (
-                _is_valid_prob(prob) and _is_valid_prob(score)
-            )
+            ok = _is_valid_prob(prob)
             if not ok:
                 all_pass = False
 
             status = "YES" if ok else "NO "
             print(
                 f"  {i:<3} {inst['warehouse_id']:>8} {inst['sku_id']:>9} "
-                f"{prob:>10.4f} {score:>11.4f}  {status}"
+                f"{prob:>10.4f}  {status}"
             )
 
         print()
@@ -352,16 +332,8 @@ class SmokeTest:
             print("  FAILED — one or more predictions are NaN, inf, or out of [0, 1]")
 
         if source == "bigtable" and predictions:
-            prob_mean  = float(np.mean([p.get("shortage_prob_7d",    0) for p in predictions]))
-            score_mean = float(np.mean([p.get("stockout_risk_score", 0) for p in predictions]))
-            print(f"\n  mean shortage_prob_7d    = {prob_mean:.4f}")
-            print(f"  mean stockout_risk_score = {score_mean:.4f}")
-            if prob_mean < 0.01 and score_mean > 0.99:
-                print(
-                    "\n  [distribution-shift expected] prob~0 + score~1 confirms the model\n"
-                    "  is 46-sigma outside its training distribution (ADR-005 Decision 7).\n"
-                    "  The pipeline is correct; retrain with real Bronze data to fix."
-                )
+            prob_mean = float(np.mean([p.get("shortage_prob_7d", 0) for p in predictions]))
+            print(f"\n  mean shortage_prob_7d = {prob_mean:.4f}")
         print(sep)
         return all_pass
 
@@ -375,16 +347,6 @@ class SmokeTest:
         raise FileNotFoundError(
             f"feature_metadata.json not found at {local}. "
             "Run ml_training/scripts/train.py or download from GCS artifact path."
-        )
-
-    def _load_scaler(self):
-        local = self.dataset_dir / "preprocessor.pkl"
-        if local.exists():
-            with open(local, "rb") as f:
-                return pickle.load(f)
-        raise FileNotFoundError(
-            f"preprocessor.pkl not found at {local}. "
-            "Run ml_training/scripts/build_dataset.py or download from GCS artifact path."
         )
 
 

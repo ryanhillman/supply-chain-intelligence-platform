@@ -20,6 +20,8 @@ The focus of the project is the platform architecture and MLOps lifecycle rather
 
 **https://www.youtube.com/watch?v=fpe3sHeRTNs**
 
+The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06), which also matches the model version currently deployed on the endpoint. `main` has moved on since (review remediation; see the ADRs and the cost section below). Check out that tag to reproduce the demo exactly.
+
 ---
 
 ## Business Problem
@@ -117,7 +119,7 @@ GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were 
 The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a stockout within the next 7 days. Predictions are returned as:
 
 - **shortage_prob_7d** — probability of a shortage event
-- **stockout_risk_score** — normalized inventory risk score
+- **stockout_risk_score** — closed-form P(stockout ≤ 7d) under a Normal approximation of days-to-zero, computed from current stock, 7-day average sales and their spread
 
 ### Features
 
@@ -141,8 +143,7 @@ The shortage predictor is implemented in PyTorch as a feed-forward neural networ
 - 21 engineered numeric features
 - Warehouse embeddings
 - SKU embeddings
-- Dual prediction outputs
-- Class imbalance handling for rare shortage events
+- Single output: the shortage probability. The risk score is a closed-form formula computed at scoring time, not a second head
 
 After training, the model is exported to ONNX and validated with ONNX Runtime before deployment.
 
@@ -190,7 +191,7 @@ The simulator generates 365 days of history across 6 warehouses and 20 SKUs, pro
 
 ## Drift Monitoring
 
-The drift monitor compares the live feature distribution (read from Bigtable) against the training baseline (stored in the fitted `StandardScaler`) using **Population Stability Index (PSI)**. PSI thresholds follow industry convention:
+The drift monitor compares the live feature distribution (read from Bigtable) against the training split's own distribution (decile bins of the raw `train.parquet` rows, so both sides share units) using **Population Stability Index (PSI)**. PSI thresholds follow industry convention:
 
 | PSI | Interpretation |
 |---|---|
