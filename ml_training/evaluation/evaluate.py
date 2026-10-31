@@ -56,7 +56,7 @@ def run_evaluation(
     Returns
     -------
     dict with keys: model, baseline, baseline_description, rule_baseline,
-                    improvements, outperforms_baseline, per_warehouse.
+                    improvements, outperforms_baseline, in_stock, per_warehouse.
     """
     artifacts_dir = Path(artifacts_dir)
     dataset_dir   = Path(dataset_dir)
@@ -93,6 +93,20 @@ def run_evaluation(
     rule_metrics = compute_metrics(y_true, y_rule)
     wh_breakdown = per_warehouse_metrics(df, y_prob_model, baseline_col=RISK_SCORE_COL)
 
+    # In-stock subset. An entity already at zero stays at zero until a PO
+    # lands, so it is labelled positive almost by definition and flatters
+    # every predictor on the full split. The operational question is "of
+    # what is in stock today, what runs out within 7 days?" — report that
+    # alongside. current_qty is in raw units in the parquet splits.
+    in_stock_block = _subset_metrics(
+        mask       = df["current_qty"].values > 0,
+        y_true     = y_true,
+        y_model    = y_prob_model,
+        y_baseline = y_baseline,
+        y_rule     = y_rule,
+        label      = "current_qty > 0",
+    )
+
     report = {
         "split":                split,
         "n_examples":           len(df),
@@ -103,6 +117,7 @@ def run_evaluation(
         "rule_baseline":        rule_metrics,   # days_of_supply < 7, for context
         "improvements":         comparison["improvements"],
         "outperforms_baseline": comparison["outperforms_baseline"],
+        "in_stock":             in_stock_block,
         "per_warehouse":        wh_breakdown.to_dict(orient="records"),
     }
 
@@ -139,6 +154,24 @@ def _print_report(report: dict) -> None:
     print(f"  Phase 4 success criterion: {status}")
     print("  (Model outperforms the Normal-approx formula on all three metrics;")
     print("   Rule = days_of_supply < 7 is shown for context and is not the bar)")
+
+    sub = report.get("in_stock") or {}
+    if sub.get("model"):
+        zero_rate = sub.get("zero_stock_positive_rate")
+        zero_txt  = f", pos rate {zero_rate:.3f}" if zero_rate is not None else ""
+        print()
+        print(
+            f"  In-stock rows only ({sub['description']}): n={sub['n_examples']}  "
+            f"pos rate={sub['positive_rate']:.3f}  "
+            f"[excluded {sub['zero_stock_rows']} zero-stock rows{zero_txt}]"
+        )
+        print(f"  {'Metric':<12} {'Rule':>10} {'Formula':>10} {'Model':>10}")
+        print(f"  {'-'*12} {'-'*10} {'-'*10} {'-'*10}")
+        for metric in ["auc_roc", "auprc", "brier"]:
+            print(
+                f"  {metric:<12} {sub['rule_baseline'][metric]:>10.4f} "
+                f"{sub['baseline'][metric]:>10.4f} {sub['model'][metric]:>10.4f}"
+            )
     print(sep)
 
     if report["per_warehouse"]:
@@ -152,6 +185,42 @@ def _print_report(report: dict) -> None:
                 f"{row['model_auc_roc']:>9.4f} {row['baseline_auc_roc']:>9.4f}"
             )
     print()
+
+
+def _subset_metrics(
+    mask:       np.ndarray,
+    y_true:     np.ndarray,
+    y_model:    np.ndarray,
+    y_baseline: np.ndarray,
+    y_rule:     np.ndarray,
+    label:      str,
+) -> dict:
+    """
+    Model / formula / rule metrics on the rows selected by `mask`, plus the
+    size and label rate of both the kept and the excluded rows. Metric
+    blocks are None when the subset is empty or single-class.
+    """
+    n     = int(mask.sum())
+    y_sub = y_true[mask]
+    excluded = ~mask
+    block: dict = {
+        "description":              label,
+        "n_examples":               n,
+        "positive_rate":            float(y_sub.mean()) if n else None,
+        "zero_stock_rows":          int(excluded.sum()),
+        "zero_stock_positive_rate": float(y_true[excluded].mean()) if excluded.any() else None,
+        "model":                    None,
+        "baseline":                 None,
+        "rule_baseline":            None,
+    }
+    if n == 0 or y_sub.sum() == 0 or y_sub.sum() == len(y_sub):
+        logger.warning("In-stock subset is empty or single-class — subset metrics skipped.")
+        return block
+
+    block["model"]         = compute_metrics(y_sub, y_model[mask])
+    block["baseline"]      = compute_metrics(y_sub, y_baseline[mask])
+    block["rule_baseline"] = compute_metrics(y_sub, y_rule[mask])
+    return block
 
 
 def _load_json(path: Path) -> dict:
