@@ -69,14 +69,16 @@ jobs:
       # was decommissioned after the June 2026 demo; the code is kept as the
       # record of what ran there.
       #
-      # -upgrade: .terraform.lock.hcl currently records only windows_amd64
-      # checksums for hashicorp/google, so a plain init fails on this linux
-      # runner with a checksum mismatch. -upgrade re-resolves the provider
-      # within the ~> 5.40 constraint and re-verifies it for this platform.
-      # Drop it once the lock file carries linux/darwin hashes
-      # (terraform providers lock -platform=linux_amd64 ...).
+      # The committed .terraform.lock.hcl records only windows_amd64 checksums
+      # for hashicorp/google, so init on this linux runner fails with a
+      # checksum mismatch (-upgrade does not help: it re-selects the same
+      # version and still checks the recorded hashes). Until the lock carries
+      # linux/darwin hashes (terraform providers lock -platform=...), this
+      # validate-only job drops the lock and resolves ~> 5.40 fresh.
       - name: terraform init (no backend)
-        run: terraform init -backend=false -input=false -upgrade
+        run: |
+          rm -f .terraform.lock.hcl
+          terraform init -backend=false -input=false
 
       - name: terraform fmt
         run: terraform fmt -check -recursive -diff
