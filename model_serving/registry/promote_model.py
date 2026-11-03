@@ -22,14 +22,6 @@ Flow
    {challenger: 100%, champion: 0%}.
 8. If any criterion fails: exit non-zero. The champion remains live.
 
-Offline (`deploy.py promote --local`)
--------------------------------------
-promote_local() runs steps 3-5 between two training runs' artifact
-directories (train.py output: model.onnx, feature_metadata.json,
-evaluation_test.json) and reports the verdict. Nothing is deployed; the
-local run (local/README.md) serves whichever directory wins by pointing
-MODEL_LOCAL_PATH at it.
-
 The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
 SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
 method in all SDK versions. The gapic PATCH call is the canonical approach.
@@ -83,18 +75,6 @@ class DeployedModelInfo:
     @property
     def label(self) -> str:
         return self.deployed_model_id
-
-
-@dataclass
-class LocalModelInfo:
-    """A training run's artifacts directory as a promotion candidate."""
-    artifacts_dir: Path
-    test_metrics: dict
-    split_sha256: str | None
-
-    @property
-    def label(self) -> str:
-        return str(self.artifacts_dir)
 
 
 class ModelPromoter:
@@ -377,70 +357,6 @@ class ModelPromoter:
         print(f"               deployed {challenger.create_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
 
-# ── Offline gate: two artifact directories ───────────────────────────────────
-
-def local_model_info(artifacts_dir: str | Path) -> LocalModelInfo:
-    """One training run's artifacts directory (train.py output) as a candidate."""
-    artifacts_dir = Path(artifacts_dir)
-    for fname in ("model.onnx", "feature_metadata.json", "evaluation_test.json"):
-        if not (artifacts_dir / fname).is_file():
-            raise FileNotFoundError(
-                f"{fname} not found in {artifacts_dir}: pass a train.py artifacts directory"
-            )
-    evaluation = parse_evaluation(_read_json(artifacts_dir / "evaluation_test.json"), str(artifacts_dir))
-    return LocalModelInfo(
-        artifacts_dir=artifacts_dir,
-        test_metrics=evaluation["metrics"],
-        split_sha256=evaluation["split_sha256"],
-    )
-
-
-def _local_model_files(info: LocalModelInfo, workdir: Path) -> tuple[Path, dict]:
-    """align_metrics() callback: a local candidate's files are already on disk."""
-    return info.artifacts_dir / "model.onnx", _read_json(info.artifacts_dir / "feature_metadata.json")
-
-
-def promote_local(
-    champion_dir: str | Path,
-    challenger_dir: str | Path,
-    dataset_dir: str | Path = "ml_training/artifacts/dataset",
-) -> bool:
-    """
-    The promotion gate between two training runs, with nothing deployed.
-
-    Same decision as ModelPromoter.promote(): the stored evaluation_test.json
-    metrics when both runs were evaluated on the same test split, otherwise
-    both models rescored on the challenger's split (dataset_dir/test.parquet)
-    with onnxruntime. Returns True when the challenger wins on all three metrics.
-    """
-    champion   = local_model_info(champion_dir)
-    challenger = local_model_info(challenger_dir)
-
-    sep = "=" * 68
-    print(f"\n{sep}")
-    print("  Champion/Challenger Promotion Check (local artifacts)")
-    print(sep)
-    print(f"  Champion   : {champion.label}")
-    print(f"  Challenger : {challenger.label}")
-
-    basis = align_metrics(champion, challenger, Path(dataset_dir), _local_model_files)
-    passes, summary = compare_metrics(champion.test_metrics, challenger.test_metrics)
-    print_metric_comparison(summary, basis)
-
-    if not passes:
-        logger.warning(
-            "PROMOTION BLOCKED — challenger did not beat champion on all metrics. "
-            "Keep serving the champion."
-        )
-        return False
-    logger.info(
-        "PROMOTE — challenger beats champion on AUPRC, AUC-ROC and Brier. "
-        "Serve %s (MODEL_LOCAL_PATH for the local container).",
-        challenger.label,
-    )
-    return True
-
-
 # ── Module helpers (pure; unit-tested without GCP) ────────────────────────────
 
 def _read_json(path: Path) -> dict:
@@ -497,9 +413,8 @@ def align_metrics(champion, challenger, dataset_dir: Path, fetch_model) -> str:
 
     Same split hash → the stored metrics already are. Otherwise rescore both
     models on the challenger's test split. `fetch_model(info, workdir)` returns
-    (model.onnx path, feature_metadata dict) for a candidate: downloaded from
-    GCS for deployed models, read from disk for local ones. Returns a one-line
-    description of the basis for the report.
+    (model.onnx path, feature_metadata dict) for a candidate, downloaded from
+    GCS. Returns a one-line description of the basis for the report.
     """
     if not needs_rescore(champion.split_sha256, challenger.split_sha256):
         return (
