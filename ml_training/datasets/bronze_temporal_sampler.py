@@ -74,8 +74,8 @@ class BronzeTemporalSampler:
         GCS bucket name, e.g. "my-project-scip-lake" (Bronze under
         gs://<bucket>/bronze/). Mutually exclusive with bronze_path.
     bronze_path:
-        Local Bronze directory as written by spark/jobs/bronze_ingestion.py,
-        e.g. "spark/data/bronze". Mutually exclusive with bucket.
+        A directory in Bronze's layout, used by the tests in place of a
+        bucket. Mutually exclusive with bucket.
     credentials_path:
         Path to a service account JSON key, or None to use Application
         Default Credentials (bucket mode only).
