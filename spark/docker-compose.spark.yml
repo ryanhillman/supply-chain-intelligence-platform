@@ -1,25 +1,23 @@
-# Spark jobs. By default everything is local: Bronze, Silver, checkpoints and
-# the DLQ go to spark/data/ (this directory is mounted at /opt/spark-app) and
-# feature rows go to the Bigtable emulator from local/docker-compose.emulators.yml.
-# Copy .env.example to .env first; the Kafka stack must be up (it creates the
-# kafka_scip-net network).
+# Spark jobs. Bronze, Silver, checkpoints and the DLQ go to GCS; feature rows
+# go to Bigtable. Copy .env.example to .env and fill it in first; the Kafka
+# stack must be up (it creates the kafka_scip-net network).
+#
+# The service-account key is created outside Terraform and gitignored:
+#   gcloud iam service-accounts keys create infrastructure/gcp/keys/scip-spark-sa.json \
+#       --iam-account scip-spark-sa@<project>.iam.gserviceaccount.com
 #
 #   docker build -t scip-spark:latest .
 #   docker compose -f docker-compose.spark.yml up -d spark-bronze
 #   docker compose -f docker-compose.spark.yml run --rm spark-silver-batch
-#
-# The GCS --conf lines are inert unless the storage paths in .env are gs://
-# URIs. That was the June 2026 GCP deployment; for it, add the override that
-# mounts the service-account key:
-#   docker compose -f docker-compose.spark.yml -f docker-compose.gcp.yml up -d
 
 x-spark: &spark
   image: scip-spark:latest
   env_file: .env
   volumes:
-    # Source mount — live-reload job code without rebuild; data/ under it is
-    # where the local run's Parquet and checkpoints land on the host.
+    # Source mount — live-reload job code without rebuild.
     - .:/opt/spark-app
+    # Service-account key, read-only. The file must exist before `docker compose up`.
+    - ../infrastructure/gcp/keys/scip-spark-sa.json:/opt/spark-app/keys/scip-spark-sa.json:ro
     # Ivy JAR cache — persists Kafka connector JARs across container restarts.
     - spark-ivy-cache:/opt/ivy2
   networks:
@@ -42,7 +40,7 @@ services:
       - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
       - "--conf"
       - "spark.kafka.consumer.cache.enabled=false"
-      # ── GCS connector configuration (gs:// paths only) ──────────────────────
+      # ── GCS connector configuration ─────────────────────────────────────────
       - "--conf"
       - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
       - "--conf"
@@ -78,7 +76,7 @@ services:
       - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
       - "--conf"
       - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
-      # ── GCS connector configuration (gs:// paths only) ──────────────────────
+      # ── GCS connector configuration ─────────────────────────────────────────
       - "--conf"
       - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
       - "--conf"
