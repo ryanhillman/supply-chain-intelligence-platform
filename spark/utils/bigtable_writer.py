@@ -19,7 +19,6 @@ Row key format: {warehouse_id}#{sku_id}
 from __future__ import annotations
 
 import logging
-import os
 import struct
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterator
@@ -70,34 +69,6 @@ def _encode_value(col_name: str, value) -> bytes | None:
         return None
 
 
-# ── Client construction ───────────────────────────────────────────────────────
-
-def _bigtable_client(project_id: str):
-    """
-    Data client for a Bigtable instance, or for the emulator when
-    BIGTABLE_EMULATOR_HOST is set.
-
-    The library's emulator channel uses gRPC "local" credentials, which the
-    gRPC runtime accepts for loopback peers only. In the local run the
-    emulator is another container (bigtable-emulator:8086, see
-    local/docker-compose.emulators.yml), so every mutation was retried until
-    the deadline and came back with no status at all. A plain insecure
-    channel is what the emulator expects anyway.
-    """
-    from google.cloud import bigtable  # type: ignore[import]
-
-    if not os.environ.get("BIGTABLE_EMULATOR_HOST"):
-        return bigtable.Client(project=project_id, admin=False)
-
-    import grpc
-
-    class _EmulatorClient(bigtable.Client):
-        def _emulator_channel(self, transport, options):
-            return grpc.insecure_channel(self._emulator_host, options=options)
-
-    return _EmulatorClient(project=project_id, admin=False)
-
-
 # ── Per-partition writer ───────────────────────────────────────────────────────
 
 def _write_partition(
@@ -115,7 +86,9 @@ def _write_partition(
     upserts on the row key, so a rerun repairs them.
     """
     # Built here — this runs inside the Spark executor, not the driver.
-    client = _bigtable_client(project_id)
+    from google.cloud import bigtable
+
+    client = bigtable.Client(project=project_id, admin=False)
     table = client.instance(instance_id).table(table_id)
 
     batch: list = []

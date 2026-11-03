@@ -49,7 +49,6 @@ def _write(monkeypatch, table, row):
         instance=lambda _: types.SimpleNamespace(table=lambda _: table),
         close=lambda: None,
     )
-    monkeypatch.setattr(bw, "_bigtable_client", lambda _: client, raising=False)
     from google.cloud import bigtable
     monkeypatch.setattr(bigtable, "Client", lambda **_: client)
     bw._write_partition(iter([row]), "project", "instance", "table")
