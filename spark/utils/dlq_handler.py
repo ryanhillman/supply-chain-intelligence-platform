@@ -3,9 +3,8 @@ Dead-letter queue writer for the Bronze ingestion job.
 
 Invalid records (JSON that fails parsing or is missing a required field) are
 wrapped in a DLQ envelope and written as newline-delimited JSON under
-DLQ_BASE_PATH/{topic}/year=/month=/day=/hour=/ — a local path in the local
-stack, a gs:// prefix when running against GCS. The envelope keeps the
-original Kafka coordinates and the raw payload (base64) so a record can be
+DLQ_BASE_PATH/{topic}/year=/month=/day=/hour=/ (a gs:// prefix). The envelope
+keeps the original Kafka coordinates and the raw payload (base64) so a record can be
 inspected or replayed by hand.
 
 Envelope fields:
@@ -48,7 +47,7 @@ def write_dlq(
                         raw_value, _error_reason, _error_detail).
         topic:          Source Kafka topic.
         epoch_id:       Spark micro-batch epoch, kept for idempotency tracking.
-        base_path:      DLQ_BASE_PATH (local path or gs:// prefix).
+        base_path:      DLQ_BASE_PATH (gs:// prefix).
         consumer_group: Kafka consumer group of the ingesting job.
     """
     if df.rdd.isEmpty():
