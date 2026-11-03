@@ -7,9 +7,7 @@ Subcommands:
                  Reads model_resource_name from model_serving/artifacts/registration_info.json.
                  Defaults to 0% traffic (challenger pattern).
 
-    smoke-test — score a few Bigtable entities through the endpoint: the Vertex
-                 AI endpoint (--endpoint) or the serving container run locally
-                 (--endpoint-url, see local/README.md).
+    smoke-test — score a few Bigtable entities through the Vertex AI endpoint.
 
     promote    — compare champion vs challenger and promote the challenger if it
                  beats the champion on AUPRC, AUC-ROC, and Brier score.
@@ -45,13 +43,6 @@ Usage
         --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --bigtable-instance scip-feature-store \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json
-
-    # Smoke test against the serving container run locally (no Vertex AI;
-    # Bigtable rows come from the emulator via BIGTABLE_EMULATOR_HOST):
-    python model_serving/scripts/deploy.py smoke-test \\
-        --project local-scip \\
-        --endpoint-url http://localhost:8080 \\
-        --bigtable-instance scip-feature-store
 
     # Promote challenger to champion:
     python model_serving/scripts/deploy.py promote \\
@@ -182,14 +173,6 @@ def parse_args() -> argparse.Namespace:
     smoke_p = sub.add_parser("smoke-test", help="Smoke-test the deployed endpoint")
     _add_common(smoke_p)
     smoke_p.add_argument(
-        "--endpoint-url",
-        default=os.environ.get("ENDPOINT_URL", ""),
-        help=(
-            "Base URL of the serving container run locally, e.g. http://localhost:8080. "
-            "Alternative to --endpoint."
-        ),
-    )
-    smoke_p.add_argument(
         "--bigtable-instance",
         default=os.environ.get("BIGTABLE_INSTANCE_ID", ""),
         help="Bigtable instance ID (e.g. scip-feature-store). Optional; uses synthetic data if omitted.",
@@ -257,13 +240,10 @@ def _require(args: argparse.Namespace, flag: str, env: str) -> None:
 def main() -> None:
     args = parse_args()
 
-    # Validate required args. The two local modes need no GCP identity:
-    # smoke-test --endpoint-url and promote --local.
+    # Validate required args. promote --local needs no GCP identity.
     local_promote = args.command == "promote" and args.local
-    local_smoke   = args.command == "smoke-test" and bool(args.endpoint_url)
     if not local_promote:
         _require(args, "project", "GCP_PROJECT_ID")
-    if not (local_promote or local_smoke):
         _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     if args.command == "deploy":
@@ -308,8 +288,7 @@ def main() -> None:
         smoke = SmokeTest(
             project_id             = args.project,
             region                 = args.region,
-            endpoint_resource_name = None if args.endpoint_url else args.endpoint,
-            endpoint_url           = args.endpoint_url or None,
+            endpoint_resource_name = args.endpoint,
             artifacts_dir          = args.artifacts,
             credentials_path       = args.sa_key,
         )
