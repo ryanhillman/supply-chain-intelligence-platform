@@ -1,7 +1,6 @@
 """
-BronzeTemporalSampler — reads all five Bronze topics (a local directory
-written by the Spark job, or the GCS bucket of the June 2026 deployment) and
-builds a feature DataFrame of (warehouse_id, sku_id, sample_date) rows.
+BronzeTemporalSampler — reads all five Bronze topics from GCS and builds a
+feature DataFrame of (warehouse_id, sku_id, sample_date) rows.
 
 One row per (warehouse, sku, calendar day) within the usable date range:
   start = first_inventory_event_date + min_lookback_days
