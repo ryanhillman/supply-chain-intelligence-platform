@@ -22,10 +22,7 @@ import logging
 import os
 import struct
 from datetime import datetime, timezone
-from typing import Iterator
-
-from pyspark.sql import DataFrame
-from pyspark.sql.types import Row
+from typing import TYPE_CHECKING, Iterator
 
 from config.feature_config import (
     BIGTABLE_BATCH_SIZE,
@@ -33,6 +30,10 @@ from config.feature_config import (
     NULLABLE_FEATURES,
     STRING_FEATURES,
 )
+
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame
+    from pyspark.sql.types import Row
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,8 @@ def _write_partition(
 
     Instantiates a Bigtable client per partition (not per row) to amortise
     connection overhead. Closed in a finally block to prevent connection leaks.
+    Raises RuntimeError if any row failed, which fails the Spark job. Writes are
+    upserts on the row key, so a rerun repairs them.
     """
     # Built here — this runs inside the Spark executor, not the driver.
     client = _bigtable_client(project_id)
@@ -162,6 +165,11 @@ def _write_partition(
         "Bigtable partition done | written=%d failed=%d instance=%s table=%s",
         rows_written, rows_failed, instance_id, table_id,
     )
+    if rows_failed:
+        raise RuntimeError(
+            f"Bigtable write failed for {rows_failed} of "
+            f"{rows_written + rows_failed} rows in {instance_id}/{table_id}"
+        )
 
 
 def _flush_batch(table, batch: list, rows_written: int, rows_failed: int) -> tuple[int, int]:
