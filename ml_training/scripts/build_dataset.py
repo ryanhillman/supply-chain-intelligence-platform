@@ -6,12 +6,6 @@ splits 70/15/15 by time -> writes train/val/test Parquet + metadata.
 
 Usage
 -----
-    # Local Bronze written by the Spark job (the default local run):
-    python ml_training/scripts/build_dataset.py \\
-        --bronze-path spark/data/bronze \\
-        --output-dir ml_training/artifacts/dataset
-
-    # GCS Bronze (June 2026 deployment):
     python ml_training/scripts/build_dataset.py \\
         --bucket my-project-scip-lake \\
         --sa-key infrastructure/gcp/keys/scip-spark-sa.json \\
@@ -43,25 +37,14 @@ logger = logging.getLogger("build_dataset")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Build the training dataset from Bronze (local directory or GCS)"
+        description="Build the training dataset from Bronze on GCS"
     )
 
     # ── Bronze source ─────────────────────────────────────────────────────────
     p.add_argument(
-        "--bronze-path",
-        default=None,
-        help=(
-            "Local Bronze directory written by spark/jobs/bronze_ingestion.py "
-            "(e.g. spark/data/bronze). Takes precedence over --bucket."
-        ),
-    )
-    p.add_argument(
         "--bucket",
         default=os.environ.get("GCS_BUCKET_NAME", ""),
-        help=(
-            "GCS bucket name (e.g. my-project-scip-lake) for Bronze on GCS. "
-            "One of --bronze-path / --bucket is required."
-        ),
+        help="GCS bucket name holding Bronze (e.g. my-project-scip-lake). Required.",
     )
     p.add_argument(
         "--sa-key",
@@ -86,23 +69,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not args.bronze_path and not args.bucket:
-        logger.error(
-            "A Bronze source is required: --bronze-path <dir> (local Spark output) "
-            "or --bucket <name> / GCS_BUCKET_NAME (GCS)."
-        )
+    if not args.bucket:
+        logger.error("A Bronze bucket is required: --bucket <name> or GCS_BUCKET_NAME.")
         sys.exit(1)
 
-    if args.bronze_path:
-        logger.info("Bronze path : %s", args.bronze_path)
-    else:
-        logger.info("Bronze bucket : %s (SA key: %s)", args.bucket,
-                    args.sa_key or "Application Default Credentials")
+    logger.info("Bronze bucket : %s (SA key: %s)", args.bucket,
+                args.sa_key or "Application Default Credentials")
     logger.info("Output : %s | horizon : %d days", args.output_dir, args.horizon)
 
     manifest = DatasetBuilder(
-        bucket           = None if args.bronze_path else args.bucket,
-        bronze_path      = args.bronze_path,
+        bucket           = args.bucket,
         credentials_path = args.sa_key,
         output_dir       = args.output_dir,
         horizon_days     = args.horizon,
