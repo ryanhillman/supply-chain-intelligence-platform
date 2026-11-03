@@ -3,6 +3,7 @@ spark/utils/bigtable_writer.py: what one partition sends to Bigtable. The table
 is a fake, so this needs neither Spark nor the emulator;
 tests/test_silver_bigtable.py covers the same path against the emulator.
 """
+import struct
 import sys
 import types
 from pathlib import Path
@@ -59,6 +60,17 @@ def _row(**values):
     row["row_key"] = "W-001#SKU-001"
     row.update(values)
     return row
+
+
+def test_a_null_deletes_the_cell_instead_of_leaving_the_previous_value(monkeypatch):
+    table = _FakeTable()
+    _write(monkeypatch, table, _row(supplier__in_transit_qty=None))
+
+    written = table.rows[0]
+    assert ("supplier", b"transit_qty") in written.deleted
+    assert ("supplier", b"transit_qty") not in written.set_cells
+    assert written.set_cells[("supplier", b"po_qty")] == struct.pack(">d", 1.0)
+    assert len(written.deleted) == 1
 
 
 def test_a_rejected_row_fails_the_partition(monkeypatch):

@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Iterator
 from config.feature_config import (
     BIGTABLE_BATCH_SIZE,
     FEATURE_REGISTRY,
-    NULLABLE_FEATURES,
     STRING_FEATURES,
 )
 
@@ -56,7 +55,7 @@ def _encode_value(col_name: str, value) -> bytes | None:
 
     Numeric features: big-endian IEEE 754 double (8 bytes).
     String features:  UTF-8 bytes.
-    None/null:        returns None → caller skips the cell.
+    None/null:        returns None → caller deletes the cell.
     """
     if value is None:
         return None
@@ -133,12 +132,15 @@ def _write_partition(
             cell_ts = datetime.now(timezone.utc)
 
             for col_name, (family, qualifier) in _COL_TO_FAMILY_QUALIFIER.items():
-                # Skip nullable features whose value is None
-                if col_name in NULLABLE_FEATURES and spark_row[col_name] is None:
-                    continue
-
                 value_bytes = _encode_value(col_name, spark_row[col_name])
                 if value_bytes is None:
+                    # Skipping would leave the previous run's cell to be read
+                    # as today's value. With no cell, the scorer applies the
+                    # same default as training (fill_defaults).
+                    bt_row.delete_cell(
+                        column_family_id=family,
+                        column=qualifier.encode("utf-8"),
+                    )
                     continue
 
                 bt_row.set_cell(
