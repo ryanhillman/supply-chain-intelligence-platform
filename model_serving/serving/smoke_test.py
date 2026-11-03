@@ -1,6 +1,5 @@
 """
-SmokeTest — validates the model endpoint (Vertex AI, or the serving container
-run locally) with real Bigtable rows.
+SmokeTest — validates the Vertex AI endpoint with real Bigtable rows.
 
 Flow
 ----
@@ -10,8 +9,7 @@ Flow
      with a clear warning. See note below on expected outputs.
 3. Turn the rows into endpoint instances with RequestBuilder: the same
    defaults, derived features and vocab mapping the batch scorer applies.
-4. POST to /predict via aiplatform.Endpoint.predict(), or LocalEndpoint when
-   endpoint_url is given (same request/response shape).
+4. POST to /predict via aiplatform.Endpoint.predict().
 5. Assert all shortage_prob_7d values are:
    - finite (not NaN, not inf)
    - in [0.0, 1.0]
@@ -46,7 +44,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from model_serving.pipeline.feature_client import FeatureClient
-from model_serving.pipeline.local_endpoint import LocalEndpoint
 from model_serving.pipeline.request_builder import RequestBuilder
 
 logger = logging.getLogger(__name__)
@@ -60,10 +57,7 @@ class SmokeTest:
     region:
         GCP region (e.g. "us-central1").
     endpoint_resource_name:
-        Full Vertex AI endpoint resource name. Exactly one of this and
-        endpoint_url must be given.
-    endpoint_url:
-        Base URL of the serving container run locally, e.g. "http://localhost:8080".
+        Full Vertex AI endpoint resource name.
     artifacts_dir:
         Local path to feature_metadata.json.
     credentials_path:
@@ -74,20 +68,13 @@ class SmokeTest:
         self,
         project_id: str,
         region: str,
-        endpoint_resource_name: str | None = None,
+        endpoint_resource_name: str,
         artifacts_dir: str | Path = "ml_training/artifacts",
         credentials_path: str | None = None,
-        endpoint_url: str | None = None,
     ) -> None:
-        if bool(endpoint_resource_name) == bool(endpoint_url):
-            raise ValueError(
-                "Pass exactly one of endpoint_resource_name (Vertex AI) or "
-                "endpoint_url (local serving container)"
-            )
         self.project_id             = project_id
         self.region                 = region
         self.endpoint_resource_name = endpoint_resource_name
-        self.endpoint_url           = endpoint_url
         self.artifacts_dir          = Path(artifacts_dir)
 
         self._credentials_path = credentials_path
@@ -100,12 +87,11 @@ class SmokeTest:
         else:
             self._creds = None
 
-        if not endpoint_url:
-            from google.cloud import aiplatform
-            init_kwargs: dict = {"project": project_id, "location": region}
-            if self._creds:
-                init_kwargs["credentials"] = self._creds
-            aiplatform.init(**init_kwargs)
+        from google.cloud import aiplatform
+        init_kwargs: dict = {"project": project_id, "location": region}
+        if self._creds:
+            init_kwargs["credentials"] = self._creds
+        aiplatform.init(**init_kwargs)
 
         self._metadata = self._load_feature_metadata()
 
@@ -144,13 +130,10 @@ class SmokeTest:
 
         logger.info(
             "Calling endpoint %s with %d instances (source: %s)",
-            self.endpoint_url or self.endpoint_resource_name, len(instances), source,
+            self.endpoint_resource_name, len(instances), source,
         )
-        if self.endpoint_url:
-            endpoint = LocalEndpoint(self.endpoint_url)
-        else:
-            from google.cloud import aiplatform
-            endpoint = aiplatform.Endpoint(endpoint_name=self.endpoint_resource_name)
+        from google.cloud import aiplatform
+        endpoint  = aiplatform.Endpoint(endpoint_name=self.endpoint_resource_name)
         response  = endpoint.predict(instances=instances)
         preds     = response.predictions
 

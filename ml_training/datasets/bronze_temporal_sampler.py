@@ -1,7 +1,6 @@
 """
-BronzeTemporalSampler — reads all five Bronze topics (a local directory
-written by the Spark job, or the GCS bucket of the June 2026 deployment) and
-builds a feature DataFrame of (warehouse_id, sku_id, sample_date) rows.
+BronzeTemporalSampler — reads all five Bronze topics from GCS and builds a
+feature DataFrame of (warehouse_id, sku_id, sample_date) rows.
 
 One row per (warehouse, sku, calendar day) within the usable date range:
   start = first_inventory_event_date + min_lookback_days
@@ -74,8 +73,8 @@ class BronzeTemporalSampler:
         GCS bucket name, e.g. "my-project-scip-lake" (Bronze under
         gs://<bucket>/bronze/). Mutually exclusive with bronze_path.
     bronze_path:
-        Local Bronze directory as written by spark/jobs/bronze_ingestion.py,
-        e.g. "spark/data/bronze". Mutually exclusive with bucket.
+        A directory in Bronze's layout, used by the tests in place of a
+        bucket. Mutually exclusive with bucket.
     credentials_path:
         Path to a service account JSON key, or None to use Application
         Default Credentials (bucket mode only).

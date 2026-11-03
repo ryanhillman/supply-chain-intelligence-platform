@@ -106,13 +106,3 @@ STRING_FEATURES: frozenset[str] = frozenset({
     "lineage__pipeline_version",
 })
 
-# Features to skip writing to Bigtable when value is None/null
-# (avoids writing empty cells that would still consume storage)
-NULLABLE_FEATURES: frozenset[str] = frozenset({
-    "demand__demand_forecast_7d",
-    "demand__demand_forecast_30d",
-    "demand__demand_multiplier",
-    "risk__stockout_risk_score",
-    "risk__shortage_prob_7d",
-    "supplier__lead_time_stddev",
-})

@@ -85,7 +85,7 @@ def test_real_trend_is_still_detected_once_mature():
     assert row["velocity_trend"] > 1.0  # genuine upward trend, correctly detected
 
 
-# ── Local Bronze directory (--bronze-path) ────────────────────────────────────
+# ── Local Bronze directory (bronze_path) ────────────────────────────────────
 
 def _inventory_frame() -> pd.DataFrame:
     return pd.DataFrame({

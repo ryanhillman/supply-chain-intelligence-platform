@@ -4,8 +4,7 @@ score.py — CLI entry point for the Phase 5.4 batch scoring pipeline.
 This script:
 1. Scans all rows from Bigtable inventory_features.
 2. Applies fill_defaults() and engineer_features() from Phase 4 (raw units).
-3. Calls the model endpoint in batches to obtain predictions: the Vertex AI
-   endpoint (--endpoint) or the serving container over HTTP (--endpoint-url).
+3. Calls the Vertex AI endpoint in batches to obtain predictions.
 4. Publishes each prediction to the Pub/Sub prediction-results topic.
 
 Optionally runs the PredictionWriter in the same process after publishing
@@ -14,15 +13,7 @@ Alternatively, run prediction_writer.py separately as a Cloud Run job.
 
 Usage
 -----
-    # Local run: serving container on :8080, Bigtable and Pub/Sub emulators
-    # found through BIGTABLE_EMULATOR_HOST / PUBSUB_EMULATOR_HOST (local/README.md):
-    python model_serving/scripts/score.py \\
-        --project local-scip \\
-        --endpoint-url http://localhost:8080 \\
-        --model-version local-dev \\
-        --write
-
-    # Score only against Vertex AI (writer runs separately):
+    # Score only (writer runs separately):
     python model_serving/scripts/score.py \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
@@ -44,7 +35,6 @@ Environment variables (alternatives to CLI flags):
     GCP_PROJECT_ID                   -- --project
     GCP_REGION                       -- --region
     VERTEX_AI_ENDPOINT_RESOURCE_NAME -- --endpoint
-    ENDPOINT_URL                     -- --endpoint-url
     BIGTABLE_INSTANCE_ID             -- --bigtable-instance
     PUBSUB_TOPIC_ID                  -- --topic
     PUBSUB_SUBSCRIPTION_ID           -- --subscription
@@ -110,14 +100,6 @@ def parse_args() -> argparse.Namespace:
             "Full Vertex AI endpoint resource name "
             "(projects/.../locations/.../endpoints/...). "
             "Use the 'vertex_ai_endpoint_resource_name' Terraform output."
-        ),
-    )
-    p.add_argument(
-        "--endpoint-url",
-        default=os.environ.get("ENDPOINT_URL", ""),
-        help=(
-            "Base URL of the serving container run locally, e.g. http://localhost:8080. "
-            "Alternative to --endpoint (one of the two is required unless --dry-run)."
         ),
     )
 
@@ -259,12 +241,8 @@ def main() -> None:
 
     # Validate required arguments.
     _require(args, "project",  "GCP_PROJECT_ID")
-    if not args.dry_run and not (args.endpoint or args.endpoint_url):
-        logger.error(
-            "Pass --endpoint (Vertex AI resource name) or --endpoint-url "
-            "(local serving container, e.g. http://localhost:8080)"
-        )
-        sys.exit(1)
+    if not args.dry_run:
+        _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     model_version = _resolve_model_version(args)
 
@@ -279,7 +257,7 @@ def main() -> None:
         "  batch_size       : %d\n"
         "  dry_run          : %s",
         args.project, args.region,
-        args.endpoint_url or args.endpoint or "(dry-run — not used)",
+        args.endpoint or "(dry-run — not used)",
         args.bigtable_instance, args.bigtable_table,
         args.topic,
         model_version,
@@ -326,8 +304,7 @@ def _run_scoring(
         region                 = args.region,
         feature_client         = feature_client,
         request_builder        = request_builder,
-        endpoint_resource_name = None if args.endpoint_url else args.endpoint,
-        endpoint_url           = args.endpoint_url or None,
+        endpoint_resource_name = args.endpoint,
         topic_id               = args.topic,
         credentials_path       = args.sa_key,
     )

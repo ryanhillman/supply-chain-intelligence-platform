@@ -62,9 +62,24 @@ logging.basicConfig(
 logger = logging.getLogger("simulate")
 
 
+_failed_deliveries = 0
+
+
 def _delivery_callback(err, msg) -> None:
+    global _failed_deliveries
     if err:
+        _failed_deliveries += 1
         logger.error("Delivery failed | topic=%s error=%s", msg.topic(), err)
+
+
+def flush_or_raise(p: Producer) -> None:
+    """Wait for delivery reports; raise if any event did not reach Kafka."""
+    undelivered = p.flush() or 0
+    if undelivered or _failed_deliveries:
+        raise RuntimeError(
+            f"Kafka delivery failed: {_failed_deliveries} events rejected, "
+            f"{undelivered} still queued"
+        )
 
 
 def produce_events(p: Producer, events: list[Event]) -> None:
@@ -104,7 +119,7 @@ def replay(p: Producer, world: World, days: int) -> int:
         produce_events(p, events)
         total += len(events)
         if i % LOG_EVERY_DAYS == 0 or i == days:
-            p.flush()
+            flush_or_raise(p)
             logger.info("Replayed %d/%d days | through %s | events=%d",
                         i, days, _last_day(world), total)
     return total
@@ -138,7 +153,7 @@ def main() -> None:
     while True:
         time.sleep(TICK_SECONDS)
         produce_events(p, world.step())
-        p.flush()
+        flush_or_raise(p)
 
 
 if __name__ == "__main__":
