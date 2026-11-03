@@ -164,6 +164,7 @@ def main() -> None:
                 "to repopulate Bigtable.",
                 bt_exc,
             )
+            raise   # exit non-zero: the scorer would read an out-of-date store
     finally:
         feature_df.unpersist()
         spark.stop()
