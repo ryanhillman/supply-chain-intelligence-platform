@@ -7,9 +7,7 @@ Flow
    then split_fresh() drops rows whose lineage:silver_ts is older than
    max_feature_age_hours (default 48 h): stale features are not scored.
 2. RequestBuilder.build()   — fill defaults, engineer features, scale, map vocab.
-3. endpoint.predict()       — call the model endpoint in batches of `batch_size`:
-   the Vertex AI endpoint (endpoint_resource_name) or the serving container
-   over HTTP (endpoint_url, the local run; see local_endpoint.py).
+3. endpoint.predict()       — call the Vertex AI endpoint in batches of `batch_size`.
    The endpoint returns {"shortage_prob_7d": float} per instance (see
    model_serving/serving/container/main.py). stockout_risk_score is the
    closed-form Normal-approximation P(stockout ≤ 7d) that RequestBuilder
@@ -57,7 +55,6 @@ import numpy as np
 
 from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
 from model_serving.pipeline.feature_client import FeatureClient, split_fresh
-from model_serving.pipeline.local_endpoint import LocalEndpoint
 from model_serving.pipeline.request_builder import RequestBuilder, ScoringRequest
 
 logger = logging.getLogger(__name__)
@@ -95,20 +92,16 @@ class BatchScorer:
     Parameters
     ----------
     project_id:
-        GCP project ID (any string with the emulators).
+        GCP project ID.
     region:
-        GCP region (e.g. "us-central1"); Vertex AI only.
+        GCP region (e.g. "us-central1").
     feature_client:
         Initialised FeatureClient instance.
     request_builder:
         Initialised RequestBuilder instance.
     endpoint_resource_name:
         Full Vertex AI endpoint resource name from the Terraform output
-        `vertex_ai_endpoint_resource_name`. Exactly one of this and
-        endpoint_url must be given.
-    endpoint_url:
-        Base URL of the serving container run locally, e.g.
-        "http://localhost:8080" (see local/README.md).
+        `vertex_ai_endpoint_resource_name`.
     topic_id:
         Pub/Sub topic ID for prediction messages (default "prediction-results").
     credentials_path:
@@ -122,20 +115,13 @@ class BatchScorer:
         feature_client: FeatureClient,
         request_builder: RequestBuilder,
         *,
-        endpoint_resource_name: str | None = None,
-        endpoint_url: str | None = None,
+        endpoint_resource_name: str,
         topic_id: str = _DEFAULT_TOPIC_ID,
         credentials_path: str | None = None,
     ) -> None:
-        if bool(endpoint_resource_name) == bool(endpoint_url):
-            raise ValueError(
-                "Pass exactly one of endpoint_resource_name (Vertex AI) or "
-                "endpoint_url (local serving container)"
-            )
         self.project_id             = project_id
         self.region                 = region
         self.endpoint_resource_name = endpoint_resource_name
-        self.endpoint_url           = endpoint_url
         self.topic_id               = topic_id
         self._feature_client        = feature_client
         self._request_builder       = request_builder
@@ -149,16 +135,13 @@ class BatchScorer:
         else:
             self._creds = None
 
-        if endpoint_url:
-            self._endpoint = LocalEndpoint(endpoint_url)
-        else:
-            from google.cloud import aiplatform
+        from google.cloud import aiplatform
 
-            init_kwargs: dict = {"project": project_id, "location": region}
-            if self._creds:
-                init_kwargs["credentials"] = self._creds
-            aiplatform.init(**init_kwargs)
-            self._endpoint = aiplatform.Endpoint(endpoint_name=endpoint_resource_name)
+        init_kwargs: dict = {"project": project_id, "location": region}
+        if self._creds:
+            init_kwargs["credentials"] = self._creds
+        aiplatform.init(**init_kwargs)
+        self._endpoint = aiplatform.Endpoint(endpoint_name=endpoint_resource_name)
 
         # Publisher client with batching to coalesce small messages.
         from google.cloud import pubsub_v1
@@ -171,7 +154,7 @@ class BatchScorer:
 
         logger.info(
             "BatchScorer ready: endpoint=%s  topic=%s",
-            endpoint_url or endpoint_resource_name, self._topic_path,
+            endpoint_resource_name, self._topic_path,
         )
 
     # ── Public API ─────────────────────────────────────────────────────────────
