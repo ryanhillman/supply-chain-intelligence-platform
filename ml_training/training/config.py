@@ -24,8 +24,8 @@ class TrainingConfig:
     # ── Loss ──────────────────────────────────────────────────────────────────
     # "bce"          — BCEWithLogitsLoss, unweighted (default)
     # "weighted_bce" — BCEWithLogitsLoss(pos_weight=n_neg/n_pos)
-    # Unweighted is the default: on the replayed world's test split (seed 42),
-    # pos_weight (3.51) moved test AUPRC 0.839 → 0.835 and Brier 0.078 → 0.095.
+    # Unweighted is the default: on the replayed world's validation split (mean
+    # of seeds 42-46), pos_weight moved AUPRC 0.869 → 0.868 and Brier 0.073 → 0.088.
     # The weight inflates every predicted probability, which hurts calibration
     # without improving ranking.
     loss_type:         str   = "bce"
