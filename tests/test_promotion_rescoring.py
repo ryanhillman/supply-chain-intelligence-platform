@@ -1,13 +1,13 @@
 """
 Tests for the pure parts of model_serving/registry/promote_model.py that make
-champion/challenger comparison happen on one holdout, and for promote_local(),
-the same gate run between two artifact directories with nothing deployed.
+champion/challenger comparison happen on one holdout.
 
 ModelPromoter itself needs Vertex AI and GCS clients, so these tests cover
 the module-level helpers it composes: the split-hash guard, the file hash,
-scoring an exported ONNX model over a raw-unit split, and the metric gate.
+scoring an exported ONNX model over a raw-unit split, rescoring both models on
+one split, and the metric gate.
 """
-import json
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -103,7 +103,7 @@ def test_score_onnx_on_split_refuses_entities_outside_the_vocab(tmp_path):
         pm.score_onnx_on_split(path, metadata, df)
 
 
-# ── Metric gate and the offline (--local) promotion ──────────────────────────
+# ── Metric gate and rescoring on one split ──────────────────────────
 
 _CHAMPION = {"auprc": 0.60, "auc_roc": 0.80, "brier": 0.15}
 
@@ -119,37 +119,30 @@ def test_compare_metrics_requires_a_win_on_all_three():
     assert summary["brier"]["passes"] is False and summary["auprc"]["passes"] is True
 
 
-def _artifacts_dir(tmp_path, name: str, seed: int, metrics: dict, split_sha256: str | None):
-    """A train.py-shaped artifacts directory: model.onnx, feature_metadata.json, evaluation_test.json."""
-    d = tmp_path / name
-    d.mkdir()
+def _candidate(tmp_path, name: str, seed: int, metrics: dict, split_sha256: str | None):
+    """What align_metrics() reads from a deployed model, with its files already on disk."""
     metadata = _metadata()
-    _, onnx_path = _export(d, metadata, seed=seed)
-    onnx_path.rename(d / "model.onnx")
-    (d / "feature_metadata.json").write_text(json.dumps(metadata))
-    (d / "evaluation_test.json").write_text(json.dumps({"model": metrics, "split_sha256": split_sha256}))
-    return d
+    _, onnx_path = _export(tmp_path, metadata, seed=seed)
+    return SimpleNamespace(label=name, test_metrics=dict(metrics), split_sha256=split_sha256,
+                           onnx_path=onnx_path, metadata=metadata)
 
 
-def test_promote_local_uses_stored_metrics_on_the_same_split(tmp_path, capsys):
-    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "a" * 64)
-    chal  = _artifacts_dir(tmp_path, "challenger", 1, {"auprc": 0.70, "auc_roc": 0.85, "brier": 0.10}, "a" * 64)
-
-    assert pm.promote_local(champ, chal, dataset_dir=tmp_path / "no-dataset-needed") is True
-    out = capsys.readouterr().out
-    assert "stored evaluation_test.json metrics" in out
-    assert "Verdict: PROMOTE" in out
+def _fetch_model(info, workdir):
+    return info.onnx_path, info.metadata
 
 
-def test_promote_local_blocks_a_weaker_challenger(tmp_path, capsys):
-    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "a" * 64)
-    chal  = _artifacts_dir(tmp_path, "challenger", 1, {"auprc": 0.55, "auc_roc": 0.85, "brier": 0.10}, "a" * 64)
+def test_align_metrics_keeps_stored_metrics_on_the_same_split(tmp_path):
+    champ = _candidate(tmp_path, "champion",   0, _CHAMPION, "a" * 64)
+    chal  = _candidate(tmp_path, "challenger", 1, {"auprc": 0.70, "auc_roc": 0.85, "brier": 0.10}, "a" * 64)
 
-    assert pm.promote_local(champ, chal, dataset_dir=tmp_path) is False
-    assert "Verdict: BLOCKED" in capsys.readouterr().out
+    basis = pm.align_metrics(champ, chal, tmp_path / "no-dataset-needed", _fetch_model)
+
+    assert "stored evaluation_test.json metrics" in basis
+    assert champ.test_metrics == _CHAMPION
+    assert chal.test_metrics["auprc"] == 0.70
 
 
-def test_promote_local_rescores_both_models_when_splits_differ(tmp_path, capsys):
+def test_align_metrics_rescores_both_models_when_splits_differ(tmp_path):
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     _split(seed=3).to_parquet(dataset / "test.parquet")
@@ -157,27 +150,22 @@ def test_promote_local_rescores_both_models_when_splits_differ(tmp_path, capsys)
 
     # Stored metrics would promote, but they are from different splits, so
     # both models are rescored on the challenger's split and the stored
-    # numbers are ignored.
-    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "b" * 64)
-    chal  = _artifacts_dir(tmp_path, "challenger", 1, {"auprc": 0.99, "auc_roc": 0.99, "brier": 0.01}, challenger_hash)
+    # numbers are replaced.
+    champ = _candidate(tmp_path, "champion",   0, _CHAMPION, "b" * 64)
+    chal  = _candidate(tmp_path, "challenger", 1, {"auprc": 0.99, "auc_roc": 0.99, "brier": 0.01}, challenger_hash)
 
-    verdict = pm.promote_local(champ, chal, dataset_dir=dataset)
-    out = capsys.readouterr().out
-    assert isinstance(verdict, bool)
-    assert "rescored locally on the challenger's test split (n=64" in out
-    assert "0.9900" not in out   # stored challenger metrics were replaced
+    basis = pm.align_metrics(champ, chal, dataset, _fetch_model)
+
+    assert "rescored locally on the challenger's test split (n=64" in basis
+    assert chal.test_metrics["auprc"] != 0.99
+    assert champ.test_metrics["auprc"] != _CHAMPION["auprc"]
 
 
-def test_promote_local_refuses_a_dataset_that_is_not_the_challengers_split(tmp_path):
+def test_align_metrics_refuses_a_dataset_that_is_not_the_challengers_split(tmp_path):
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     _split(seed=3).to_parquet(dataset / "test.parquet")
-    champ = _artifacts_dir(tmp_path, "champion",   0, _CHAMPION, "b" * 64)
-    chal  = _artifacts_dir(tmp_path, "challenger", 1, _CHAMPION, "c" * 64)
+    champ = _candidate(tmp_path, "champion",   0, _CHAMPION, "b" * 64)
+    chal  = _candidate(tmp_path, "challenger", 1, _CHAMPION, "c" * 64)
     with pytest.raises(ValueError, match="not the split the challenger"):
-        pm.promote_local(champ, chal, dataset_dir=dataset)
-
-
-def test_local_model_info_needs_a_complete_artifacts_dir(tmp_path):
-    with pytest.raises(FileNotFoundError, match="model.onnx"):
-        pm.local_model_info(tmp_path)
+        pm.align_metrics(champ, chal, dataset, _fetch_model)

@@ -765,10 +765,9 @@ class DriftMonitor:
             print()
             print(
                 "  Retraining:\n"
-                "    1. Rebuild:  python ml_training/scripts/build_dataset.py --bronze-path ...\n"
+                "    1. Rebuild:  python ml_training/scripts/build_dataset.py --bucket ...\n"
                 "    2. Retrain:  python ml_training/scripts/train.py\n"
-                "    3. Gate:     python model_serving/scripts/deploy.py promote --local ...\n"
-                "                 (Vertex AI: register.py, deploy.py deploy --traffic 0, then promote)\n"
+                "    3. Gate:     register.py, deploy.py deploy --traffic 0, then deploy.py promote\n"
                 "    4. Re-score: python model_serving/scripts/score.py ...\n"
                 "    5. Re-monitor (this script): PSI should drop below 0.10"
             )
