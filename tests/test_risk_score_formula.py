@@ -41,3 +41,9 @@ def test_bounded_and_monotone_in_stock():
     assert np.all((out >= 0.0) & (out <= 1.0))
     low_stock, high_stock = normal_stockout_prob([50.0, 150.0], [10.0, 10.0], [3.0, 3.0], 7)
     assert low_stock > high_stock
+
+
+def test_out_of_stock_is_certain_even_with_no_recent_sales():
+    # An entity out of stock all week has no sales either, so avg_daily is 0.
+    assert normal_stockout_prob([0.0], [0.0], [0.0], 7)[0] == 1.0
+    assert _normal_stockout_prob(0.0, 0.0, 0.0, 7) == 1.0

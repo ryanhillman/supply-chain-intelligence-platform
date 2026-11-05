@@ -159,7 +159,7 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 
 | Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
 |---|---|---|---|---|---|---|
-| Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
+| Normal-approximation formula (baseline) | 0.902 | 0.657 | 0.157 | 0.890 | 0.554 | 0.149 |
 | PyTorch MLP | 0.941 | 0.838 | 0.079 | 0.934 | 0.774 | 0.072 |
 | LightGBM (comparison only) | 0.945 | 0.849 | 0.078 | 0.938 | 0.791 | 0.070 |
 
@@ -207,11 +207,10 @@ The drift monitor compares live features in Bigtable with the training split usi
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-Retraining is recommended when any of these trips:
+Retraining is recommended when either of these trips:
 
 - PSI ≥ 0.20 on `days_of_supply`, `sales_7d` or `avg_daily_sales_7d`
-- Prediction variance collapse: standard deviation of `shortage_prob_7d` or `stockout_risk_score` below 0.01 across scored entities
-- Baseline divergence: the model agrees with the `risk__reorder_urgency` rule on more than 95% of entities
+- Prediction variance collapse: standard deviation of `shortage_prob_7d` below 0.01 across scored entities
 
 `supplier_reliability` is computed per warehouse, so a snapshot holds only six values, too few for PSI. Each warehouse's value is checked against its training p1–p99, and an out-of-range warehouse is reported as a warning, not a trigger.
 

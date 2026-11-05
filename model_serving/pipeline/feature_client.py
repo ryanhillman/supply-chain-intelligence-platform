@@ -11,9 +11,8 @@ Design
   cell (no age-based GC), so a quiet store would otherwise be scored on stale
   features.
 - read_predictions() reads the predictions family (UTF-8 strings written by
-  prediction_writer.py) and risk:urgency for the drift monitor's variance and
-  baseline-divergence checks. This module is the one Bigtable reader for the
-  scorer, the smoke test and the monitor.
+  prediction_writer.py) for the drift monitor's variance check. This module
+  is the one Bigtable reader for the scorer, the smoke test and the monitor.
 - Numeric cells are stored as big-endian IEEE 754 doubles (8 bytes).
   See spark/utils/bigtable_writer.py for the write side.
 - Abbreviated column qualifiers are mapped to flat feature names via
@@ -65,12 +64,9 @@ _FEATURE_FAMILIES: frozenset[str] = frozenset({"inventory", "velocity", "demand"
 _LINEAGE_FAMILY:      str = "lineage"
 _SILVER_TS_QUALIFIER: str = "silver_ts"
 
-# Prediction cells written by prediction_writer.py (UTF-8 strings) and the
-# rule-based reorder urgency written by Silver (big-endian double, risk
-# family). Read together by read_predictions() for the drift monitor.
+# Prediction cells written by prediction_writer.py (UTF-8 strings), read by
+# read_predictions() for the drift monitor.
 _PREDICTIONS_FAMILY: str = "predictions"
-_RISK_FAMILY:        str = "risk"
-_URGENCY_QUALIFIER:  str = "urgency"
 
 
 @dataclass
@@ -103,13 +99,12 @@ class FeatureRow:
 
 @dataclass
 class PredictionRow:
-    """One entity's latest prediction cells plus the rule-based urgency.
+    """One entity's latest prediction cells.
 
     shortage_prob_7d, stockout_risk_score, model_version and
     prediction_timestamp come from the predictions family (UTF-8 strings
-    written by prediction_writer.py); reorder_urgency comes from risk:urgency
-    (a double written by Silver). Any field is None when its cell is absent
-    or unparseable.
+    written by prediction_writer.py). Any field is None when its cell is
+    absent or unparseable.
     """
 
     row_key:              str
@@ -119,7 +114,6 @@ class PredictionRow:
     stockout_risk_score:  float | None = None
     model_version:        str | None = None
     prediction_timestamp: str | None = None
-    reorder_urgency:      float | None = None
 
 
 class FeatureClient:
@@ -261,16 +255,13 @@ class FeatureClient:
 
     def read_predictions(self) -> list[PredictionRow]:
         """
-        Read every row's latest prediction cells and rule-based urgency.
-
-        One scan over the predictions and risk families, shared by the drift
-        monitor's variance-collapse and baseline-divergence checks. Rows with
-        neither a prediction nor an urgency cell are omitted.
+        Read every row's latest prediction cells, for the drift monitor's
+        variance-collapse check. Rows with no prediction are omitted.
         """
         from google.cloud.bigtable import row_filters
 
         filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter(f"{_PREDICTIONS_FAMILY}|{_RISK_FAMILY}"),
+            row_filters.FamilyNameRegexFilter(_PREDICTIONS_FAMILY),
             row_filters.CellsColumnLimitFilter(1),
         ])
 
@@ -284,7 +275,7 @@ class FeatureClient:
             if pred is not None:
                 rows.append(pred)
 
-        logger.info("Prediction scan complete: %d rows with predictions or urgency", len(rows))
+        logger.info("Prediction scan complete: %d rows with predictions", len(rows))
         return rows
 
     def close(self) -> None:
@@ -330,7 +321,6 @@ def _parse_prediction_row(
 ) -> PredictionRow | None:
     """Build a PredictionRow from a row's {family: {qualifier: [cell, ...]}} cells."""
     pred_cells = cells.get(_PREDICTIONS_FAMILY, {})
-    risk_cells = cells.get(_RISK_FAMILY, {})
 
     def text(qualifier: str) -> str | None:
         c = pred_cells.get(qualifier.encode("utf-8"))
@@ -346,12 +336,6 @@ def _parse_prediction_row(
             logger.warning("Row %s: cannot parse predictions:%s=%r", row_key, qualifier, s)
             return None
 
-    urgency_cells = risk_cells.get(_URGENCY_QUALIFIER.encode("utf-8"))
-    urgency = (
-        _decode_double(urgency_cells[0].value, _RISK_FAMILY, _URGENCY_QUALIFIER)
-        if urgency_cells else None
-    )
-
     row = PredictionRow(
         row_key=row_key,
         warehouse_id=warehouse_id,
@@ -360,9 +344,8 @@ def _parse_prediction_row(
         stockout_risk_score=number("stockout_risk_score"),
         model_version=text("model_version"),
         prediction_timestamp=text("prediction_timestamp"),
-        reorder_urgency=urgency,
     )
-    if row.shortage_prob_7d is None and row.stockout_risk_score is None and row.reorder_urgency is None:
+    if row.shortage_prob_7d is None and row.stockout_risk_score is None:
         return None
     return row
 

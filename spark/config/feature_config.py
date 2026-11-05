@@ -29,10 +29,16 @@ REORDER_WATCH_DAYS: int = 14
 REORDER_CRITICAL_DAYS: int = 7
 STOCKOUT_CRITICAL_DAYS: int = 1
 
+# days_of_supply = min(current_qty / max(avg_daily_sales_7d, EPS), CAP), the
+# formula ml_training/datasets/feature_engineer.py uses for the model's input.
+# tests/test_spark_parity.py checks that the two agree.
+DAYS_OF_SUPPLY_EPS: float = 1e-6
+DAYS_OF_SUPPLY_CAP: float = 365.0
+
 # ── Pipeline versioning ───────────────────────────────────────────────────────
 # Increment when feature computation logic changes.
 # Written to lineage#pipeline_version on every Bigtable row.
-PIPELINE_VERSION: str = "1.0.0"
+PIPELINE_VERSION: str = "1.1.0"
 
 # ── Bigtable column family → qualifier registry ───────────────────────────────
 # Single source of truth for all 29 features.
