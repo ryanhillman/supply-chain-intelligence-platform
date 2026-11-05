@@ -10,7 +10,7 @@ inspected or replayed by hand.
 Envelope fields:
   dlq_id, failed_at, consumer_group, original_topic, original_partition,
   original_offset, original_key, original_payload, error_reason,
-  error_detail, epoch_id, replay_eligible
+  error_detail, epoch_id
 
 An earlier version also had a Kafka sink producing to *.dlq topics behind a
 DLQ_SINK switch. It was never selected — the simulator always emits the
@@ -26,10 +26,6 @@ from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 
 logger = logging.getLogger(__name__)
-
-# demand.signals are time-bounded: replaying a stale signal would corrupt
-# forecasts, so their envelopes are marked replay_eligible=False.
-_NOT_REPLAYABLE: frozenset[str] = frozenset({"demand.signals"})
 
 
 def write_dlq(
@@ -58,7 +54,7 @@ def write_dlq(
         f"{base_path.rstrip('/')}/{topic}"
         f"/year={now.year}/month={now.month:02d}/day={now.day:02d}/hour={now.hour:02d}"
     )
-    envelope_df = _build_envelope_df(df, topic, epoch_id, consumer_group)
+    envelope_df = _build_envelope_df(df, epoch_id, consumer_group)
     envelope_df.select("value").write.mode("append").text(partition_path)
     logger.info(
         "write_dlq | topic=%s epoch=%d records=%d path=%s",
@@ -66,7 +62,7 @@ def write_dlq(
     )
 
 
-def _build_envelope_df(df: DataFrame, topic: str, epoch_id: int, consumer_group: str) -> DataFrame:
+def _build_envelope_df(df: DataFrame, epoch_id: int, consumer_group: str) -> DataFrame:
     """
     Transform an invalid-records DataFrame into a DLQ envelope DataFrame with
     one JSON string column, `value`.
@@ -91,7 +87,6 @@ def _build_envelope_df(df: DataFrame, topic: str, epoch_id: int, consumer_group:
                 F.col("_error_reason").alias("error_reason"),
                 F.col("_error_detail").alias("error_detail"),
                 F.lit(epoch_id).alias("epoch_id"),
-                F.lit(topic not in _NOT_REPLAYABLE).alias("replay_eligible"),
             )
         ).alias("value"),
     )
