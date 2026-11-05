@@ -34,21 +34,20 @@ def write_dlq(
     epoch_id: int,
     base_path: str,
     consumer_group: str,
+    row_count: int,
 ) -> None:
     """
     Write the invalid records in `df` as DLQ envelopes under base_path/topic/.
 
     Args:
         df:             Invalid records from schema_validator (kafka_* columns,
-                        raw_value, _error_reason, _error_detail).
+                        raw_value, _error_reason, _error_detail); not empty.
         topic:          Source Kafka topic.
         epoch_id:       Spark micro-batch epoch, kept for idempotency tracking.
         base_path:      DLQ_BASE_PATH (gs:// prefix).
         consumer_group: Kafka consumer group of the ingesting job.
+        row_count:      Number of records in df, already counted by the caller.
     """
-    if df.rdd.isEmpty():
-        return
-
     now = datetime.now(timezone.utc)
     partition_path = (
         f"{base_path.rstrip('/')}/{topic}"
@@ -58,7 +57,7 @@ def write_dlq(
     envelope_df.select("value").write.mode("append").text(partition_path)
     logger.info(
         "write_dlq | topic=%s epoch=%d records=%d path=%s",
-        topic, epoch_id, df.count(), partition_path,
+        topic, epoch_id, row_count, partition_path,
     )
 
 

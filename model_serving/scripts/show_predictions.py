@@ -21,27 +21,12 @@ Usage
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
-from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD
-
-# -- SKU category mapping (mirrors simulation/world.py SKUS) ------------------
-# Hard-coded so show_predictions.py has zero dependency on ml_training modules.
-_SKU_CATEGORIES: dict[str, str] = {
-    "SKU-001": "FMCG",        "SKU-002": "FMCG",
-    "SKU-003": "FMCG",        "SKU-004": "FMCG",
-    "SKU-005": "FMCG",
-    "SKU-006": "Electronics", "SKU-007": "Electronics",
-    "SKU-008": "Electronics", "SKU-009": "Electronics",
-    "SKU-010": "Electronics",
-    "SKU-011": "Industrial",  "SKU-012": "Industrial",
-    "SKU-013": "Industrial",  "SKU-014": "Industrial",
-    "SKU-015": "Industrial",
-    "SKU-016": "Seasonal",    "SKU-017": "Seasonal",
-    "SKU-018": "Seasonal",    "SKU-019": "Seasonal",
-    "SKU-020": "Seasonal",
-}
+from model_serving import cli
+from model_serving.pipeline.constants import variance_collapsed
+from model_serving.pipeline.feature_client import FeatureClient
+from simulation.world import SKU_CATEGORIES
 
 _CATEGORY_ORDER = ["FMCG", "Electronics", "Industrial", "Seasonal"]
 
@@ -57,29 +42,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="SCIP risk dashboard - reads predictions from Bigtable"
     )
-    p.add_argument(
-        "--project",
-        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
-        help="GCP project ID (GCP_PROJECT_ID env var)",
-    )
-    p.add_argument(
-        "--bigtable-instance",
-        default="scip-feature-store",
-        help="Bigtable instance ID (default: scip-feature-store)",
-    )
-    p.add_argument(
-        "--bigtable-table",
-        default="inventory_features",
-        help="Bigtable table ID (default: inventory_features)",
-    )
-    p.add_argument(
-        "--sa-key",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help=(
-            "Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var). "
-            "Omit for application default credentials."
-        ),
-    )
+    cli.add_project_arg(p)
+    cli.add_bigtable_args(p)
+    cli.add_sa_key_arg(p)
     p.add_argument(
         "--top-n",
         type=int,
@@ -92,70 +57,27 @@ def parse_args() -> argparse.Namespace:
 # -- Bigtable read -------------------------------------------------------------
 
 def read_predictions(project: str, instance_id: str, table_id: str, sa_key: str | None) -> list[dict]:
-    """Read all prediction rows from Bigtable. Returns list of dicts."""
-    from google.cloud import bigtable
-
+    """Every entity's latest prediction: one dict per row that has both values."""
     try:
-        if sa_key:
-            from google.oauth2 import service_account
-            creds  = service_account.Credentials.from_service_account_file(sa_key)
-            client = bigtable.Client(project=project, credentials=creds, admin=False)
-        else:
-            # Application default credentials.
-            client = bigtable.Client(project=project, admin=False)
-    except Exception as exc:
-        print(f"\n  [ERROR] Failed to authenticate: {exc}")
-        print(f"  Key path: {sa_key or '(none: application default credentials)'}")
-        sys.exit(1)
-
-    table = client.instance(instance_id).table(table_id)
-
-    records: list[dict] = []
-    try:
-        rows = table.read_rows()
-        for row in rows:
-            key  = row.row_key.decode("utf-8")
-            preds = row.cells.get("predictions", {})
-
-            prob_cells  = preds.get(b"shortage_prob_7d", [])
-            score_cells = preds.get(b"stockout_risk_score", [])
-            ver_cells   = preds.get(b"model_version", [])
-            ts_cells    = preds.get(b"prediction_timestamp", [])
-
-            if not prob_cells or not score_cells:
-                continue
-
-            try:
-                prob  = float(prob_cells[0].value.decode("utf-8"))
-                score = float(score_cells[0].value.decode("utf-8"))
-            except (ValueError, AttributeError):
-                continue
-
-            version = ver_cells[0].value.decode("utf-8")  if ver_cells  else "unknown"
-            ts      = ts_cells[0].value.decode("utf-8")   if ts_cells   else "unknown"
-
-            # Row key format: {warehouse_id}#{sku_id}
-            parts = key.split("#", 1)
-            if len(parts) != 2:
-                continue
-            wh_id, sku_id = parts
-
-            records.append({
-                "warehouse_id":        wh_id,
-                "sku_id":              sku_id,
-                "category":            _SKU_CATEGORIES.get(sku_id, "Unknown"),
-                "shortage_prob_7d":    prob,
-                "stockout_risk_score": score,
-                "model_version":       version,
-                "prediction_timestamp": ts,
-            })
+        with FeatureClient(project, instance_id, table_id, credentials_path=sa_key) as client:
+            rows = client.read_predictions()
     except Exception as exc:
         print(f"\n  [ERROR] Failed to read from Bigtable: {exc}")
         sys.exit(1)
-    finally:
-        client.close()
 
-    return records
+    return [
+        {
+            "warehouse_id":         r.warehouse_id,
+            "sku_id":               r.sku_id,
+            "category":             SKU_CATEGORIES.get(r.sku_id, "Unknown"),
+            "shortage_prob_7d":     r.shortage_prob_7d,
+            "stockout_risk_score":  r.stockout_risk_score,
+            "model_version":        r.model_version or "unknown",
+            "prediction_timestamp": r.prediction_timestamp or "unknown",
+        }
+        for r in rows
+        if r.shortage_prob_7d is not None and r.stockout_risk_score is not None
+    ]
 
 
 # -- Formatting helpers --------------------------------------------------------
@@ -200,7 +122,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
     std_prob   = _stdev(probs,  mean_prob)
     mean_score = sum(scores) / n
     std_score  = _stdev(scores, mean_score)
-    collapsed  = std_prob < VARIANCE_COLLAPSE_THRESHOLD
+    collapsed  = variance_collapsed(std_prob)
 
     version = records[0]["model_version"]
     ts      = records[0]["prediction_timestamp"]
@@ -324,9 +246,7 @@ def _stdev(values: list[float], mean: float) -> float:
 
 def main() -> None:
     args = parse_args()
-    if not args.project:
-        print("ERROR: --project is required (or set GCP_PROJECT_ID)", file=sys.stderr)
-        sys.exit(1)
+    cli.require(args, "project", "GCP_PROJECT_ID")
     records = read_predictions(
         project     = args.project,
         instance_id = args.bigtable_instance,

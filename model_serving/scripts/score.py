@@ -45,21 +45,18 @@ Environment variables (alternatives to CLI flags):
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import sys
 from pathlib import Path
 
+from model_serving                            import cli
+from model_serving.pipeline.constants         import VARIANCE_COLLAPSE_THRESHOLD
 from model_serving.pipeline.feature_client    import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder   import RequestBuilder
 from model_serving.pipeline.batch_scorer      import BatchScorer
 from model_serving.pipeline.prediction_writer import PredictionWriter
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-)
 logger = logging.getLogger("score")
 
 _LOCAL_REGISTRATION_INFO = Path("model_serving/artifacts/registration_info.json")
@@ -70,45 +67,11 @@ def parse_args() -> argparse.Namespace:
         description="Run the SCIP batch scoring pipeline (Bigtable -> model endpoint -> Pub/Sub)"
     )
 
-    # ── GCP identity ──────────────────────────────────────────────────────────
-    p.add_argument(
-        "--project",
-        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
-        help="GCP project ID (GCP_PROJECT_ID env var)",
-    )
-    p.add_argument(
-        "--region",
-        default=os.environ.get("GCP_REGION", "us-central1"),
-        help="GCP region (default: us-central1)",
-    )
-    p.add_argument(
-        "--sa-key",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help="Service account key for the batch scorer (scip-vertex-sa.json)",
-    )
-
-    # ── Model endpoint ────────────────────────────────────────────────────────
-    p.add_argument(
-        "--endpoint",
-        default=os.environ.get("VERTEX_AI_ENDPOINT_RESOURCE_NAME", ""),
-        help=(
-            "Full Vertex AI endpoint resource name "
-            "(projects/.../locations/.../endpoints/...). "
-            "Use the 'vertex_ai_endpoint_resource_name' Terraform output."
-        ),
-    )
-
-    # ── Bigtable ──────────────────────────────────────────────────────────────
-    p.add_argument(
-        "--bigtable-instance",
-        default=os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store"),
-        help="Bigtable instance ID (default: scip-feature-store)",
-    )
-    p.add_argument(
-        "--bigtable-table",
-        default="inventory_features",
-        help="Bigtable table ID (default: inventory_features)",
-    )
+    cli.add_project_arg(p)
+    cli.add_region_arg(p)
+    cli.add_sa_key_arg(p, "Service account key for the batch scorer (scip-vertex-sa.json)")
+    cli.add_endpoint_arg(p)
+    cli.add_bigtable_args(p)
 
     # ── Pub/Sub ───────────────────────────────────────────────────────────────
     p.add_argument(
@@ -205,9 +168,7 @@ def _resolve_model_version(args: argparse.Namespace) -> str:
 
     if _LOCAL_REGISTRATION_INFO.exists():
         try:
-            with open(_LOCAL_REGISTRATION_INFO) as f:
-                info = json.load(f)
-            version = info.get("version", "")
+            version = cli.read_json(_LOCAL_REGISTRATION_INFO).get("version", "")
             if version:
                 logger.info("model_version resolved from registration_info.json: %s", version)
                 return version
@@ -221,23 +182,14 @@ def _resolve_model_version(args: argparse.Namespace) -> str:
     return "unknown"
 
 
-def _require(args: argparse.Namespace, flag: str, env_var: str) -> None:
-    val = getattr(args, flag.replace("-", "_"), None)
-    if not val:
-        logger.error("Missing required flag --%s or env var %s", flag, env_var)
-        sys.exit(1)
-
-
 def main() -> None:
     args = parse_args()
-
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+    cli.setup_logging(args.verbose)
 
     # Validate required arguments.
-    _require(args, "project",  "GCP_PROJECT_ID")
+    cli.require(args, "project",  "GCP_PROJECT_ID")
     if not args.dry_run:
-        _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
+        cli.require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     model_version = _resolve_model_version(args)
 
@@ -327,7 +279,7 @@ def _run_scoring(
 
     if stats.variance_collapsed:
         print(
-            "\n  [WARNING] prediction variance collapsed (std < 0.01).\n"
+            f"\n  [WARNING] prediction variance collapsed (std < {VARIANCE_COLLAPSE_THRESHOLD}).\n"
             "  Run model_serving/scripts/monitor.py to check feature drift\n"
             "  before using these predictions."
         )

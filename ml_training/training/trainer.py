@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import random
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -177,7 +177,7 @@ class Trainer:
                 torch.save({
                     "epoch":       epoch,
                     "model_state": model.state_dict(),
-                    "config":      self.config,
+                    "config":      asdict(self.config),
                     "val_metrics": val_metrics,
                 }, best_path)
                 logger.info("  [best] AUPRC=%.4f — checkpoint saved", history.best_val_auprc)

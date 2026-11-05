@@ -82,12 +82,16 @@ from ml_training.evaluation.drift_reference import (
     load_drift_reference,
     load_warehouse_ranges,
 )
+from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
+from model_serving.pipeline.constants import (
+    VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD,
+    variance_collapsed,
+)
 
 _N_BINS                = 10
 _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
@@ -217,14 +221,8 @@ class DriftMonitor:
                 f"Monitored features not found in NUMERIC_FEATURE_COLS: {unknown}"
             )
 
-        # Bigtable client (lazy — set up once, reused for both feature and prediction reads).
-        self._creds = None
-        if credentials_path:
-            from google.oauth2 import service_account
-            self._creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
+        # For the Cloud Monitoring client; FeatureClient loads its own from the same key.
+        self._creds = cli.load_credentials(credentials_path)
 
         from model_serving.pipeline.feature_client import FeatureClient
         self._feature_client = FeatureClient(
@@ -423,7 +421,7 @@ class DriftMonitor:
         return PredictionMetrics(
             prob_mean               = float(np.mean(probs)),
             prob_std                = prob_std,
-            prob_variance_collapsed = prob_std < _VARIANCE_COLLAPSE_THRESHOLD,
+            prob_variance_collapsed = variance_collapsed(prob_std),
             n_entities              = len(probs),
         )
 
@@ -740,10 +738,7 @@ class DriftMonitor:
     def _do_emit_cloud_monitoring(self, monitoring_v3, report: DriftReport) -> None:
         """Internal: build and write time series to Cloud Monitoring."""
 
-        client_kwargs: dict = {"project": self.project_id}
-        if self._creds:
-            client_kwargs["credentials"] = self._creds
-        cm_client = monitoring_v3.MetricServiceClient(**client_kwargs)
+        cm_client = monitoring_v3.MetricServiceClient(credentials=self._creds)
 
         project_name = f"projects/{self.project_id}"
         now_seconds  = int(datetime.now(timezone.utc).timestamp())
@@ -815,14 +810,10 @@ class DriftMonitor:
     # ── Artifact loading ───────────────────────────────────────────────────────
 
     def _load_metadata(self) -> dict:
-        path = self._artifacts_dir / "feature_metadata.json"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"feature_metadata.json not found at {path}. "
-                "Run ml_training/scripts/train.py or download from GCS."
-            )
-        with open(path) as f:
-            return json.load(f)
+        return cli.read_json(
+            self._artifacts_dir / "feature_metadata.json",
+            "Run ml_training/scripts/train.py or download from GCS.",
+        )
 
     def _load_drift_reference(self) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], dict]:
         """

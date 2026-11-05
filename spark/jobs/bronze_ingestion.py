@@ -121,7 +121,7 @@ def prepare_bronze_df(validated_df: DataFrame, topic: str) -> DataFrame:
 
 # ── Bronze writer ──────────────────────────────────────────────────────────────
 
-def write_bronze(df: DataFrame, topic: str, epoch_id: int) -> None:
+def write_bronze(df: DataFrame, topic: str, epoch_id: int, row_count: int) -> None:
     """
     Write a validated DataFrame to Bronze GCS as Parquet.
 
@@ -131,9 +131,10 @@ def write_bronze(df: DataFrame, topic: str, epoch_id: int) -> None:
     Rows are repartitioned by the partition columns first, so each directory
     gets one file from one task. A replay batch spans weeks of simulated days;
     without this every input task writes a file into every date directory.
+
+    row_count is the number of rows in df, which the caller has already counted.
     """
     output_path = f"{BRONZE_BASE_PATH}/{topic}"
-    row_count = df.count()
 
     (
         df
@@ -183,11 +184,11 @@ def make_batch_processor(topic: str, schema):
             # Write valid records to Bronze
             if valid_count > 0:
                 bronze_df = prepare_bronze_df(valid_df, topic)
-                write_bronze(bronze_df, topic, epoch_id)
+                write_bronze(bronze_df, topic, epoch_id, valid_count)
 
             # Route invalid records to DLQ
             if invalid_count > 0:
-                write_dlq(invalid_df, topic, epoch_id, DLQ_BASE_PATH, KAFKA_GROUP_ID)
+                write_dlq(invalid_df, topic, epoch_id, DLQ_BASE_PATH, KAFKA_GROUP_ID, invalid_count)
 
         finally:
             validated_df.unpersist()

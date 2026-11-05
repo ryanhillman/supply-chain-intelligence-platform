@@ -35,7 +35,6 @@ Required packages:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import tempfile
@@ -52,7 +51,8 @@ from google.cloud import storage as gcs_storage
 from google.protobuf import field_mask_pb2
 
 from ml_training.datasets.feature_engineer import TARGET_COL
-from ml_training.evaluation.metrics import compute_metrics
+from ml_training.evaluation.metrics import compute_metrics, file_sha256
+from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
@@ -108,24 +108,13 @@ class ModelPromoter:
         self.endpoint_resource_name  = endpoint_resource_name
         self._dataset_dir            = Path(dataset_dir)
 
-        if credentials_path:
-            from google.oauth2 import service_account
-            creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-            aiplatform.init(project=project_id, location=region, credentials=creds)
-            self._storage_client = gcs_storage.Client(project=project_id, credentials=creds)
-            self._gapic_client   = aiplatform_v1.EndpointServiceClient(
-                credentials=creds,
-                client_options={"api_endpoint": f"{region}-aiplatform.googleapis.com"},
-            )
-        else:
-            aiplatform.init(project=project_id, location=region)
-            self._storage_client = gcs_storage.Client(project=project_id)
-            self._gapic_client   = aiplatform_v1.EndpointServiceClient(
-                client_options={"api_endpoint": f"{region}-aiplatform.googleapis.com"},
-            )
+        creds = cli.load_credentials(credentials_path)
+        aiplatform.init(project=project_id, location=region, credentials=creds)
+        self._storage_client = gcs_storage.Client(project=project_id, credentials=creds)
+        self._gapic_client   = aiplatform_v1.EndpointServiceClient(
+            credentials=creds,
+            client_options={"api_endpoint": f"{region}-aiplatform.googleapis.com"},
+        )
 
     def promote(self, dry_run: bool = False) -> bool:
         """
@@ -302,9 +291,7 @@ class ModelPromoter:
                 raise FileNotFoundError(f"{fname} not found at {artifact_uri}")
             blob.download_to_filename(str(dest / fname))
 
-        with open(dest / "feature_metadata.json") as f:
-            metadata = json.load(f)
-        return dest / "model.onnx", metadata
+        return dest / "model.onnx", cli.read_json(dest / "feature_metadata.json")
 
     def _apply_traffic_split(
         self,
@@ -496,15 +483,6 @@ def needs_rescore(champion_hash: str | None, challenger_hash: str | None) -> boo
     return champion_hash is None or challenger_hash is None or champion_hash != challenger_hash
 
 
-def file_sha256(path: Path) -> str:
-    """Hex sha256 of a file's bytes; same function evaluate.py uses for split_sha256."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np.ndarray:
     """
     Run one exported model over a raw-unit split and return shortage_prob_7d.
@@ -526,15 +504,15 @@ def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np
         raise ValueError(f"Split contains entities outside this model's vocab: {unknown}")
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    (logit,) = session.run(
-        ["logit_prob"],
+    (shortage_prob,) = session.run(
+        ["shortage_prob_7d"],
         {
             "numeric_features": df[cols].to_numpy(dtype=np.float32),
             "warehouse_ids":    wh.to_numpy(dtype=np.int64),
             "sku_ids":          sku.to_numpy(dtype=np.int64),
         },
     )
-    return 1.0 / (1.0 + np.exp(-logit[:, 0].astype(np.float64)))
+    return shortage_prob.astype(np.float64)
 
 
 def _split_gcs_uri(uri: str) -> tuple[str, str]:

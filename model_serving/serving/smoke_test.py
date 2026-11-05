@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
+from model_serving import cli
 from model_serving.pipeline.feature_client import FeatureClient
 from model_serving.pipeline.request_builder import RequestBuilder
 
@@ -68,20 +69,12 @@ class SmokeTest:
         self.artifacts_dir          = Path(artifacts_dir)
 
         self._credentials_path = credentials_path
-        if credentials_path:
-            from google.oauth2 import service_account
-            self._creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-        else:
-            self._creds = None
 
         from google.cloud import aiplatform
-        init_kwargs: dict = {"project": project_id, "location": region}
-        if self._creds:
-            init_kwargs["credentials"] = self._creds
-        aiplatform.init(**init_kwargs)
+        aiplatform.init(
+            project=project_id, location=region,
+            credentials=cli.load_credentials(credentials_path),
+        )
 
     def run(
         self,

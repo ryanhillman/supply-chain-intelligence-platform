@@ -53,7 +53,8 @@ from typing import Iterator
 
 import numpy as np
 
-from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
+from model_serving import cli
+from model_serving.pipeline.constants import variance_collapsed
 from model_serving.pipeline.feature_client import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder import RequestBuilder, ScoringRequest
 
@@ -126,30 +127,13 @@ class BatchScorer:
         self._feature_client        = feature_client
         self._request_builder       = request_builder
 
-        if credentials_path:
-            from google.oauth2 import service_account
-            self._creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-        else:
-            self._creds = None
+        from google.cloud import aiplatform, pubsub_v1
 
-        from google.cloud import aiplatform
-
-        init_kwargs: dict = {"project": project_id, "location": region}
-        if self._creds:
-            init_kwargs["credentials"] = self._creds
-        aiplatform.init(**init_kwargs)
+        creds = cli.load_credentials(credentials_path)
+        aiplatform.init(project=project_id, location=region, credentials=creds)
         self._endpoint = aiplatform.Endpoint(endpoint_name=endpoint_resource_name)
 
-        # Publisher client with batching to coalesce small messages.
-        from google.cloud import pubsub_v1
-
-        publisher_kwargs: dict = {}
-        if self._creds:
-            publisher_kwargs["credentials"] = self._creds
-        self._publisher = pubsub_v1.PublisherClient(**publisher_kwargs)
+        self._publisher  = pubsub_v1.PublisherClient(credentials=creds)
         self._topic_path = self._publisher.topic_path(project_id, topic_id)
 
         logger.info(
@@ -251,7 +235,7 @@ class BatchScorer:
         stats.prob_std   = float(np.std(all_probs))
         stats.score_mean = float(np.mean(all_scores))
         stats.score_std  = float(np.std(all_scores))
-        stats.variance_collapsed = stats.prob_std < _VARIANCE_COLLAPSE_THRESHOLD
+        stats.variance_collapsed = variance_collapsed(stats.prob_std)
 
         return stats
 

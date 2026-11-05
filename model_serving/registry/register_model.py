@@ -29,6 +29,8 @@ from pathlib import Path
 from google.cloud import storage as gcs_storage
 from google.cloud import aiplatform
 
+from model_serving import cli
+
 logger = logging.getLogger(__name__)
 
 # Files uploaded from the artifacts directory. model.pt is omitted: the serving
@@ -71,17 +73,9 @@ class ModelRegistrar:
         self.region       = region
         self.bucket_name  = bucket_name
 
-        if credentials_path:
-            from google.oauth2 import service_account
-            creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-            self._storage_client = gcs_storage.Client(project=project_id, credentials=creds)
-            aiplatform.init(project=project_id, location=region, credentials=creds)
-        else:
-            self._storage_client = gcs_storage.Client(project=project_id)
-            aiplatform.init(project=project_id, location=region)
+        creds = cli.load_credentials(credentials_path)
+        self._storage_client = gcs_storage.Client(project=project_id, credentials=creds)
+        aiplatform.init(project=project_id, location=region, credentials=creds)
 
     def register(
         self,
@@ -152,9 +146,7 @@ class ModelRegistrar:
         # Embed test metrics for promote_model.py (avoids a separate GCS download)
         eval_path = artifacts_dir / "evaluation_test.json"
         if eval_path.exists():
-            with open(eval_path) as f:
-                eval_data = json.load(f)
-            info["test_metrics"] = eval_data.get("model", {})
+            info["test_metrics"] = cli.read_json(eval_path).get("model", {})
 
         self._save_registration_info(info, gcs_prefix)
         return info

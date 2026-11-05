@@ -75,6 +75,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from model_serving import cli
+
 logger = logging.getLogger(__name__)
 
 _PREDICTIONS_FAMILY    = "predictions"
@@ -141,29 +143,13 @@ class PredictionWriter:
         self.instance_id     = instance_id
         self.table_id        = table_id
 
-        if credentials_path:
-            from google.oauth2 import service_account
-            self._creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-        else:
-            self._creds = None
-
         from google.cloud import bigtable, pubsub_v1
 
-        # Bigtable
-        bigtable_kwargs: dict = {"project": project_id, "admin": False}
-        if self._creds:
-            bigtable_kwargs["credentials"] = self._creds
-        self._bigtable_client = bigtable.Client(**bigtable_kwargs)
-        self._table     = self._bigtable_client.instance(instance_id).table(table_id)
+        creds = cli.load_credentials(credentials_path)
+        self._bigtable_client = bigtable.Client(project=project_id, credentials=creds, admin=False)
+        self._table           = self._bigtable_client.instance(instance_id).table(table_id)
 
-        # Pub/Sub subscriber
-        sub_kwargs: dict = {}
-        if self._creds:
-            sub_kwargs["credentials"] = self._creds
-        self._subscriber       = pubsub_v1.SubscriberClient(**sub_kwargs)
+        self._subscriber        = pubsub_v1.SubscriberClient(credentials=creds)
         self._subscription_path = self._subscriber.subscription_path(
             project_id, subscription_id
         )
@@ -436,31 +422,14 @@ def parse_args() -> argparse.Namespace:
             "standalone (does not re-run scoring -- see score.py for that)."
         )
     )
-    p.add_argument(
-        "--project",
-        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
-        help="GCP project ID (GCP_PROJECT_ID env var)",
-    )
+    cli.add_project_arg(p)
     p.add_argument(
         "--subscription",
         default=os.environ.get("PUBSUB_SUBSCRIPTION_ID", "prediction-writer"),
         help="Pub/Sub subscription ID (default: prediction-writer)",
     )
-    p.add_argument(
-        "--bigtable-instance",
-        default=os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store"),
-        help="Bigtable instance ID (default: scip-feature-store)",
-    )
-    p.add_argument(
-        "--bigtable-table",
-        default="inventory_features",
-        help="Bigtable table ID (default: inventory_features)",
-    )
-    p.add_argument(
-        "--sa-key",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help="Service account key for the writer (scip-prediction-writer-sa.json)",
-    )
+    cli.add_bigtable_args(p)
+    cli.add_sa_key_arg(p, "Service account key for the writer (scip-prediction-writer-sa.json)")
     p.add_argument(
         "--max-messages",
         type=int,
@@ -476,18 +445,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-    )
     args = parse_args()
-
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    if not args.project:
-        logger.error("Missing required flag --project or env var GCP_PROJECT_ID")
-        sys.exit(1)
+    cli.setup_logging(args.verbose)
+    cli.require(args, "project", "GCP_PROJECT_ID")
 
     logger.info(
         "Prediction writer starting:\n"

@@ -15,6 +15,9 @@ so beating it proves little.
 """
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -106,3 +109,12 @@ def per_warehouse_metrics(
         })
 
     return pd.DataFrame(rows)
+
+
+def file_sha256(path: Path) -> str:
+    """Hex sha256 of a file's bytes; identifies the split a set of metrics came from."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

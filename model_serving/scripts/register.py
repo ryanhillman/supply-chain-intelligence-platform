@@ -35,12 +35,9 @@ import os
 import sys
 from pathlib import Path
 
+from model_serving import cli
 from model_serving.registry.register_model import ModelRegistrar
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-)
 logger = logging.getLogger("register")
 
 
@@ -53,16 +50,8 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("GCS_BUCKET_NAME", ""),
         help="GCS data lake bucket name (GCS_BUCKET_NAME env var)",
     )
-    p.add_argument(
-        "--project",
-        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
-        help="GCP project ID",
-    )
-    p.add_argument(
-        "--region",
-        default=os.environ.get("GCP_REGION", "us-central1"),
-        help="GCP region (default: us-central1)",
-    )
+    cli.add_project_arg(p)
+    cli.add_region_arg(p)
     p.add_argument(
         "--image-uri",
         default=os.environ.get("SERVING_IMAGE_URI", ""),
@@ -93,11 +82,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Version tag (e.g. v20260620_181523). Defaults to v{UTC timestamp}.",
     )
-    p.add_argument(
-        "--sa-key",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help="Path to service account JSON key",
-    )
+    cli.add_sa_key_arg(p)
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -108,6 +93,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    cli.setup_logging()
 
     # Validate required arguments
     missing: list[str] = []

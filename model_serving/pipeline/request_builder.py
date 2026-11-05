@@ -23,7 +23,6 @@ Required packages:
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from feature_registry import RAW_FEATURE_COLS
+from model_serving import cli
 from model_serving.pipeline.feature_client import FeatureRow
 
 logger = logging.getLogger(__name__)
@@ -213,11 +213,7 @@ class RequestBuilder:
     # ── Artifact loading ───────────────────────────────────────────────────────
 
     def _load_metadata(self) -> dict:
-        path = self._artifacts_dir / "feature_metadata.json"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"feature_metadata.json not found at {path}. "
-                "Run ml_training/scripts/train.py or download from GCS."
-            )
-        with open(path) as f:
-            return json.load(f)
+        return cli.read_json(
+            self._artifacts_dir / "feature_metadata.json",
+            "Run ml_training/scripts/train.py or download from GCS.",
+        )
