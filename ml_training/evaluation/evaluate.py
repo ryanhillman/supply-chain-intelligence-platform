@@ -10,7 +10,6 @@ Called by scripts/evaluate.py.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from pathlib import Path
@@ -28,6 +27,7 @@ from ml_training.datasets.feature_engineer import (
 from ml_training.evaluation.metrics import (
     compare_to_baseline,
     compute_metrics,
+    file_sha256,
     per_warehouse_metrics,
 )
 from ml_training.training.config import TrainingConfig
@@ -113,7 +113,7 @@ def run_evaluation(
 
     report = {
         "split":                split,
-        "split_sha256":         _file_sha256(dataset_dir / f"{split}.parquet"),
+        "split_sha256":         file_sha256(dataset_dir / f"{split}.parquet"),
         "n_examples":           len(df),
         "positive_rate":        float(y_true.mean()),
         "model":                comparison["model"],
@@ -226,15 +226,6 @@ def _subset_metrics(
     block["baseline"]      = compute_metrics(y_sub, y_baseline[mask])
     block["rule_baseline"] = compute_metrics(y_sub, y_rule[mask])
     return block
-
-
-def _file_sha256(path: Path) -> str:
-    """Hex sha256 of a file's bytes, read in 1 MiB chunks."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _load_json(path: Path) -> dict:

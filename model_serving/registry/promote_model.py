@@ -35,7 +35,6 @@ Required packages:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import tempfile
@@ -52,7 +51,7 @@ from google.cloud import storage as gcs_storage
 from google.protobuf import field_mask_pb2
 
 from ml_training.datasets.feature_engineer import TARGET_COL
-from ml_training.evaluation.metrics import compute_metrics
+from ml_training.evaluation.metrics import compute_metrics, file_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -494,15 +493,6 @@ def print_metric_comparison(summary: dict[str, dict], basis: str) -> None:
 def needs_rescore(champion_hash: str | None, challenger_hash: str | None) -> bool:
     """Stored metrics are comparable only when both hashes exist and match."""
     return champion_hash is None or challenger_hash is None or champion_hash != challenger_hash
-
-
-def file_sha256(path: Path) -> str:
-    """Hex sha256 of a file's bytes; same function evaluate.py uses for split_sha256."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np.ndarray:
