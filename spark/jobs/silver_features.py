@@ -197,7 +197,7 @@ def _supplier(supplier_90d: DataFrame, po_90d: DataFrame, shipments_30d: DataFra
     )
     received = po_90d.filter(F.col("event_type") == "RECEIVED").select("order_id")
     active_po = (
-        po_90d.filter(F.col("event_type").isin("CREATED", "SUBMITTED"))
+        po_90d.filter(F.col("event_type") == "CREATED")
         .dropDuplicates(["order_id"])
         .join(received, "order_id", "left_anti")
         .groupBy(*PAIR).agg(F.sum("quantity_ordered").cast("double").alias("supplier__active_po_qty"))
