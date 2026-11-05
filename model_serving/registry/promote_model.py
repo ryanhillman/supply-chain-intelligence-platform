@@ -356,11 +356,6 @@ class ModelPromoter:
 
 # ── Module helpers (pure; unit-tested without GCP) ────────────────────────────
 
-def _read_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)
-
-
 def parse_evaluation(data: dict, where: str) -> dict:
     """
     The promotion-relevant part of an evaluation_test.json document:
