@@ -167,7 +167,7 @@ resource "google_bigtable_table" "inventory_features" {
 
 ###############################################################################
 # Bigtable GC Policies
-# One policy per column family.
+# One policy per column family, from local.gc_max_versions.
 #
 # Every feature family keeps exactly the latest cell (max_version = 1): Silver
 # rewrites the whole row on each run and every reader takes the newest cell
@@ -182,89 +182,28 @@ resource "google_bigtable_table" "inventory_features" {
 #                 inspection
 ###############################################################################
 
-resource "google_bigtable_gc_policy" "inventory" {
-  project         = var.project_id
-  instance_name   = google_bigtable_instance.feature_store.name
-  table           = google_bigtable_table.inventory_features.name
-  column_family   = "inventory"
-  deletion_policy = "ABANDON"
-
-  max_version {
-    number = 1
+locals {
+  gc_max_versions = {
+    inventory   = 1
+    velocity    = 1
+    demand      = 1
+    supplier    = 1
+    risk        = 1
+    lineage     = 1
+    predictions = 3
   }
 }
 
-resource "google_bigtable_gc_policy" "velocity" {
+resource "google_bigtable_gc_policy" "family" {
+  for_each        = local.gc_max_versions
   project         = var.project_id
   instance_name   = google_bigtable_instance.feature_store.name
   table           = google_bigtable_table.inventory_features.name
-  column_family   = "velocity"
+  column_family   = each.key
   deletion_policy = "ABANDON"
 
   max_version {
-    number = 1
-  }
-}
-
-resource "google_bigtable_gc_policy" "demand" {
-  project         = var.project_id
-  instance_name   = google_bigtable_instance.feature_store.name
-  table           = google_bigtable_table.inventory_features.name
-  column_family   = "demand"
-  deletion_policy = "ABANDON"
-
-  max_version {
-    number = 1
-  }
-}
-
-resource "google_bigtable_gc_policy" "supplier" {
-  project         = var.project_id
-  instance_name   = google_bigtable_instance.feature_store.name
-  table           = google_bigtable_table.inventory_features.name
-  column_family   = "supplier"
-  deletion_policy = "ABANDON"
-
-  max_version {
-    number = 1
-  }
-}
-
-resource "google_bigtable_gc_policy" "risk" {
-  project         = var.project_id
-  instance_name   = google_bigtable_instance.feature_store.name
-  table           = google_bigtable_table.inventory_features.name
-  column_family   = "risk"
-  deletion_policy = "ABANDON"
-
-  max_version {
-    number = 1
-  }
-}
-
-resource "google_bigtable_gc_policy" "lineage" {
-  project         = var.project_id
-  instance_name   = google_bigtable_instance.feature_store.name
-  table           = google_bigtable_table.inventory_features.name
-  column_family   = "lineage"
-  deletion_policy = "ABANDON"
-
-  max_version {
-    number = 1
-  }
-}
-
-# Phase 5 — Keep 3 versions: current prediction + 2 prior rounds.
-# Allows champion/challenger rollback inspection without unbounded growth.
-resource "google_bigtable_gc_policy" "predictions" {
-  project         = var.project_id
-  instance_name   = google_bigtable_instance.feature_store.name
-  table           = google_bigtable_table.inventory_features.name
-  column_family   = "predictions"
-  deletion_policy = "ABANDON"
-
-  max_version {
-    number = 3
+    number = each.value
   }
 }
 
