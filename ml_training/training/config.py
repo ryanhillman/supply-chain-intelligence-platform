@@ -22,13 +22,9 @@ class TrainingConfig:
     patience:     int   = 10     # early-stopping patience on val AUPRC
 
     # ── LR scheduler ─────────────────────────────────────────────────────────
-    # "cosine"  — CosineAnnealingLR over T_max epochs; None means max_epochs,
-    #             i.e. one anneal from lr down to 1e-6 across the whole run
-    # "plateau" — ReduceLROnPlateau monitoring val AUPRC
-    scheduler:   str        = "cosine"
+    # CosineAnnealingLR over T_max epochs; None means max_epochs, i.e. one
+    # anneal from lr down to 1e-6 across the whole run.
     T_max:       int | None = None
-    lr_factor:   float      = 0.5
-    lr_patience: int        = 5
 
     # ── Paths ─────────────────────────────────────────────────────────────────
     dataset_dir: str = "ml_training/artifacts/dataset"
