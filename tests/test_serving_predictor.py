@@ -6,7 +6,6 @@ ml_training/inference/onnx_export.py exports the real one.
 """
 import json
 import shutil
-import sys
 import types
 from pathlib import Path
 
@@ -18,15 +17,12 @@ from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 
-_CONTAINER_DIR = Path(__file__).parents[1] / "model_serving" / "serving" / "container"
 _GCS_PATH = "gs://bucket/models/shortage-predictor/v20261031_test"
 N = len(NUMERIC_FEATURE_COLS)
 
 
 def _predictor_module():
-    if str(_CONTAINER_DIR) not in sys.path:
-        sys.path.insert(0, str(_CONTAINER_DIR))
-    import predictor  # noqa: PLC0415 -- path-dependent import by design
+    import predictor  # noqa: PLC0415 -- the container's top-level module (pytest.ini pythonpath)
     return predictor
 
 

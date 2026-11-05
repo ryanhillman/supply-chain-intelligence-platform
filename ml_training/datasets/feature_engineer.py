@@ -29,34 +29,18 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+from feature_registry import RAW_FEATURE_COLS
+
 logger = logging.getLogger(__name__)
 
 EPS: float = 1e-6
 
-# Canonical ordered list of numeric features fed to the model.
-# Order is fixed here and must match the column order used when fitting
-# the StandardScaler in DatasetBuilder.
+# Canonical ordered list of numeric features fed to the model: the stored
+# features (feature_registry.RAW_FEATURE_COLS), then the derived ones. The
+# order must match the column order used when fitting the StandardScaler in
+# DatasetBuilder.
 NUMERIC_FEATURE_COLS: list[str] = [
-    # Raw inventory state
-    "current_qty",
-    "reorder_point",
-    "safety_stock",
-    # Velocity
-    "sales_7d",
-    "sales_30d",
-    "avg_daily_sales_7d",
-    "avg_daily_sales_30d",
-    "velocity_trend",
-    "stddev_daily_7d",
-    # Supplier
-    "lead_time_days",
-    "lead_time_stddev",
-    "supplier_reliability",
-    # Pipeline
-    "active_po_qty",
-    "in_transit_qty",
-    # Demand signals
-    "demand_signal_count_24h",
+    *RAW_FEATURE_COLS,
     # Derived (computed below)
     "days_of_supply",
     "effective_supply",

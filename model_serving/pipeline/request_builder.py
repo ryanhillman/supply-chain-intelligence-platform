@@ -14,8 +14,8 @@ Pipeline per entity
 6. Return a ScoringRequest containing the endpoint instance dict, the risk
    score and entity metadata.
 
-All 15 raw feature names and their defaults mirror
-ml_training/datasets/feature_engineer.fill_defaults().
+The 15 raw feature names are feature_registry.RAW_FEATURE_COLS; their defaults
+are in ml_training/datasets/feature_engineer.fill_defaults().
 
 Required packages:
     numpy>=1.26.0
@@ -31,29 +31,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from feature_registry import RAW_FEATURE_COLS
 from model_serving.pipeline.feature_client import FeatureRow
 
 logger = logging.getLogger(__name__)
-
-# Raw features Bigtable provides (before derived engineering).
-# Mirrors ml_training/datasets/feature_engineer.fill_defaults() keys.
-_RAW_FEATURES: tuple[str, ...] = (
-    "current_qty",
-    "reorder_point",
-    "safety_stock",
-    "sales_7d",
-    "sales_30d",
-    "avg_daily_sales_7d",
-    "avg_daily_sales_30d",
-    "velocity_trend",
-    "stddev_daily_7d",
-    "lead_time_days",
-    "lead_time_stddev",
-    "supplier_reliability",
-    "active_po_qty",
-    "in_transit_qty",
-    "demand_signal_count_24h",
-)
 
 
 @dataclass
@@ -182,7 +163,7 @@ class RequestBuilder:
         # Build DataFrame with all raw feature columns, including absent ones as NaN.
         records = []
         for fr in valid_rows:
-            row = {col: fr.features.get(col, np.nan) for col in _RAW_FEATURES}
+            row = {col: fr.features.get(col, np.nan) for col in RAW_FEATURE_COLS}
             row["warehouse_id"] = fr.warehouse_id
             row["sku_id"]       = fr.sku_id
             records.append(row)

@@ -23,9 +23,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD
 

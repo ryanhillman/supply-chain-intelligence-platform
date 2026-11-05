@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "supply-chain-intelligence-platform"
+version = "0.1.0"
+description = "Inventory shortage prediction: Kafka, Spark, Bigtable, PyTorch and Vertex AI"
+requires-python = ">=3.11"
+
+# `pip install -e .` makes the project's packages importable from anywhere, so
+# scripts and tests need no sys.path edits. Third-party dependencies stay in
+# each component's requirements.txt: training, serving, Spark and the serving
+# container are separate environments.
+#
+# feature_registry lives under spark/ because the Spark container holds only
+# that directory. Spark's own config/, jobs/ and utils/ are not installed.
+[tool.setuptools.packages.find]
+where = [".", "spark"]
+include = ["ml_training*", "model_serving*", "simulation*", "feature_registry*"]
+namespaces = false

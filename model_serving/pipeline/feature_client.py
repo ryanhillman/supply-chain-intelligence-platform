@@ -16,7 +16,7 @@ Design
 - Numeric cells are stored as big-endian IEEE 754 doubles (8 bytes).
   See spark/utils/bigtable_writer.py for the write side.
 - Abbreviated column qualifiers are mapped to flat feature names via
-  _BIGTABLE_TO_FEATURE, derived from spark/config/feature_config.py FEATURE_REGISTRY.
+  feature_registry.RAW_FEATURE_CELLS, and cells are decoded by its decode_double.
 - Only the latest cell version per column is read (CellsColumnLimitFilter(1)).
 
 Row key format: {warehouse_id}#{sku_id}  e.g. "W-001#SKU-005"
@@ -27,40 +27,15 @@ Required packages:
 from __future__ import annotations
 
 import logging
-import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from feature_registry import RAW_FEATURE_CELLS, RAW_FEATURE_FAMILIES, decode_double
+
 logger = logging.getLogger(__name__)
 
-# Maps (bigtable_family, abbreviated_qualifier) -> flat feature name.
-# Derived from spark/config/feature_config.py FEATURE_REGISTRY and
-# spark/utils/bigtable_writer.py encoding contract.
-# String columns (last_evt, last_upd, last_sig) are intentionally absent;
-# they cannot be decoded as doubles and are not model inputs.
-_BIGTABLE_TO_FEATURE: dict[tuple[str, str], str] = {
-    ("inventory", "cur_qty"):      "current_qty",
-    ("inventory", "reorder_pt"):   "reorder_point",
-    ("inventory", "safety_stk"):   "safety_stock",
-    ("velocity",  "sales_7d"):     "sales_7d",
-    ("velocity",  "sales_30d"):    "sales_30d",
-    ("velocity",  "avg_d_7d"):     "avg_daily_sales_7d",
-    ("velocity",  "avg_d_30d"):    "avg_daily_sales_30d",
-    ("velocity",  "v_trend"):      "velocity_trend",
-    ("velocity",  "stddev_7d"):    "stddev_daily_7d",
-    ("demand",    "sig_24h"):      "demand_signal_count_24h",
-    ("supplier",  "lt_days"):      "lead_time_days",
-    ("supplier",  "lt_std"):       "lead_time_stddev",
-    ("supplier",  "reliability"):  "supplier_reliability",
-    ("supplier",  "po_qty"):       "active_po_qty",
-    ("supplier",  "transit_qty"):  "in_transit_qty",
-}
-
-# Column families that hold model input features (not outputs or metadata).
-_FEATURE_FAMILIES: frozenset[str] = frozenset({"inventory", "velocity", "demand", "supplier"})
-
 # Lineage cell stamping the Silver run that wrote the row (UTF-8 ISO-8601; see
-# spark/config/feature_config.py FEATURE_REGISTRY["lineage"]).
+# feature_registry.FEATURE_REGISTRY["lineage"]).
 _LINEAGE_FAMILY:      str = "lineage"
 _SILVER_TS_QUALIFIER: str = "silver_ts"
 
@@ -184,14 +159,14 @@ class FeatureClient:
         from google.cloud.bigtable import row_filters
 
         filter_ = row_filters.RowFilterChain(filters=[
-            row_filters.FamilyNameRegexFilter("|".join(sorted(_FEATURE_FAMILIES | {_LINEAGE_FAMILY}))),
+            row_filters.FamilyNameRegexFilter("|".join(sorted(RAW_FEATURE_FAMILIES | {_LINEAGE_FAMILY}))),
             row_filters.CellsColumnLimitFilter(1),
         ])
 
         logger.info(
             "Scanning Bigtable %s/%s (project=%s, families=%s)",
             self.instance_id, self.table_id, self.project_id,
-            sorted(_FEATURE_FAMILIES | {_LINEAGE_FAMILY}),
+            sorted(RAW_FEATURE_FAMILIES | {_LINEAGE_FAMILY}),
         )
 
         rows: list[FeatureRow] = []
@@ -217,21 +192,26 @@ class FeatureClient:
                     if ts_cells:
                         last_silver_write = _decode_timestamp(ts_cells[0].value, row_key)
                     continue
-                if cf_name not in _FEATURE_FAMILIES:
+                if cf_name not in RAW_FEATURE_FAMILIES:
                     continue
 
                 for col_qualifier_bytes, cells in cf_data.items():
                     col_qualifier = col_qualifier_bytes.decode("utf-8")
-                    feature_name  = _BIGTABLE_TO_FEATURE.get((cf_name, col_qualifier))
+                    feature_name  = RAW_FEATURE_CELLS.get((cf_name, col_qualifier))
 
                     if feature_name is None:
                         # String qualifier (last_evt, last_upd, etc.) or unknown column.
                         continue
 
                     cell_value = cells[0].value
-                    decoded    = _decode_double(cell_value, cf_name, col_qualifier)
+                    decoded    = decode_double(cell_value)
 
-                    if decoded is not None:
+                    if decoded is None:
+                        logger.warning(
+                            "Cannot decode cell (%s, %s) with %d bytes as double or UTF-8 — skipping",
+                            cf_name, col_qualifier, len(cell_value),
+                        )
+                    else:
                         raw_features[feature_name] = decoded
                         n_cells_total += 1
 
@@ -361,26 +341,3 @@ def _decode_timestamp(value: bytes, row_key: str) -> datetime | None:
         )
         return None
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-
-
-def _decode_double(value: bytes, family: str, qualifier: str) -> float | None:
-    """
-    Decode a big-endian IEEE 754 double (8 bytes) to float.
-
-    Bigtable cells are written with struct.pack(">d", float(value)) by
-    spark/utils/bigtable_writer.py. An 8-byte value is always a double.
-    A non-8-byte value is logged as a warning and returns None so the
-    caller can skip it and let RequestBuilder fill the domain default.
-    """
-    if len(value) == 8:
-        return struct.unpack(">d", value)[0]
-
-    # Graceful fallback for cells stored as UTF-8 strings (non-standard writes).
-    try:
-        return float(value.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        logger.warning(
-            "Cannot decode cell (%s, %s) with %d bytes as double or UTF-8 — skipping",
-            family, qualifier, len(value),
-        )
-        return None

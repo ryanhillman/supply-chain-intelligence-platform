@@ -11,21 +11,14 @@ predictor.py's own ONNXPredictor.__init__ needs GCS + onnxruntime model
 files, so this test swaps in a fake predictor exposing just the
 n_warehouses/n_skus/predict() surface main.py actually uses.
 """
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-_CONTAINER_DIR = Path(__file__).parents[1] / "model_serving" / "serving" / "container"
-
 
 @pytest.fixture()
 def client():
-    if str(_CONTAINER_DIR) not in sys.path:
-        sys.path.insert(0, str(_CONTAINER_DIR))
-    import main as main_module  # noqa: PLC0415 -- path-dependent import by design
+    import main as main_module  # noqa: PLC0415 -- the container's top-level module (pytest.ini pythonpath)
 
     class FakePredictor:
         n_warehouses = 6

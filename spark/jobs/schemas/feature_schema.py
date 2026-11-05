@@ -7,11 +7,11 @@ Defines:
   SILVER_DEDUP_COLS     — dedup key for the Silver write.
 
 The Bigtable mutation path (spark/utils/bigtable_writer.py) writes directly
-from the Silver DataFrame's columns via FEATURE_REGISTRY in feature_config.py
+from the Silver DataFrame's columns via feature_registry.FEATURE_REGISTRY
 — there is no separate Bigtable-specific schema.
 
 Column naming convention: {family}__{attribute}
-  Matches FEATURE_REGISTRY keys in feature_config.py exactly.
+  Matches the feature_registry.FEATURE_REGISTRY keys exactly.
   Double-underscore chosen because neither family names nor attribute names
   contain __ so splitting on __ is unambiguous.
 

@@ -51,11 +51,6 @@ import os
 import sys
 from pathlib import Path
 
-# Allow running from the repo root without installing the package.
-_REPO_ROOT = Path(__file__).parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
 from model_serving.pipeline.feature_client    import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder   import RequestBuilder
 from model_serving.pipeline.batch_scorer      import BatchScorer

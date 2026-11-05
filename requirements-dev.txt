@@ -2,6 +2,7 @@
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 #   pip install -r ml_training/requirements.txt -r model_serving/requirements.txt \
 #               -r requirements-dev.txt
+#   pip install -e .        # the project's own packages (pyproject.toml)
 # This is exactly what .github/workflows/ci.yml does. The serving container's
 # own requirements.txt is for its Docker image (exact pins for a separate
 # environment) and is deliberately not part of the test environment.
