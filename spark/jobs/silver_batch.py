@@ -65,11 +65,7 @@ def create_spark_session() -> SparkSession:
         .config("spark.sql.session.timeZone", "UTC")
         # mode("overwrite") replaces only the partitions being written.
         .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
-        .config("spark.hadoop.fs.gs.impl",
-                "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.gs.impl",
-                "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
-        .config("spark.hadoop.google.cloud.auth.service.account.enable", "true")
+        # GCS connector settings come from config/spark-gcs.conf (--properties-file).
         .getOrCreate()
     )
 
