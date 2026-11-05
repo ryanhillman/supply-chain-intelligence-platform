@@ -149,7 +149,7 @@ def main() -> None:
     print("=" * 68)
     print(
         f"\nNext step: deploy the model to the endpoint.\n"
-        f"  python model_serving/scripts/deploy.py \\\n"
+        f"  python model_serving/scripts/deploy.py deploy \\\n"
         f"      --project {args.project} \\\n"
         f"      --region  {args.region} \\\n"
         f"      --sa-key  {args.sa_key or 'infrastructure/gcp/keys/scip-vertex-sa.json'} \\\n"

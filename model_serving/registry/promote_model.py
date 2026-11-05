@@ -190,12 +190,12 @@ class ModelPromoter:
         if not champions:
             raise ValueError(
                 "No champion found (no model at > 0%% traffic). "
-                "For the first deployment, use deploy.py --traffic 100 directly."
+                "For the first deployment, use deploy.py deploy --traffic 100 directly."
             )
         if not challengers:
             raise ValueError(
                 "No challenger found (no model at 0%% traffic). "
-                "Deploy a challenger first with deploy.py --traffic 0."
+                "Deploy a challenger first with deploy.py deploy --traffic 0."
             )
         if len(champions) > 1:
             raise ValueError(
