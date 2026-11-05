@@ -24,7 +24,7 @@ import argparse
 import os
 import sys
 
-from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD
+from model_serving.pipeline.constants import variance_collapsed
 
 # -- SKU category mapping (mirrors simulation/world.py SKUS) ------------------
 # Hard-coded so show_predictions.py has zero dependency on ml_training modules.
@@ -200,7 +200,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
     std_prob   = _stdev(probs,  mean_prob)
     mean_score = sum(scores) / n
     std_score  = _stdev(scores, mean_score)
-    collapsed  = std_prob < VARIANCE_COLLAPSE_THRESHOLD
+    collapsed  = variance_collapsed(std_prob)
 
     version = records[0]["model_version"]
     ts      = records[0]["prediction_timestamp"]

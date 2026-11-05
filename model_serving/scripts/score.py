@@ -51,6 +51,7 @@ import os
 import sys
 from pathlib import Path
 
+from model_serving.pipeline.constants         import VARIANCE_COLLAPSE_THRESHOLD
 from model_serving.pipeline.feature_client    import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder   import RequestBuilder
 from model_serving.pipeline.batch_scorer      import BatchScorer
@@ -327,7 +328,7 @@ def _run_scoring(
 
     if stats.variance_collapsed:
         print(
-            "\n  [WARNING] prediction variance collapsed (std < 0.01).\n"
+            f"\n  [WARNING] prediction variance collapsed (std < {VARIANCE_COLLAPSE_THRESHOLD}).\n"
             "  Run model_serving/scripts/monitor.py to check feature drift\n"
             "  before using these predictions."
         )

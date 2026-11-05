@@ -87,7 +87,10 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-from model_serving.pipeline.constants import VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD
+from model_serving.pipeline.constants import (
+    VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD,
+    variance_collapsed,
+)
 
 _N_BINS                = 10
 _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
@@ -423,7 +426,7 @@ class DriftMonitor:
         return PredictionMetrics(
             prob_mean               = float(np.mean(probs)),
             prob_std                = prob_std,
-            prob_variance_collapsed = prob_std < _VARIANCE_COLLAPSE_THRESHOLD,
+            prob_variance_collapsed = variance_collapsed(prob_std),
             n_entities              = len(probs),
         )
 
