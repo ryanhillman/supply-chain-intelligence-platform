@@ -2,7 +2,7 @@
 
 <p align="center">
   <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white">
-  <img alt="GCP" src="https://img.shields.io/badge/GCP-Deployed-4285F4?logo=googlecloud&logoColor=white">
+  <img alt="GCP" src="https://img.shields.io/badge/GCP-4285F4?logo=googlecloud&logoColor=white">
 </p>
 
 ---
