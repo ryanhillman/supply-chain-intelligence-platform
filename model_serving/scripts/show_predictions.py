@@ -26,23 +26,7 @@ import sys
 
 from model_serving.pipeline.constants import variance_collapsed
 from model_serving.pipeline.feature_client import FeatureClient
-
-# -- SKU category mapping (mirrors simulation/world.py SKUS) ------------------
-# Hard-coded so show_predictions.py has zero dependency on ml_training modules.
-_SKU_CATEGORIES: dict[str, str] = {
-    "SKU-001": "FMCG",        "SKU-002": "FMCG",
-    "SKU-003": "FMCG",        "SKU-004": "FMCG",
-    "SKU-005": "FMCG",
-    "SKU-006": "Electronics", "SKU-007": "Electronics",
-    "SKU-008": "Electronics", "SKU-009": "Electronics",
-    "SKU-010": "Electronics",
-    "SKU-011": "Industrial",  "SKU-012": "Industrial",
-    "SKU-013": "Industrial",  "SKU-014": "Industrial",
-    "SKU-015": "Industrial",
-    "SKU-016": "Seasonal",    "SKU-017": "Seasonal",
-    "SKU-018": "Seasonal",    "SKU-019": "Seasonal",
-    "SKU-020": "Seasonal",
-}
+from simulation.world import SKU_CATEGORIES
 
 _CATEGORY_ORDER = ["FMCG", "Electronics", "Industrial", "Seasonal"]
 
@@ -105,7 +89,7 @@ def read_predictions(project: str, instance_id: str, table_id: str, sa_key: str 
         {
             "warehouse_id":         r.warehouse_id,
             "sku_id":               r.sku_id,
-            "category":             _SKU_CATEGORIES.get(r.sku_id, "Unknown"),
+            "category":             SKU_CATEGORIES.get(r.sku_id, "Unknown"),
             "shortage_prob_7d":     r.shortage_prob_7d,
             "stockout_risk_score":  r.stockout_risk_score,
             "model_version":        r.model_version or "unknown",
