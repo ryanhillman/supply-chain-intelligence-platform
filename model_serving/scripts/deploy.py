@@ -73,9 +73,9 @@ import os
 import sys
 
 from model_serving import cli
-from model_serving.serving.deploy_endpoint import EndpointDeployer
-from model_serving.registry.promote_model  import ModelPromoter
-from model_serving.serving.smoke_test      import SmokeTest
+from model_serving.registry.deploy_endpoint import EndpointDeployer
+from model_serving.registry.promote_model   import ModelPromoter
+from model_serving.serving.smoke_test       import SmokeTest
 
 logger = logging.getLogger("deploy")
 
