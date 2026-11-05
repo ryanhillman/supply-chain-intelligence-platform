@@ -85,7 +85,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--artifacts",
         default="ml_training/artifacts",
-        help="Local directory containing model.onnx, feature_metadata.json, evaluation_test.json",
+        help=(
+            "Local directory containing model.onnx, feature_metadata.json, "
+            "evaluation_test.json, drift_reference.json"
+        ),
     )
     p.add_argument(
         "--version",
@@ -175,6 +178,7 @@ def _check_local_artifacts(artifacts_dir: Path) -> None:
         artifacts_dir / "model.onnx",
         artifacts_dir / "feature_metadata.json",
         artifacts_dir / "evaluation_test.json",
+        artifacts_dir / "drift_reference.json",
     ]
     missing = [p for p in required if not p.exists()]
     if missing:
@@ -188,10 +192,8 @@ def _check_local_artifacts(artifacts_dir: Path) -> None:
         sys.exit(1)
 
     logger.info("Local artifacts verified:")
-    for p in [artifacts_dir / "model.onnx", artifacts_dir / "feature_metadata.json",
-              artifacts_dir / "evaluation_test.json"]:
-        if p.exists():
-            logger.info("  %s  (%d bytes)", p, p.stat().st_size)
+    for p in required:
+        logger.info("  %s  (%d bytes)", p, p.stat().st_size)
 
 
 if __name__ == "__main__":

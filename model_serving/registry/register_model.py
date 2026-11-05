@@ -8,6 +8,8 @@ GCS layout after registration:
     model.onnx.data       — ONNX external weights sidecar (present when >~20 MB)
     feature_metadata.json — vocab mappings + feature list (used by batch_scorer)
     evaluation_test.json  — held-out test metrics for promote_model.py comparison
+    training_metrics.json — per-epoch training curves
+    drift_reference.json  — training-distribution bins for the drift monitor
     registration_info.json — Vertex AI resource name + registration timestamp
 
 The serving container's MODEL_GCS_PATH environment variable is set to the version
@@ -38,6 +40,7 @@ _ARTIFACTS_TO_UPLOAD: list[str] = [
     "feature_metadata.json",
     "evaluation_test.json",
     "training_metrics.json",
+    "drift_reference.json",
 ]
 
 _GCS_MODEL_PREFIX = "models/shortage-predictor"
