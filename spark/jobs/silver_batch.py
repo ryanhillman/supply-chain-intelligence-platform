@@ -15,8 +15,8 @@ Usage (inside the scip-spark container; see spark/docker-compose.spark.yml):
 Writes:
   Silver    {SILVER_BASE_PATH}/warehouse_id=.../year=/month=/day=  (as-of date)
             Rerunning the same as-of date replaces those partitions.
-  Bigtable  one row per pair, best-effort after the Silver write: a failed
-            Bigtable write leaves Silver intact, and rerunning the job
+  Bigtable  one row per pair, after the Silver write. A failed Bigtable
+            write leaves Silver intact and fails the job; rerunning it
             repopulates Bigtable. lineage:silver_ts is the wall-clock write
             time, which the scorer's freshness check reads.
 """
