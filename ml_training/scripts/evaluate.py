@@ -17,9 +17,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from ml_training.evaluation.evaluate import run_evaluation
 

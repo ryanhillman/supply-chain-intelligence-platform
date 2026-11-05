@@ -4,16 +4,12 @@ is a fake, so this needs neither Spark nor the emulator;
 tests/test_silver_bigtable.py covers the same path against the emulator.
 """
 import struct
-import sys
 import types
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "spark"))
-
-from config.feature_config import FEATURE_REGISTRY  # noqa: E402
-from utils import bigtable_writer as bw  # noqa: E402
+from config.feature_config import FEATURE_REGISTRY
+from utils import bigtable_writer as bw
 
 _COLUMNS = [f"{family}__{attr}" for family, attrs in FEATURE_REGISTRY.items() for attr in attrs]
 

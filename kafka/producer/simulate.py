@@ -33,17 +33,12 @@ import os
 import sys
 import time
 from datetime import date, timedelta
-from pathlib import Path
 
 from confluent_kafka import Producer
 
-# In the image, simulation/ sits next to this file; in the repo it is two levels up.
-for _root in Path(__file__).resolve().parents:
-    if (_root / "simulation").is_dir():
-        sys.path.insert(0, str(_root))
-        break
-
-from simulation.world import Event, World  # noqa: E402
+# In the image, simulation/ sits next to this file; in the repo it comes from
+# `pip install -e .`.
+from simulation.world import Event, World
 
 BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 REPLAY_START      = date.fromisoformat(os.environ.get("REPLAY_START", "2025-10-01"))

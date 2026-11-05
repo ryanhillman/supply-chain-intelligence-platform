@@ -32,15 +32,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
-
-# Allow importing from ml_training when running from the repo root.
-_REPO_ROOT = Path(__file__).parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from model_serving.pipeline.feature_client import FeatureClient

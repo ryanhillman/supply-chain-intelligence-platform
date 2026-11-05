@@ -14,9 +14,7 @@ Needs PySpark and Java 17. Marked slow: CI runs it in its own job
 (.github/workflows/ci.yml); `pytest -m slow tests/test_spark_parity.py` runs it
 locally.
 """
-import sys
 from datetime import timedelta
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -24,8 +22,6 @@ import pytest
 
 pytest.importorskip("pyspark")
 pytestmark = pytest.mark.slow
-
-sys.path.insert(0, str(Path(__file__).parents[1] / "spark"))
 
 from pyspark.sql import SparkSession  # noqa: E402
 

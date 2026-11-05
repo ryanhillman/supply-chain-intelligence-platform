@@ -21,10 +21,6 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
-
-# Allow running as: python ml_training/scripts/build_dataset.py from repo root
-sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from ml_training.datasets.dataset_builder import DatasetBuilder
 

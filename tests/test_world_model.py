@@ -5,17 +5,13 @@ Covers reproducibility, stock accounting, the order lifecycle the Silver and
 sampler netting relies on, and that every event carries the fields Bronze
 requires for its topic.
 """
-import sys
 from collections import Counter, defaultdict
 from datetime import date
-from pathlib import Path
 
 import pytest
 
+from config.bronze_config import TOPIC_REQUIRED_FIELDS
 from simulation.world import World
-
-sys.path.insert(0, str(Path(__file__).parents[1] / "spark"))
-from config.bronze_config import TOPIC_REQUIRED_FIELDS  # noqa: E402
 
 START = date(2025, 10, 1)
 

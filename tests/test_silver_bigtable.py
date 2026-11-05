@@ -22,8 +22,7 @@ import pytest
 pytest.importorskip("pyspark")
 pytestmark = pytest.mark.slow
 
-_SPARK_DIR = str(Path(__file__).parents[1] / "spark")
-sys.path.insert(0, _SPARK_DIR)
+_SPARK_DIR = str(Path(__file__).parents[1] / "spark")   # for Spark's Python workers
 
 from pyspark.sql import SparkSession  # noqa: E402
 

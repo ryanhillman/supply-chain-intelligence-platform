@@ -26,15 +26,12 @@ import argparse
 import os
 import struct
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parents[2]))
 
 # Bigtable column mapping — imported rather than duplicated so this dashboard
 # can't silently drift out of sync with FEATURE_REGISTRY the way it already
 # had (this local copy was missing avg_daily_sales_30d, velocity_trend,
 # stddev_daily_7d, and lead_time_stddev relative to the canonical mapping).
-from model_serving.pipeline.feature_client import (  # noqa: E402
+from model_serving.pipeline.feature_client import (
     _BIGTABLE_TO_FEATURE as _FEATURE_COLS,
     _FEATURE_FAMILIES,
 )

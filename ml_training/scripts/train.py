@@ -20,8 +20,6 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[2]))
-
 from ml_training.evaluation.evaluate import run_evaluation
 from ml_training.inference.onnx_export import export_to_onnx
 from ml_training.training.config import TrainingConfig
