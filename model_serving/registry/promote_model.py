@@ -504,15 +504,15 @@ def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np
         raise ValueError(f"Split contains entities outside this model's vocab: {unknown}")
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    (logit,) = session.run(
-        ["logit_prob"],
+    (shortage_prob,) = session.run(
+        ["shortage_prob_7d"],
         {
             "numeric_features": df[cols].to_numpy(dtype=np.float32),
             "warehouse_ids":    wh.to_numpy(dtype=np.int64),
             "sku_ids":          sku.to_numpy(dtype=np.int64),
         },
     )
-    return 1.0 / (1.0 + np.exp(-logit[:, 0].astype(np.float64)))
+    return shortage_prob.astype(np.float64)
 
 
 def _split_gcs_uri(uri: str) -> tuple[str, str]:

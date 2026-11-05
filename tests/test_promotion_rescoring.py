@@ -15,6 +15,7 @@ import pytest
 import torch
 
 from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS, TARGET_COL
+from ml_training.inference.onnx_export import export_graph
 from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 from model_serving.registry import promote_model as pm
@@ -40,15 +41,10 @@ def _export(tmp_path, metadata: dict, seed: int):
     config = TrainingConfig(hidden_dims=(8,), dropout_rates=(0.0,))
     model  = ShortagePredictor.from_metadata(metadata, config).eval()
     path   = tmp_path / f"model_{seed}.onnx"
-    torch.onnx.export(
+    export_graph(
         model,
         (torch.randn(2, N) * 50 + 100, torch.tensor([0, 1]), torch.tensor([0, 1])),
-        str(path),
-        dynamo=False, opset_version=17,
-        input_names=["numeric_features", "warehouse_ids", "sku_ids"],
-        output_names=["logit_prob"],
-        dynamic_axes={"numeric_features": {0: "batch"}, "warehouse_ids": {0: "batch"},
-                      "sku_ids": {0: "batch"}, "logit_prob": {0: "batch"}},
+        path,
     )
     return model, path
 

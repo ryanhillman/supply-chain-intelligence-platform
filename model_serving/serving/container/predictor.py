@@ -11,7 +11,7 @@ standardization happens inside the ONNX graph):
   sku_ids          : int64   (batch,)     — vocab int, NOT SKU string ID
 
 Output returned to caller:
-  shortage_prob_7d : float32 (batch,)  — sigmoid(logit_prob), P(stockout<=7d)
+  shortage_prob_7d : float32 (batch,)  — P(stockout<=7d); the graph applies the sigmoid
   (stockout_risk_score is not a model output; the batch scorer computes it
   with the closed-form Normal approximation from the raw features.)
 
@@ -109,16 +109,15 @@ class ONNXPredictor:
         -------
         shortage_prob_7d : float32, shape (batch,), in [0, 1]
         """
-        (logit_prob,) = self._session.run(
-            output_names=["logit_prob"],
+        (shortage_prob,) = self._session.run(
+            output_names=["shortage_prob_7d"],
             input_feed={
                 "numeric_features": numeric_features.astype(np.float32),
                 "warehouse_ids":    warehouse_ids.astype(np.int64),
                 "sku_ids":          sku_ids.astype(np.int64),
             },
         )
-        # logit_prob shape: (batch, 1) — apply sigmoid to get the probability
-        return _sigmoid(logit_prob[:, 0])
+        return shortage_prob
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
@@ -206,7 +205,7 @@ class ONNXPredictor:
             )
 
         output_names = {out.name for out in session.get_outputs()}
-        expected_outputs = {"logit_prob"}
+        expected_outputs = {"shortage_prob_7d"}
         if output_names != expected_outputs:
             raise ValueError(
                 f"ONNX output names mismatch. "
@@ -228,12 +227,3 @@ class ONNXPredictor:
                 f"{_METADATA_FILENAME} is missing required key {exc}. "
                 "Re-run train.py and register.py for a current feature_metadata.json."
             ) from exc
-
-
-def _sigmoid(x: np.ndarray) -> np.ndarray:
-    """Numerically stable sigmoid for float32."""
-    return np.where(
-        x >= 0,
-        1.0 / (1.0 + np.exp(-x)),
-        np.exp(x) / (1.0 + np.exp(x)),
-    ).astype(np.float32)

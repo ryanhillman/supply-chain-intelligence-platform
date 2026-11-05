@@ -1,8 +1,8 @@
 """
 model_serving/serving/container/predictor.py: the container downloads a model
 from GCS at startup and serves it. GCS is a fake that copies from a directory;
-the model is a tiny ShortagePredictor exported the way
-ml_training/inference/onnx_export.py exports the real one.
+the model is a tiny ShortagePredictor exported with
+ml_training/inference/onnx_export.py's export_graph, as the real one is.
 """
 import json
 import shutil
@@ -14,6 +14,7 @@ import pytest
 import torch
 
 from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
+from ml_training.inference.onnx_export import export_graph
 from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 
@@ -26,7 +27,7 @@ def _predictor_module():
     return predictor
 
 
-def _write_artifacts(dest: Path) -> None:
+def _write_artifacts(dest: Path) -> ShortagePredictor:
     metadata = {
         "numeric_features":   NUMERIC_FEATURE_COLS,
         "n_numeric_features": N,
@@ -40,17 +41,13 @@ def _write_artifacts(dest: Path) -> None:
     torch.manual_seed(0)
     config = TrainingConfig(hidden_dims=(8,), dropout_rates=(0.0,))
     model  = ShortagePredictor.from_metadata(metadata, config).eval()
-    torch.onnx.export(
+    export_graph(
         model,
         (torch.randn(2, N) * 50 + 100, torch.tensor([0, 1]), torch.tensor([0, 1])),
-        str(dest / "model.onnx"),
-        dynamo=False, opset_version=17,
-        input_names=["numeric_features", "warehouse_ids", "sku_ids"],
-        output_names=["logit_prob"],
-        dynamic_axes={"numeric_features": {0: "batch"}, "warehouse_ids": {0: "batch"},
-                      "sku_ids": {0: "batch"}, "logit_prob": {0: "batch"}},
+        dest / "model.onnx",
     )
     (dest / "feature_metadata.json").write_text(json.dumps(metadata))
+    return model
 
 
 @pytest.fixture()
@@ -77,7 +74,7 @@ def predictor(tmp_path, monkeypatch):
 
 
 def test_serves_the_model_downloaded_from_gcs(predictor, monkeypatch):
-    _write_artifacts(predictor.gcs_dir)
+    model = _write_artifacts(predictor.gcs_dir)
     monkeypatch.setenv("MODEL_GCS_PATH", _GCS_PATH)
     monkeypatch.setenv("MODEL_VERSION", "test-version")
 
@@ -86,13 +83,13 @@ def test_serves_the_model_downloaded_from_gcs(predictor, monkeypatch):
     assert p.model_version == "test-version"
     assert p.n_numeric_features == N
     assert (p.n_warehouses, p.n_skus) == (2, 3)
-    probs = p.predict(
-        np.full((4, N), 100.0, dtype=np.float32),
-        np.array([0, 1, 0, 1]),
-        np.array([0, 1, 2, 0]),
-    )
+    x   = np.full((4, N), 100.0, dtype=np.float32)
+    wh  = np.array([0, 1, 0, 1], dtype=np.int64)
+    sku = np.array([0, 1, 2, 0], dtype=np.int64)
+    probs = p.predict(x, wh, sku)
     assert probs.shape == (4,)
-    assert np.all((probs >= 0.0) & (probs <= 1.0))
+    expected = model.predict(torch.tensor(x), torch.tensor(wh), torch.tensor(sku)).squeeze(1).numpy()
+    np.testing.assert_allclose(probs, expected, atol=1e-5)
 
 
 def test_version_defaults_to_the_last_path_segment(predictor):
