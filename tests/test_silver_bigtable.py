@@ -91,7 +91,7 @@ def _silver_to_bigtable(spark, bronze, as_of: date) -> None:
     df = conform_to_silver_schema(silver_batch.add_row_key_and_partitions(
         silver_batch.add_lineage(compute_features(spark, str(bronze), as_of)), as_of
     ))
-    write_to_bigtable(df, _PROJECT, _INSTANCE, _TABLE)
+    write_to_bigtable(df, _PROJECT, _INSTANCE, _TABLE, df.count())
 
 
 def _days_where_values_disappear(rows: pd.DataFrame) -> tuple[date, date]:

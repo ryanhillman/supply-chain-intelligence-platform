@@ -132,7 +132,8 @@ def main() -> None:
         add_lineage(compute_features(spark, BRONZE_BASE_PATH, as_of)), as_of
     )).cache()
     try:
-        if write_silver(feature_df) == 0:
+        row_count = write_silver(feature_df)
+        if row_count == 0:
             logger.error("No inventory events in the 30 days up to %s", as_of)
             sys.exit(1)
         try:
@@ -141,6 +142,7 @@ def main() -> None:
                 project_id=GCP_PROJECT_ID,
                 instance_id=BIGTABLE_INSTANCE_ID,
                 table_id=BIGTABLE_TABLE_ID,
+                row_count=row_count,
             )
         except Exception as bt_exc:
             logger.error(
