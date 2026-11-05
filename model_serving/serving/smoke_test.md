@@ -23,24 +23,24 @@ Runs the FastAPI app directly. Fastest way to verify logic before building the i
 
 ### 1a. Install dependencies
 
-```powershell
-# From repo root
+```bash
+# From the repo root
 cd model_serving/serving/container
 pip install -r requirements.txt
 ```
 
 ### 1b. Set environment variables
 
-```powershell
-$env:MODEL_GCS_PATH = "gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918"
-$env:GOOGLE_APPLICATION_CREDENTIALS = "infrastructure/gcp/keys/scip-vertex-sa.json"
+```bash
+# From model_serving/serving/container/
+export MODEL_GCS_PATH="gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918"
+export GOOGLE_APPLICATION_CREDENTIALS="$PWD/../../../infrastructure/gcp/keys/scip-vertex-sa.json"
 ```
 
 ### 1c. Start the server
 
-```powershell
+```bash
 # From model_serving/serving/container/
-$env:PYTHONIOENCODING = "utf-8"
 uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
@@ -55,9 +55,9 @@ INFO  uvicorn     — Application startup complete.
 
 ### 1d. Health check
 
-```powershell
+```bash
 # New terminal
-Invoke-RestMethod -Uri http://localhost:8080/health
+curl -s http://localhost:8080/health
 ```
 
 Expected:
@@ -75,31 +75,16 @@ The 21 numeric features below are **all-zero raw values** (zero stock, zero sale
 — valid shape, not a meaningful entity. The check is: response has 2 instances and
 each `shortage_prob_7d` is a finite float in [0, 1].
 
-```powershell
-$body = @{
-    instances = @(
-        @{
-            numeric_features = @(0.0) * 21
-            warehouse_id     = 0
-            sku_id           = 0
-        },
-        @{
-            numeric_features = @(0.0) * 21
-            warehouse_id     = 1
-            sku_id           = 5
-        },
-        @{
-            numeric_features = @(0.0) * 21
-            warehouse_id     = 2
-            sku_id           = 10
-        }
-    )
-} | ConvertTo-Json -Depth 5
+```bash
+ZEROS="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"   # 21 values
 
-Invoke-RestMethod -Method POST `
-    -Uri http://localhost:8080/predict `
-    -ContentType "application/json" `
-    -Body $body
+curl -s -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" \
+  -d "{\"instances\": [
+        {\"numeric_features\": [$ZEROS], \"warehouse_id\": 0, \"sku_id\": 0},
+        {\"numeric_features\": [$ZEROS], \"warehouse_id\": 1, \"sku_id\": 5},
+        {\"numeric_features\": [$ZEROS], \"warehouse_id\": 2, \"sku_id\": 10}
+      ]}"
 ```
 
 Expected response shape:
@@ -117,26 +102,12 @@ Expected response shape:
 
 Send only 20 features (should return HTTP 422, not 500):
 
-```powershell
-$bad_body = @{
-    instances = @(
-        @{
-            numeric_features = @(0.0) * 20   # wrong: needs 21
-            warehouse_id     = 0
-            sku_id           = 0
-        }
-    )
-} | ConvertTo-Json -Depth 5
-
-try {
-    Invoke-RestMethod -Method POST `
-        -Uri http://localhost:8080/predict `
-        -ContentType "application/json" `
-        -Body $bad_body
-} catch {
-    $_.Exception.Response.StatusCode   # should print 422
-    $_.ErrorDetails.Message            # should mention "21 elements"
-}
+```bash
+# ${ZEROS%,0} drops one value: 20 features, where the model needs 21
+curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:8080/predict \
+  -H "Content-Type: application/json" \
+  -d "{\"instances\": [{\"numeric_features\": [${ZEROS%,0}], \"warehouse_id\": 0, \"sku_id\": 0}]}"
+# Expected: HTTP 422, and a detail that mentions "21 elements"
 ```
 
 ---
@@ -145,15 +116,15 @@ try {
 
 Run after Method 1 passes. Do not build until Phase 5.2 is approved.
 
-```powershell
+```bash
 # Build (from model_serving/serving/container/)
 docker build -t shortage-predictor-serving:local .
 
-# Run
-docker run --rm -p 8080:8080 `
-    -e MODEL_GCS_PATH="gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918" `
-    -e GOOGLE_APPLICATION_CREDENTIALS="/tmp/key.json" `
-    -v "${PWD}\infrastructure\gcp\keys\scip-vertex-sa.json:/tmp/key.json:ro" `
+# Run (from the repo root)
+docker run --rm -p 8080:8080 \
+    -e MODEL_GCS_PATH="gs://your-gcp-project-id-scip-lake/models/shortage-predictor/v20260620_180918" \
+    -e GOOGLE_APPLICATION_CREDENTIALS="/tmp/key.json" \
+    -v "$PWD/infrastructure/gcp/keys/scip-vertex-sa.json:/tmp/key.json:ro" \
     shortage-predictor-serving:local
 ```
 
@@ -161,14 +132,14 @@ Then run steps 1d–1f above against `http://localhost:8080`.
 
 ### Verify non-root user
 
-```powershell
+```bash
 docker run --rm --entrypoint whoami shortage-predictor-serving:local
 # Expected: appuser
 ```
 
 ### Verify libgomp is present
 
-```powershell
+```bash
 docker run --rm shortage-predictor-serving:local python -c "import onnxruntime; print(onnxruntime.__version__)"
 # Expected: 1.19.2 (no libgomp error)
 ```
