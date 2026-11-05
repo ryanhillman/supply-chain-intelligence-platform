@@ -17,7 +17,7 @@ Usage
     python model_serving/scripts/score.py \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --bigtable-instance scip-feature-store \\
         --topic prediction-results \\
         --model-version v20260620_180918 \\

@@ -22,7 +22,7 @@ Usage
     python model_serving/scripts/deploy.py deploy \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
         --traffic 100
 
@@ -30,7 +30,7 @@ Usage
     python model_serving/scripts/deploy.py deploy \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
         --traffic 0
 
@@ -38,7 +38,7 @@ Usage
     python model_serving/scripts/deploy.py smoke-test \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --bigtable-instance scip-feature-store \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json
 
@@ -46,7 +46,7 @@ Usage
     python model_serving/scripts/deploy.py promote \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json \\
         --dry-run   # preview the comparison before committing
 
@@ -54,7 +54,7 @@ Usage
     python model_serving/scripts/deploy.py undeploy \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --sa-key  infrastructure/gcp/keys/scip-vertex-sa.json
 
 Environment variables:
