@@ -391,8 +391,7 @@ def _run_scoring(
             f"        --project {args.project} \\\n"
             f"        --bigtable-instance {args.bigtable_instance} \\\n"
             f"        --subscription {args.subscription}\n"
-            "\n  (add --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json on GCP;\n"
-            "  or run it with --streaming as a long-lived service.)"
+            "\n  (add --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json on GCP.)"
         )
 
 
