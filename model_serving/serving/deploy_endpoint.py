@@ -31,6 +31,8 @@ from pathlib import Path
 from google.cloud import aiplatform
 from google.cloud import storage as gcs_storage
 
+from model_serving import cli
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MACHINE_TYPE = "n1-standard-2"
@@ -66,17 +68,9 @@ class EndpointDeployer:
         self.region                 = region
         self.endpoint_resource_name = endpoint_resource_name
 
-        if credentials_path:
-            from google.oauth2 import service_account
-            creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-            aiplatform.init(project=project_id, location=region, credentials=creds)
-            self._storage_client = gcs_storage.Client(project=project_id, credentials=creds)
-        else:
-            aiplatform.init(project=project_id, location=region)
-            self._storage_client = gcs_storage.Client(project=project_id)
+        creds = cli.load_credentials(credentials_path)
+        aiplatform.init(project=project_id, location=region, credentials=creds)
+        self._storage_client = gcs_storage.Client(project=project_id, credentials=creds)
 
     def deploy(
         self,
@@ -218,13 +212,9 @@ class EndpointDeployer:
     # ── Internals ─────────────────────────────────────────────────────────────
 
     def _load_registration_info(self) -> dict:
-        if not _LOCAL_REGISTRATION_INFO.exists():
-            raise FileNotFoundError(
-                f"{_LOCAL_REGISTRATION_INFO} not found. "
-                "Run model_serving/scripts/register.py first."
-            )
-        with open(_LOCAL_REGISTRATION_INFO) as f:
-            return json.load(f)
+        return cli.read_json(
+            _LOCAL_REGISTRATION_INFO, "Run model_serving/scripts/register.py first."
+        )
 
     def _load_model_resource_name(self) -> str:
         info = self._load_registration_info()

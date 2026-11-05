@@ -82,6 +82,7 @@ from ml_training.evaluation.drift_reference import (
     load_drift_reference,
     load_warehouse_ranges,
 )
+from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
@@ -220,14 +221,8 @@ class DriftMonitor:
                 f"Monitored features not found in NUMERIC_FEATURE_COLS: {unknown}"
             )
 
-        # Bigtable client (lazy — set up once, reused for both feature and prediction reads).
-        self._creds = None
-        if credentials_path:
-            from google.oauth2 import service_account
-            self._creds = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
+        # For the Cloud Monitoring client; FeatureClient loads its own from the same key.
+        self._creds = cli.load_credentials(credentials_path)
 
         from model_serving.pipeline.feature_client import FeatureClient
         self._feature_client = FeatureClient(
@@ -818,14 +813,10 @@ class DriftMonitor:
     # ── Artifact loading ───────────────────────────────────────────────────────
 
     def _load_metadata(self) -> dict:
-        path = self._artifacts_dir / "feature_metadata.json"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"feature_metadata.json not found at {path}. "
-                "Run ml_training/scripts/train.py or download from GCS."
-            )
-        with open(path) as f:
-            return json.load(f)
+        return cli.read_json(
+            self._artifacts_dir / "feature_metadata.json",
+            "Run ml_training/scripts/train.py or download from GCS.",
+        )
 
     def _load_drift_reference(self) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], dict]:
         """

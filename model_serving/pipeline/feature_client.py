@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from feature_registry import RAW_FEATURE_CELLS, RAW_FEATURE_FAMILIES, decode_double
+from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
@@ -120,15 +121,9 @@ class FeatureClient:
 
         from google.cloud import bigtable
 
-        client_kwargs: dict = {"project": project_id, "admin": False}
-        if credentials_path:
-            from google.oauth2 import service_account
-            client_kwargs["credentials"] = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-
-        self._client = bigtable.Client(**client_kwargs)
+        self._client = bigtable.Client(
+            project=project_id, credentials=cli.load_credentials(credentials_path), admin=False,
+        )
         self._table  = self._client.instance(instance_id).table(table_id)
 
     # ── Public API ─────────────────────────────────────────────────────────────

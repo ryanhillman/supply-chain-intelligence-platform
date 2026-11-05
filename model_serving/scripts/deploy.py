@@ -72,14 +72,11 @@ import logging
 import os
 import sys
 
+from model_serving import cli
 from model_serving.serving.deploy_endpoint import EndpointDeployer
 from model_serving.registry.promote_model  import ModelPromoter
 from model_serving.serving.smoke_test      import SmokeTest
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-)
 logger = logging.getLogger("deploy")
 
 
@@ -91,26 +88,10 @@ def parse_args() -> argparse.Namespace:
 
     # ── Common flags ───────────────────────────────────────────────────────────
     def _add_common(sp) -> None:
-        sp.add_argument(
-            "--project",
-            default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
-        )
-        sp.add_argument(
-            "--region",
-            default=os.environ.get("GCP_REGION", "us-central1"),
-        )
-        sp.add_argument(
-            "--endpoint",
-            default=os.environ.get("VERTEX_AI_ENDPOINT_RESOURCE_NAME", ""),
-            help=(
-                "Full Vertex AI endpoint resource name. "
-                "Use the 'vertex_ai_endpoint_resource_name' Terraform output."
-            ),
-        )
-        sp.add_argument(
-            "--sa-key",
-            default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        )
+        cli.add_project_arg(sp)
+        cli.add_region_arg(sp)
+        cli.add_endpoint_arg(sp)
+        cli.add_sa_key_arg(sp)
 
     # ── deploy subcommand ─────────────────────────────────────────────────────
     deploy_p = sub.add_parser("deploy", help="Deploy model to the Vertex AI endpoint")
@@ -161,11 +142,7 @@ def parse_args() -> argparse.Namespace:
     # ── smoke-test subcommand ─────────────────────────────────────────────────
     smoke_p = sub.add_parser("smoke-test", help="Smoke-test the deployed endpoint")
     _add_common(smoke_p)
-    smoke_p.add_argument(
-        "--bigtable-instance",
-        default=os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store"),
-        help="Bigtable instance ID (default: scip-feature-store)",
-    )
+    cli.add_bigtable_args(smoke_p)
     smoke_p.add_argument(
         "--n-samples",
         type=int,
@@ -208,19 +185,13 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _require(args: argparse.Namespace, flag: str, env: str) -> None:
-    val = getattr(args, flag.replace("-", "_"), None)
-    if not val:
-        logger.error("Missing required flag --%s or env var %s", flag, env)
-        sys.exit(1)
-
-
 def main() -> None:
     args = parse_args()
+    cli.setup_logging()
 
     # Validate required args.
-    _require(args, "project", "GCP_PROJECT_ID")
-    _require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
+    cli.require(args, "project", "GCP_PROJECT_ID")
+    cli.require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     if args.command == "deploy":
         if not getattr(args, "service_account", None):
@@ -271,6 +242,7 @@ def main() -> None:
         passed = smoke.run(
             instance_id = args.bigtable_instance,
             n_samples   = args.n_samples,
+            table_id    = args.bigtable_table,
         )
         sys.exit(0 if passed else 1)
 

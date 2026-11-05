@@ -23,9 +23,9 @@ Usage
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
+from model_serving import cli
 from model_serving.pipeline.feature_client import FeatureClient
 
 # Matches show_predictions.py's threshold so an entity doesn't flip between
@@ -41,21 +41,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="SCIP feature sample dashboard — shows raw feature data + predictions"
     )
-    p.add_argument(
-        "--project",
-        default=os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")),
-        help="GCP project ID (GCP_PROJECT_ID env var)",
-    )
-    p.add_argument("--bigtable-instance", default="scip-feature-store")
-    p.add_argument("--bigtable-table",    default="inventory_features")
-    p.add_argument(
-        "--sa-key",
-        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-        help=(
-            "Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var). "
-            "Omit for application default credentials."
-        ),
-    )
+    cli.add_project_arg(p)
+    cli.add_bigtable_args(p)
+    cli.add_sa_key_arg(p)
     p.add_argument(
         "--n",
         type=int,
@@ -278,9 +266,7 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
 
 def main() -> None:
     args = parse_args()
-    if not args.project:
-        print("ERROR: --project is required (or set GCP_PROJECT_ID)", file=sys.stderr)
-        sys.exit(1)
+    cli.require(args, "project", "GCP_PROJECT_ID")
 
     records = read_all_rows(
         project     = args.project,
