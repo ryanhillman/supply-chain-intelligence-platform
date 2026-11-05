@@ -1,7 +1,7 @@
 """
-Metric computation for the Phase 4 baseline comparison framework.
+Metric computation for the baseline comparison.
 
-Phase 4 success criterion: PyTorch model outperforms the closed-form baseline
+Success criterion: the PyTorch model outperforms the closed-form baseline
   stockout_risk_score = P(stockout ≤ 7d) under a Normal approximation
                       = Φ((7 − μ) / σ),  μ = qty / avg_7d,  σ = qty·std_7d / avg_7d²
 on held-out test data across all three metrics:

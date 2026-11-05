@@ -252,7 +252,7 @@ class DriftMonitor:
         read_predictions:
             If True, read shortage_prob_7d from the Bigtable predictions
             column family to compute variance stats.
-            Set False if Phase 5.4 scoring has not been run yet.
+            Set False if scoring has not been run yet.
         report_path:
             If provided, save the DriftReport as JSON to this path.
         emit_cloud_monitoring:

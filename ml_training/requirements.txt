@@ -19,6 +19,6 @@ scikit-learn>=1.4.0
 # onnx_export.py uses to pin the TorchScript exporter.
 torch>=2.5.0,<3
 
-# ── ONNX (Phase 5 Vertex AI serving readiness) ────────────────────────────────
+# ── ONNX (export for Vertex AI serving) ────────────────────────────────
 onnx>=1.15.0
 onnxruntime>=1.17.0

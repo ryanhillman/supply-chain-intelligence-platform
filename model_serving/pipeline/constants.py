@@ -1,4 +1,5 @@
-"""Shared constants for Phase 5 pipeline components."""
+"""The variance-collapse threshold and its check, shared by the scorer, the drift
+monitor and the risk dashboard."""
 
 # A std of shortage_prob_7d below this value indicates
 # the model has lost discriminative power and retraining is required.

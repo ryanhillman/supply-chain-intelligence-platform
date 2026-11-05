@@ -6,8 +6,8 @@ buffers (train-split mean/scale) and the final sigmoid are exported inside the
 graph, so the ONNX model takes raw feature units and outputs shortage_prob_7d.
 Validates the exported graph with onnxruntime before reporting success.
 
-Phase 5 will consume model.onnx from GCS to register with Vertex AI
-Model Registry and deploy to a Vertex AI Endpoint.
+model_serving/scripts/register.py uploads model.onnx to GCS and registers it
+with Vertex AI Model Registry.
 """
 from __future__ import annotations
 

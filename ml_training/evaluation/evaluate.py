@@ -137,7 +137,7 @@ def run_evaluation(
 def _print_report(report: dict) -> None:
     sep = "=" * 60
     print(f"\n{sep}")
-    print(f"  Phase 4 Evaluation — {report['split'].upper()} split")
+    print(f"  Evaluation — {report['split'].upper()} split")
     print(sep)
     print(f"  Examples : {report['n_examples']}")
     print(f"  Pos rate : {report['positive_rate']:.3f}")
@@ -156,7 +156,7 @@ def _print_report(report: dict) -> None:
         )
     print()
     status = "PASSED" if report["outperforms_baseline"] else "FAILED"
-    print(f"  Phase 4 success criterion: {status}")
+    print(f"  Success criterion: {status}")
     print("  (Model outperforms the Normal-approx formula on all three metrics;")
     print("   Rule = days_of_supply < 7 is shown for context and is not the bar)")
 

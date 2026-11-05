@@ -174,7 +174,7 @@ class BatchScorer:
         t_start = time.perf_counter()
 
         # Step 1: read all feature rows from Bigtable.
-        logger.info("=== Phase 5.4 Batch Scoring — start ===")
+        logger.info("=== Batch scoring — start ===")
         feature_rows = self._feature_client.scan_all()
         stats.rows_scanned = len(feature_rows)
         logger.info("rows_scanned=%d", stats.rows_scanned)

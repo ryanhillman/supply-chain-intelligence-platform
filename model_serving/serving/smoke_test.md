@@ -1,4 +1,4 @@
-# Phase 5.2 — Serving Container Smoke Test
+# Serving Container Smoke Test
 
 Two methods: **uvicorn** (no Docker required) and **Docker** (requires Docker build).
 Run the uvicorn method first to verify the Python code before building the image.
@@ -7,7 +7,7 @@ Run the uvicorn method first to verify the Python code before building the image
 
 ## Prerequisites
 
-1. The Phase 4 training artifacts exist at `ml_training/artifacts/`:
+1. The training artifacts exist at `ml_training/artifacts/`:
    - `model.onnx`
    - `feature_metadata.json`
 
@@ -114,7 +114,7 @@ curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:8080/predict \
 
 ## Method 2 — Docker (requires Docker build)
 
-Run after Method 1 passes. Do not build until Phase 5.2 is approved.
+Run after Method 1 passes.
 
 ```bash
 # Build (from model_serving/serving/container/)
