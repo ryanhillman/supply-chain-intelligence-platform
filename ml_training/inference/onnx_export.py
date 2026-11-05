@@ -97,8 +97,8 @@ def export_to_onnx(
     output_path   = Path(output_path) if output_path else artifacts_dir / "model.onnx"
 
     metadata = _load_json(artifacts_dir / "feature_metadata.json")
-    ckpt   = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=False)
-    config = ckpt.get("config", TrainingConfig())
+    ckpt   = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=True)
+    config = TrainingConfig(**ckpt["config"])
 
     model = ShortagePredictor.from_metadata(metadata, config)
     model.load_state_dict(ckpt["model_state"])

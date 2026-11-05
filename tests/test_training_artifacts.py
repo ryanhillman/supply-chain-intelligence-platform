@@ -1,6 +1,7 @@
 """
 The artifacts the trainer writes and the export reads back: model.pt is
-trained on a small random dataset, then exported to ONNX.
+trained on a small random dataset, loaded with weights_only=True, then
+exported to ONNX.
 """
 import json
 
@@ -8,6 +9,7 @@ import numpy as np
 import onnxruntime as ort
 import pandas as pd
 import pytest
+import torch
 
 from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS, TARGET_COL
 from ml_training.inference.onnx_export import export_to_onnx
@@ -52,3 +54,8 @@ def test_export_writes_a_graph_that_outputs_shortage_prob_7d(artifacts):
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     assert [out.name for out in session.get_outputs()] == ["shortage_prob_7d"]
+
+
+def test_checkpoint_loads_with_weights_only(artifacts):
+    checkpoint = torch.load(artifacts / "model.pt", map_location="cpu", weights_only=True)
+    assert TrainingConfig(**checkpoint["config"]) == _CONFIG
