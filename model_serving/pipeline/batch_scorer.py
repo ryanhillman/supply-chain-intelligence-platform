@@ -213,8 +213,9 @@ class BatchScorer:
         # Step 2: apply defaults, engineer features, scale, vocab-map.
         requests = self._request_builder.build(feature_rows)
         stats.rows_scored = len(requests)
+        # feature_rows holds only the fresh rows here, so stale rows are not counted.
         logger.info("rows_scored=%d  (skipped=%d vocab-unknown)",
-                    stats.rows_scored, stats.rows_scanned - stats.rows_scored)
+                    stats.rows_scored, len(feature_rows) - stats.rows_scored)
 
         if not requests:
             logger.warning("No valid scoring requests — aborting")
