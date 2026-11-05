@@ -4,7 +4,6 @@ PySpark schema for the Silver feature layer.
 Defines:
   SILVER_FEATURE_SCHEMA — StructType for Silver Parquet output.
   SILVER_PARTITION_COLS — partition columns for the Silver write.
-  SILVER_DEDUP_COLS     — dedup key for the Silver write.
 
 The Bigtable mutation path (spark/utils/bigtable_writer.py) writes directly
 from the Silver DataFrame's columns via feature_registry.FEATURE_REGISTRY
@@ -124,10 +123,6 @@ Full schema for Silver Parquet output.
 
 # Columns used as partition keys when writing Silver Parquet.
 SILVER_PARTITION_COLS: list[str] = ["warehouse_id", "year", "month", "day"]
-
-# Columns that uniquely identify a feature snapshot row.
-# Used for deduplication via dropDuplicates() before Silver write.
-SILVER_DEDUP_COLS: list[str] = ["warehouse_id", "sku_id", "window_end"]
 
 
 def conform_to_silver_schema(df: DataFrame) -> DataFrame:

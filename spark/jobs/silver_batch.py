@@ -42,7 +42,6 @@ from config.bronze_config import (
 )
 from config.feature_config import PIPELINE_VERSION, ROW_KEY_SEPARATOR
 from jobs.schemas.feature_schema import (
-    SILVER_DEDUP_COLS,
     SILVER_PARTITION_COLS,
     conform_to_silver_schema,
 )
@@ -99,10 +98,9 @@ def add_row_key_and_partitions(df: DataFrame, as_of: date) -> DataFrame:
 
 def write_silver(feature_df: DataFrame) -> int:
     """Write the snapshot to Silver Parquet, replacing the as-of date's partitions."""
-    deduped = feature_df.dropDuplicates(SILVER_DEDUP_COLS)
-    row_count = deduped.count()
+    row_count = feature_df.count()
     if row_count:
-        deduped.write.mode("overwrite").partitionBy(*SILVER_PARTITION_COLS).parquet(SILVER_BASE_PATH)
+        feature_df.write.mode("overwrite").partitionBy(*SILVER_PARTITION_COLS).parquet(SILVER_BASE_PATH)
     logger.info("write_silver | rows=%d path=%s", row_count, SILVER_BASE_PATH)
     return row_count
 
