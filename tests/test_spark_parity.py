@@ -25,12 +25,11 @@ pytestmark = pytest.mark.slow
 
 from pyspark.sql import SparkSession  # noqa: E402
 
-from feature_registry import FEATURE_REGISTRY  # noqa: E402
+from feature_registry import FEATURE_REGISTRY, RAW_FEATURE_COLS  # noqa: E402
 from jobs.bronze_ingestion import TOPIC_SCHEMA_MAP, prepare_bronze_df  # noqa: E402
 from jobs.silver_features import _risk, compute_features  # noqa: E402
 from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler  # noqa: E402
 from ml_training.datasets.feature_engineer import engineer_features, fill_defaults  # noqa: E402
-from model_serving.pipeline.request_builder import _RAW_FEATURES  # noqa: E402
 from world_fixture import (  # noqa: E402
     BRONZE_PARTITIONS,
     DAYS,
@@ -83,7 +82,7 @@ def test_silver_matches_the_sampler_on_every_raw_feature(spark, bronze):
         actual = _silver_raw_features(spark, bronze, as_of)
 
         assert list(actual.index) == list(expected.index), as_of
-        for col in _RAW_FEATURES:
+        for col in RAW_FEATURE_COLS:
             np.testing.assert_allclose(
                 actual[col].astype(float).to_numpy(), expected[col].astype(float).to_numpy(),
                 rtol=1e-9, atol=1e-9, err_msg=f"{col} on {as_of}",
@@ -100,7 +99,7 @@ def test_silver_days_of_supply_is_the_models_formula(spark):
     )).orderBy("i").collect()
 
     raw = pd.DataFrame(cases, columns=["current_qty", "avg_daily_sales_7d"])
-    model = engineer_features(raw.reindex(columns=list(_RAW_FEATURES)))["days_of_supply"].tolist()
+    model = engineer_features(raw.reindex(columns=list(RAW_FEATURE_COLS)))["days_of_supply"].tolist()
 
     assert [r["inventory__days_of_supply"] for r in silver] == model == [5.0, 0.0, 365.0, 365.0, 365.0]
     assert [r["risk__reorder_urgency"] for r in silver] == [2, 3, 0, 0, 0]

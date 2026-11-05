@@ -26,7 +26,7 @@ _SPARK_DIR = str(Path(__file__).parents[1] / "spark")   # for Spark's Python wor
 
 from pyspark.sql import SparkSession  # noqa: E402
 
-from feature_registry import FEATURE_REGISTRY  # noqa: E402
+from feature_registry import FEATURE_REGISTRY, RAW_FEATURE_COLS  # noqa: E402
 from jobs import silver_batch  # noqa: E402
 from jobs.bronze_ingestion import TOPIC_SCHEMA_MAP, prepare_bronze_df  # noqa: E402
 from jobs.schemas.feature_schema import conform_to_silver_schema  # noqa: E402
@@ -34,7 +34,6 @@ from jobs.silver_features import compute_features  # noqa: E402
 from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler  # noqa: E402
 from ml_training.datasets.feature_engineer import fill_defaults  # noqa: E402
 from model_serving.pipeline.feature_client import FeatureClient  # noqa: E402
-from model_serving.pipeline.request_builder import _RAW_FEATURES  # noqa: E402
 from utils.bigtable_writer import write_to_bigtable  # noqa: E402
 from world_fixture import (  # noqa: E402
     BRONZE_PARTITIONS,
@@ -121,13 +120,13 @@ def test_scorer_reads_the_second_days_values_after_two_silver_runs(spark, bronze
     read_back = FeatureClient(project_id=_PROJECT, instance_id=_INSTANCE, table_id=_TABLE).scan_all()
     actual = pd.DataFrame([
         {"warehouse_id": r.warehouse_id, "sku_id": r.sku_id, **r.features} for r in read_back
-    ]).reindex(columns=["warehouse_id", "sku_id", *_RAW_FEATURES])
+    ]).reindex(columns=["warehouse_id", "sku_id", *RAW_FEATURE_COLS])
     fill_defaults(actual)      # what RequestBuilder does with absent cells
     actual = actual.set_index(["warehouse_id", "sku_id"]).sort_index()
 
     expected = rows[rows.sample_date == second].set_index(["warehouse_id", "sku_id"]).sort_index()
     assert list(actual.index) == list(expected.index)
-    for col in _RAW_FEATURES:
+    for col in RAW_FEATURE_COLS:
         np.testing.assert_allclose(
             actual[col].astype(float).to_numpy(), expected[col].astype(float).to_numpy(),
             rtol=1e-9, atol=1e-9, err_msg=f"{col} after Silver runs for {first} and {second}",

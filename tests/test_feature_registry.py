@@ -5,6 +5,9 @@ the training code share.
 """
 import struct
 
+import numpy as np
+import pandas as pd
+
 from feature_registry import (
     FEATURE_REGISTRY,
     RAW_FEATURE_CELLS,
@@ -14,6 +17,7 @@ from feature_registry import (
     decode_double,
     encode_cell,
 )
+from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS, fill_defaults
 
 _COLUMNS = {f"{family}__{feature}" for family, features in FEATURE_REGISTRY.items() for feature in features}
 
@@ -48,3 +52,10 @@ def test_decode_accepts_a_utf8_number_and_rejects_anything_else():
     assert decode_double(b"0.25") == 0.25
     assert decode_double(b"SALE") is None
     assert decode_double(b"\xff\xfe") is None
+
+
+def test_training_reads_the_same_inputs_and_has_a_default_for_each():
+    assert NUMERIC_FEATURE_COLS[:len(RAW_FEATURE_COLS)] == list(RAW_FEATURE_COLS)
+    df = pd.DataFrame({col: [np.nan] for col in RAW_FEATURE_COLS})
+    fill_defaults(df)
+    assert not df.isna().any().any()

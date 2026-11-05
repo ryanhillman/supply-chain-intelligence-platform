@@ -75,6 +75,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from feature_registry import RAW_FEATURE_COLS
 from ml_training.evaluation.drift_reference import (
     MONITORED_FEATURES as _MONITORED_FEATURES,
     WAREHOUSE_RANGE_FEATURES as _WAREHOUSE_RANGE_FEATURES,
@@ -364,8 +365,6 @@ class DriftMonitor:
         RequestBuilder.build(), so the monitor sees exactly what the scorer
         scores. One row per (warehouse_id, sku_id).
         """
-        from model_serving.pipeline.request_builder import _RAW_FEATURES
-
         feature_rows = self._feature_client.scan_all()
         if not feature_rows:
             logger.warning("No feature rows returned from Bigtable")
@@ -373,7 +372,7 @@ class DriftMonitor:
 
         records = []
         for fr in feature_rows:
-            row = {col: fr.features.get(col, np.nan) for col in _RAW_FEATURES}
+            row = {col: fr.features.get(col, np.nan) for col in RAW_FEATURE_COLS}
             row["warehouse_id"] = fr.warehouse_id
             row["sku_id"]       = fr.sku_id
             records.append(row)
