@@ -208,7 +208,7 @@ class FeatureClient:
 
                     if decoded is None:
                         logger.warning(
-                            "Cannot decode cell (%s, %s) with %d bytes as double or UTF-8 — skipping",
+                            "Cell (%s, %s) has %d bytes, not an 8-byte double — skipping",
                             cf_name, col_qualifier, len(cell_value),
                         )
                     else:

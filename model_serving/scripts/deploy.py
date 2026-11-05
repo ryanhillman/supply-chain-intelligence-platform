@@ -163,8 +163,8 @@ def parse_args() -> argparse.Namespace:
     _add_common(smoke_p)
     smoke_p.add_argument(
         "--bigtable-instance",
-        default=os.environ.get("BIGTABLE_INSTANCE_ID", ""),
-        help="Bigtable instance ID (e.g. scip-feature-store). Optional; uses synthetic data if omitted.",
+        default=os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store"),
+        help="Bigtable instance ID (default: scip-feature-store)",
     )
     smoke_p.add_argument(
         "--n-samples",
@@ -269,8 +269,8 @@ def main() -> None:
             credentials_path       = args.sa_key,
         )
         passed = smoke.run(
+            instance_id = args.bigtable_instance,
             n_samples   = args.n_samples,
-            instance_id = args.bigtable_instance or None,
         )
         sys.exit(0 if passed else 1)
 

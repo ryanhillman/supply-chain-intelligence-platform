@@ -26,7 +26,6 @@ from ml_training.datasets.feature_engineer import (
 from ml_training.evaluation.drift_reference import build_drift_reference, write_drift_reference
 from ml_training.evaluation.metrics import compute_metrics
 from ml_training.training.config import TrainingConfig
-from ml_training.training.loss import build_loss
 from ml_training.training.model import ShortagePredictor
 
 logger = logging.getLogger(__name__)
@@ -137,12 +136,15 @@ class Trainer:
 
         model = ShortagePredictor.from_metadata(metadata, self.config)
 
-        pos_weight = float(metadata.get("pos_weight", 1.0))
-        criterion  = build_loss(self.config, pos_weight)
+        criterion  = nn.BCEWithLogitsLoss()
         optimizer  = torch.optim.AdamW(
             model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay
         )
-        scheduler  = _build_scheduler(optimizer, self.config)
+        # One cosine period over the whole epoch budget by default. A shorter
+        # T_max restarts the schedule, cycling the LR back up to its initial value.
+        scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.config.T_max or self.config.max_epochs, eta_min=1e-6,
+        )
 
         history    = TrainingHistory()
         best_path  = self.output_dir / "model_best.pt"
@@ -152,10 +154,7 @@ class Trainer:
             train_metrics = self._train_epoch(model, criterion, optimizer, train_loader)
             val_metrics   = self._eval_epoch(model,  criterion, val_loader)
 
-            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(val_metrics["auprc"])
-            else:
-                scheduler.step()
+            scheduler.step()
 
             history.train_loss.append(train_metrics["loss"])
             history.val_loss.append(val_metrics["loss"])
@@ -287,23 +286,6 @@ def _seed_everything(seed: int) -> None:
 def _load_metadata(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
-
-
-def _build_scheduler(
-    optimizer: torch.optim.Optimizer,
-    config:    TrainingConfig,
-) -> torch.optim.lr_scheduler.LRScheduler:
-    if config.scheduler == "plateau":
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="max", factor=config.lr_factor,
-            patience=config.lr_patience,
-        )
-    # One cosine period over the whole epoch budget. A shorter T_max (the old
-    # default of 20 against max_epochs=100) restarts the schedule every T_max
-    # epochs, cycling the LR back up to its initial value.
-    return torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config.T_max or config.max_epochs, eta_min=1e-6,
-    )
 
 
 def _save_training_metrics(history: TrainingHistory, path: Path) -> None:

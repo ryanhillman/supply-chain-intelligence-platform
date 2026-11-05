@@ -9,7 +9,6 @@ Run the uvicorn method first to verify the Python code before building the image
 
 1. The Phase 4 training artifacts exist at `ml_training/artifacts/`:
    - `model.onnx`
-   - `model.onnx.data`
    - `feature_metadata.json`
 
 2. These artifacts have been uploaded to GCS by `model_serving/scripts/register.py`.
@@ -49,7 +48,6 @@ Expected startup log:
 ```
 INFO  scip.serving — Container startup — loading ONNX model
 INFO  predictor   — Downloaded gs://.../model.onnx -> /tmp/model/model.onnx (...)
-INFO  predictor   — Downloaded gs://.../model.onnx.data -> /tmp/model/model.onnx.data (...)
 INFO  predictor   — ONNXPredictor ready | version=v20260620_180918 | inputs=[...]
 INFO  scip.serving — Container ready
 INFO  uvicorn     — Application startup complete.

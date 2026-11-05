@@ -21,23 +21,10 @@ class TrainingConfig:
     max_epochs:   int   = 100
     patience:     int   = 10     # early-stopping patience on val AUPRC
 
-    # ── Loss ──────────────────────────────────────────────────────────────────
-    # "bce"          — BCEWithLogitsLoss, unweighted (default)
-    # "weighted_bce" — BCEWithLogitsLoss(pos_weight=n_neg/n_pos)
-    # Unweighted is the default: on the replayed world's validation split (mean
-    # of seeds 42-46), pos_weight moved AUPRC 0.869 → 0.868 and Brier 0.073 → 0.088.
-    # The weight inflates every predicted probability, which hurts calibration
-    # without improving ranking.
-    loss_type:         str   = "bce"
-
     # ── LR scheduler ─────────────────────────────────────────────────────────
-    # "cosine"  — CosineAnnealingLR over T_max epochs; None means max_epochs,
-    #             i.e. one anneal from lr down to 1e-6 across the whole run
-    # "plateau" — ReduceLROnPlateau monitoring val AUPRC
-    scheduler:   str        = "cosine"
+    # CosineAnnealingLR over T_max epochs; None means max_epochs, i.e. one
+    # anneal from lr down to 1e-6 across the whole run.
     T_max:       int | None = None
-    lr_factor:   float      = 0.5
-    lr_patience: int        = 5
 
     # ── Paths ─────────────────────────────────────────────────────────────────
     dataset_dir: str = "ml_training/artifacts/dataset"

@@ -197,7 +197,7 @@ def _supplier(supplier_90d: DataFrame, po_90d: DataFrame, shipments_30d: DataFra
     )
     received = po_90d.filter(F.col("event_type") == "RECEIVED").select("order_id")
     active_po = (
-        po_90d.filter(F.col("event_type").isin("CREATED", "SUBMITTED"))
+        po_90d.filter(F.col("event_type") == "CREATED")
         .dropDuplicates(["order_id"])
         .join(received, "order_id", "left_anti")
         .groupBy(*PAIR).agg(F.sum("quantity_ordered").cast("double").alias("supplier__active_po_qty"))
@@ -224,8 +224,6 @@ def _risk(df: DataFrame) -> DataFrame:
     days_of_supply is the formula the model's input uses
     (ml_training/datasets/feature_engineer.py): with no sales it is the cap
     for an entity in stock and 0 for one that is out.
-    stockout_risk_score and shortage_prob_7d stay null in Silver: predictions
-    are stored in Bigtable, never written back here.
     """
     # greatest() skips a null average (a pair with no sales in 30 days).
     dos = F.least(
@@ -241,22 +239,13 @@ def _risk(df: DataFrame) -> DataFrame:
             .when(F.col("inventory__days_of_supply") <= REORDER_CRITICAL_DAYS, F.lit(2))
             .when(F.col("inventory__days_of_supply") <= REORDER_WATCH_DAYS, F.lit(1))
             .otherwise(F.lit(0)))
-        .withColumn("risk__stockout_risk_score", F.lit(None).cast("double"))
-        .withColumn("risk__shortage_prob_7d", F.lit(None).cast("double"))
-        # Reserved demand-forecast columns, not populated by any stage
-        .withColumn("demand__demand_forecast_7d", F.lit(None).cast("double"))
-        .withColumn("demand__demand_forecast_30d", F.lit(None).cast("double"))
-        .withColumn("demand__demand_multiplier", F.lit(None).cast("double"))
     )
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-def compute_features(spark: SparkSession, bronze_base: str, as_of: date) -> tuple[DataFrame, int]:
-    """
-    Feature rows for every pair with inventory events in the 30 days up to
-    `as_of`, plus the number of inventory events read (for lineage).
-    """
+def compute_features(spark: SparkSession, bronze_base: str, as_of: date) -> DataFrame:
+    """Feature rows for every pair with inventory events in the 30 days up to `as_of`."""
     inventory_30d = read_bronze(spark, bronze_base, "inventory.events", INVENTORY_EVENT_SCHEMA, as_of, 29)
     pairs = inventory_30d.select(*PAIR).distinct()
 
@@ -273,4 +262,4 @@ def compute_features(spark: SparkSession, bronze_base: str, as_of: date) -> tupl
         .join(_supplier(supplier_90d, po_90d.join(pairs, PAIR, "inner"),
                         shipments_30d.join(pairs, PAIR, "inner"), pairs), PAIR, "left")
     )
-    return _risk(features), inventory_30d.count()
+    return _risk(features)

@@ -26,12 +26,10 @@ Columns:
 GC policy (configured in infrastructure/gcp/main.tf):
   max_version { number = 3 }  — retains current + 2 prior rounds for rollback.
 
-Modes
------
-- Batch mode (default): pull until the subscription is empty, then exit.
-  Use for Cloud Run jobs: the job finishes naturally after scoring is done.
-- Streaming mode (--streaming): run indefinitely using the Pub/Sub streaming pull.
-  Use for a long-lived Cloud Run service or GKE workload.
+Mode
+----
+Pull until the subscription is empty, then exit. Suits a Cloud Run job: it
+finishes naturally after scoring is done.
 
 Error handling
 --------------
@@ -60,9 +58,6 @@ CLI usage
         --subscription prediction-writer \\
         --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json
 
-    # Long-lived daemon (Cloud Run service / GKE) instead of drain-and-exit:
-    python model_serving/pipeline/prediction_writer.py --streaming ...
-
 Environment variables (alternatives to CLI flags):
     GCP_PROJECT_ID          -- --project
     BIGTABLE_INSTANCE_ID    -- --bigtable-instance
@@ -84,7 +79,6 @@ logger = logging.getLogger(__name__)
 
 _PREDICTIONS_FAMILY    = "predictions"
 _PULL_TIMEOUT_SECONDS  = 30
-_STREAMING_FLOW_CONTROL_MAX_MESSAGES = 200
 _DEFAULT_MAX_MESSAGES  = 100
 _BIGTABLE_MAX_RETRIES        = 3
 _BIGTABLE_RETRY_BASE_SECONDS = 2
@@ -273,66 +267,7 @@ class PredictionWriter:
             )
 
         stats.elapsed_seconds = time.perf_counter() - t_start
-        self._log_summary(stats)
         return stats
-
-    def run_streaming(self, shutdown_event=None) -> None:
-        """
-        Pull messages indefinitely using Pub/Sub streaming pull.
-
-        Runs until shutdown_event is set (threading.Event) or KeyboardInterrupt.
-        Use for long-running daemon processes (Cloud Run service, GKE).
-
-        Parameters
-        ----------
-        shutdown_event:
-            Optional threading.Event. The streaming pull stops when it is set.
-        """
-        from google.cloud.pubsub_v1.types import FlowControl
-
-        flow_control = FlowControl(
-            max_messages=_STREAMING_FLOW_CONTROL_MAX_MESSAGES
-        )
-
-        def callback(message):
-            parsed = self._parse_single_message(message.ack_id, message.data)
-            if parsed is None:
-                message.nack()
-                return
-
-            success = self._write_single_to_bigtable(parsed)
-            if success:
-                message.ack()
-                logger.debug(
-                    "Wrote %s  prob=%.4f  score=%.4f",
-                    parsed.row_key,
-                    parsed.shortage_prob_7d,
-                    parsed.stockout_risk_score,
-                )
-            else:
-                message.nack()
-                logger.warning(
-                    "Bigtable write failed for %s — nacking (will redeliver)",
-                    parsed.row_key,
-                )
-
-        streaming_pull_future = self._subscriber.subscribe(
-            self._subscription_path,
-            callback=callback,
-            flow_control=flow_control,
-        )
-        logger.info("Streaming pull active on %s", self._subscription_path)
-
-        try:
-            if shutdown_event is not None:
-                while not shutdown_event.is_set():
-                    time.sleep(1.0)
-                streaming_pull_future.cancel()
-            else:
-                streaming_pull_future.result()  # blocks until exception
-        except KeyboardInterrupt:
-            streaming_pull_future.cancel()
-            logger.info("Streaming pull stopped by KeyboardInterrupt")
 
     def close(self) -> None:
         self._bigtable_client.close()
@@ -380,11 +315,6 @@ class PredictionWriter:
                     attempt + 1, _BIGTABLE_MAX_RETRIES, exc, wait,
                 )
                 time.sleep(wait)
-        else:
-            # Reached only if _BIGTABLE_MAX_RETRIES == 0 (range(0) never executes
-            # the loop body) — same safety net _write_single_to_bigtable()
-            # has for the same edge case.
-            return 0, len(parsed), []
 
         # mutate_rows() returns a list of statuses positionally aligned with
         # `rows` — one entry per input row, in order. There is no .index field
@@ -412,20 +342,6 @@ class PredictionWriter:
                 )
 
         return n_written, n_failed, successful_ack_ids
-
-    def _write_single_to_bigtable(self, parsed: _ParsedMessage) -> bool:
-        """Write a single prediction row (used in streaming mode)."""
-        row = self._build_mutation(parsed)
-        for attempt in range(_BIGTABLE_MAX_RETRIES):
-            try:
-                failed = self._table.mutate_rows([row])
-                return not any(s.code != 0 for s in failed)
-            except Exception as exc:
-                if attempt == _BIGTABLE_MAX_RETRIES - 1:
-                    logger.error("Single mutate_rows failed: %s", exc)
-                    return False
-                time.sleep(_BIGTABLE_RETRY_BASE_SECONDS ** attempt)
-        return False  # safety net: reached only if _BIGTABLE_MAX_RETRIES == 0
 
     def _build_mutation(self, p: _ParsedMessage):
         """Build a Bigtable DirectRow mutation for the predictions column family."""
@@ -510,25 +426,6 @@ class PredictionWriter:
 
     # ── Logging ────────────────────────────────────────────────────────────────
 
-    def _log_summary(self, stats: WriterStats) -> None:
-        logger.info(
-            "=== Prediction Writer Summary ===\n"
-            "  batches_processed     : %d\n"
-            "  messages_pulled       : %d\n"
-            "  bigtable_rows_written : %d\n"
-            "  bigtable_rows_failed  : %d\n"
-            "  messages_acknowledged : %d\n"
-            "  messages_nacked       : %d\n"
-            "  elapsed               : %.1f s",
-            stats.batches_processed,
-            stats.messages_pulled,
-            stats.bigtable_rows_written,
-            stats.bigtable_rows_failed,
-            stats.messages_acknowledged,
-            stats.messages_nacked,
-            stats.elapsed_seconds,
-        )
-
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -565,15 +462,10 @@ def parse_args() -> argparse.Namespace:
         help="Service account key for the writer (scip-prediction-writer-sa.json)",
     )
     p.add_argument(
-        "--streaming",
-        action="store_true",
-        help="Run indefinitely via Pub/Sub streaming pull instead of draining once and exiting.",
-    )
-    p.add_argument(
         "--max-messages",
         type=int,
         default=_DEFAULT_MAX_MESSAGES,
-        help=f"Max messages per Pub/Sub pull call in batch mode (default: {_DEFAULT_MAX_MESSAGES})",
+        help=f"Max messages per Pub/Sub pull call (default: {_DEFAULT_MAX_MESSAGES})",
     )
     p.add_argument(
         "--verbose",
@@ -601,11 +493,9 @@ def main() -> None:
         "Prediction writer starting:\n"
         "  project          : %s\n"
         "  subscription     : %s\n"
-        "  bigtable         : %s / %s\n"
-        "  mode             : %s",
+        "  bigtable         : %s / %s",
         args.project, args.subscription,
         args.bigtable_instance, args.bigtable_table,
-        "streaming" if args.streaming else "batch (drain and exit)",
     )
 
     with PredictionWriter(
@@ -615,10 +505,6 @@ def main() -> None:
         table_id         = args.bigtable_table,
         credentials_path = args.sa_key,
     ) as writer:
-        if args.streaming:
-            writer.run_streaming()
-            return
-
         stats = writer.run_batch(max_messages=args.max_messages)
 
     print("\n" + "=" * 68)

@@ -419,7 +419,7 @@ class BronzeTemporalSampler:
         orders created in the last 90 days whose RECEIVED event has not
         happened by the end of the date (matched by order_id).
         """
-        opened = (po[po["event_type"].isin(["CREATED", "SUBMITTED"])]
+        opened = (po[po["event_type"] == "CREATED"]
                   .drop_duplicates("order_id")[["warehouse_id", "sku_id", "order_id", "quantity_ordered", "ts"]])
         closed = po[po["event_type"] == "RECEIVED"].groupby("order_id")["ts"].min().rename("closed_ts")
         orders = opened.join(closed, on="order_id").rename(columns={"quantity_ordered": "qty"})

@@ -54,12 +54,6 @@ def parse_args() -> argparse.Namespace:
         default="ml_training/artifacts/dataset",
         help="Local output directory for Parquet splits and metadata",
     )
-    p.add_argument(
-        "--horizon",
-        type=int,
-        default=7,
-        help="Stockout prediction horizon in days (default: 7)",
-    )
     return p.parse_args()
 
 
@@ -71,13 +65,12 @@ def main() -> None:
 
     logger.info("Bronze bucket : %s (SA key: %s)", args.bucket,
                 args.sa_key or "Application Default Credentials")
-    logger.info("Output : %s | horizon : %d days", args.output_dir, args.horizon)
+    logger.info("Output : %s", args.output_dir)
 
     manifest = DatasetBuilder(
         bucket           = args.bucket,
         credentials_path = args.sa_key,
         output_dir       = args.output_dir,
-        horizon_days     = args.horizon,
     ).build()
 
     print("\n" + "=" * 60)

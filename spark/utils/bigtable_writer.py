@@ -155,7 +155,6 @@ def write_to_bigtable(
     project_id: str,
     instance_id: str,
     table_id: str,
-    epoch_id: int,
 ) -> None:
     """
     Write a Silver feature DataFrame to Bigtable.
@@ -167,20 +166,19 @@ def write_to_bigtable(
         project_id:  GCP project ID.
         instance_id: Bigtable instance ID (e.g. "scip-feature-store").
         table_id:    Bigtable table ID (e.g. "inventory_features").
-        epoch_id:    Writer's epoch id (logged for observability).
 
     The DataFrame must contain:
       - row_key  (string): pre-computed as "{warehouse_id}#{sku_id}"
       - All feature columns named {family}__{attr} per FEATURE_REGISTRY
     """
     if df.rdd.isEmpty():
-        logger.debug("write_to_bigtable: empty DataFrame for epoch=%d — skipping", epoch_id)
+        logger.debug("write_to_bigtable: empty DataFrame — skipping")
         return
 
     row_count = df.count()
     logger.info(
-        "write_to_bigtable | epoch=%d rows=%d instance=%s table=%s",
-        epoch_id, row_count, instance_id, table_id,
+        "write_to_bigtable | rows=%d instance=%s table=%s",
+        row_count, instance_id, table_id,
     )
 
     df.foreachPartition(

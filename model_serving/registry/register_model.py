@@ -5,7 +5,6 @@ registers the model in Vertex AI Model Registry.
 GCS layout after registration:
   gs://{bucket}/models/shortage-predictor/{version}/
     model.onnx            — ONNX model graph (required by serving container)
-    model.onnx.data       — ONNX external weights sidecar (present when >~20 MB)
     feature_metadata.json — vocab mappings + feature list (used by batch_scorer)
     evaluation_test.json  — held-out test metrics for promote_model.py comparison
     training_metrics.json — per-epoch training curves
@@ -32,11 +31,10 @@ from google.cloud import aiplatform
 
 logger = logging.getLogger(__name__)
 
-# Files uploaded from the artifacts directory (model.pt is intentionally omitted
-# — the serving container uses model.onnx, and model.pt is 50× larger).
+# Files uploaded from the artifacts directory. model.pt is omitted: the serving
+# container uses model.onnx.
 _ARTIFACTS_TO_UPLOAD: list[str] = [
     "model.onnx",
-    "model.onnx.data",       # present only for larger models; skipped if absent
     "feature_metadata.json",
     "evaluation_test.json",
     "training_metrics.json",
@@ -183,9 +181,6 @@ class ModelRegistrar:
         for fname in _ARTIFACTS_TO_UPLOAD:
             src = artifacts_dir / fname
             if not src.exists():
-                if fname == "model.onnx.data":
-                    logger.debug("model.onnx.data not present — single-file ONNX export")
-                    continue
                 logger.warning("Expected artifact not found, skipping: %s", src)
                 continue
             blob = bucket.blob(f"{gcs_prefix}/{fname}")
