@@ -213,6 +213,8 @@ The drift monitor compares live features in Bigtable with the training split usi
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
+The thresholds are illustrative at this size. A snapshot has 120 entities, and 120 rows drawn at random from the training split score a median PSI of about 0.07 against that split, reaching 0.10 in about a quarter of draws and 0.20 in about 1%.
+
 Retraining is recommended when either of these trips:
 
 - PSI ≥ 0.20 on `days_of_supply`, `sales_7d` or `avg_daily_sales_7d`
