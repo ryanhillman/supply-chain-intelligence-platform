@@ -3,17 +3,15 @@ SmokeTest — validates the Vertex AI endpoint with real Bigtable rows.
 
 Flow
 ----
-1. Load feature_metadata.json (vocab maps) from the local artifacts directory.
-2. Try to read up to N rows from Bigtable inventory_features table.
-   - If Bigtable is unavailable: fall back to synthetic zero-vector instances
-     with a clear warning. See note below on expected outputs.
-3. Turn the rows into endpoint instances with RequestBuilder: the same
+1. Read up to N rows from the Bigtable inventory_features table. A failed
+   read, or no rows, fails the test.
+2. Turn the rows into endpoint instances with RequestBuilder: the same
    defaults, derived features and vocab mapping the batch scorer applies.
-4. POST to /predict via aiplatform.Endpoint.predict().
-5. Assert all shortage_prob_7d values are:
+3. POST to /predict via aiplatform.Endpoint.predict().
+4. Assert all shortage_prob_7d values are:
    - finite (not NaN, not inf)
    - in [0.0, 1.0]
-6. Print a per-instance results table.
+5. Print a per-instance results table.
 
 Pass criterion
 --------------
@@ -30,13 +28,11 @@ Required packages:
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
 import numpy as np
 
-from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from model_serving.pipeline.feature_client import FeatureClient
 from model_serving.pipeline.request_builder import RequestBuilder
 
@@ -87,12 +83,10 @@ class SmokeTest:
             init_kwargs["credentials"] = self._creds
         aiplatform.init(**init_kwargs)
 
-        self._metadata = self._load_feature_metadata()
-
     def run(
         self,
+        instance_id: str,
         n_samples: int = 3,
-        instance_id: str | None = None,
         table_id: str = "inventory_features",
     ) -> bool:
         """
@@ -100,61 +94,44 @@ class SmokeTest:
 
         Parameters
         ----------
-        n_samples:
-            Number of entities to score. Default 3.
         instance_id:
             Bigtable instance ID (e.g. "scip-feature-store").
-            If None, synthetic instances are used.
+        n_samples:
+            Number of entities to score. Default 3.
         table_id:
             Bigtable table ID. Default "inventory_features".
 
         Returns
         -------
         True if all predictions are finite and in [0, 1].
-        False if any prediction is NaN, inf, or out of range.
+        False if any prediction is NaN, inf, or out of range, or if
+        Bigtable returned no rows to score.
 
         Raises
         ------
-        Exception on connection or endpoint failure (not caught here —
+        Exception on Bigtable or endpoint failure (not caught here —
         let the caller see the full stack trace).
         """
-        instances, source = self._build_instances(
-            n_samples, instance_id, table_id
-        )
+        instances = self._instances_from_bigtable(instance_id, table_id, n_samples)
+        if not instances:
+            logger.error(
+                "No feature rows to score in Bigtable %s/%s — run the Silver job first",
+                instance_id, table_id,
+            )
+            return False
 
         logger.info(
-            "Calling endpoint %s with %d instances (source: %s)",
-            self.endpoint_resource_name, len(instances), source,
+            "Calling endpoint %s with %d instances",
+            self.endpoint_resource_name, len(instances),
         )
         from google.cloud import aiplatform
         endpoint  = aiplatform.Endpoint(endpoint_name=self.endpoint_resource_name)
         response  = endpoint.predict(instances=instances)
         preds     = response.predictions
 
-        return self._validate_and_print(instances, preds, source)
+        return self._validate_and_print(instances, preds)
 
     # ── Instance building ──────────────────────────────────────────────────────
-
-    def _build_instances(
-        self,
-        n_samples: int,
-        instance_id: str | None,
-        table_id: str,
-    ) -> tuple[list[dict], str]:
-        if instance_id is not None:
-            try:
-                instances = self._instances_from_bigtable(
-                    instance_id, table_id, n_samples
-                )
-                if instances:
-                    return instances, "bigtable"
-                logger.warning("No rows returned from Bigtable — using synthetic instances.")
-            except Exception as exc:
-                logger.warning(
-                    "Bigtable read failed (%s) — falling back to synthetic instances.", exc
-                )
-
-        return self._synthetic_instances(n_samples), "synthetic"
 
     def _instances_from_bigtable(
         self,
@@ -182,38 +159,16 @@ class SmokeTest:
                         req.row_key, req.instance["warehouse_id"], req.instance["sku_id"])
         return [req.instance for req in requests]
 
-    def _synthetic_instances(self, n_samples: int) -> list[dict]:
-        """
-        Generate zero-vector instances as a minimal connectivity check.
-
-        Note: an all-zero raw feature vector (no stock, no sales) is a
-        degenerate entity; the smoke test only checks shape and range validity.
-        """
-        logger.warning(
-            "Using synthetic zero-vector instances. "
-            "The resulting probabilities are not meaningful. "
-            "Provide --bigtable-instance for real data."
-        )
-        return [
-            {
-                "numeric_features": [0.0] * len(NUMERIC_FEATURE_COLS),
-                "warehouse_id":     i % self._metadata["n_warehouses"],
-                "sku_id":           i % self._metadata["n_skus"],
-            }
-            for i in range(n_samples)
-        ]
-
     # ── Validation + reporting ─────────────────────────────────────────────────
 
     def _validate_and_print(
         self,
         instances: list[dict],
         predictions: list,
-        source: str,
     ) -> bool:
         sep = "=" * 72
         print(f"\n{sep}")
-        print(f"  Smoke Test Results  (source: {source})")
+        print("  Smoke Test Results")
         print(sep)
         print(f"  {'#':<3} {'WH-vocab':>8} {'SKU-vocab':>9} {'prob_7d':>10}  OK")
         print(f"  {'-'*3} {'-'*8} {'-'*9} {'-'*10}  --")
@@ -238,23 +193,11 @@ class SmokeTest:
         else:
             print("  FAILED — one or more predictions are NaN, inf, or out of [0, 1]")
 
-        if source == "bigtable" and predictions:
+        if predictions:
             prob_mean = float(np.mean([p.get("shortage_prob_7d", 0) for p in predictions]))
             print(f"\n  mean shortage_prob_7d = {prob_mean:.4f}")
         print(sep)
         return all_pass
-
-    # ── Artifact loading ───────────────────────────────────────────────────────
-
-    def _load_feature_metadata(self) -> dict:
-        local = self.artifacts_dir / "feature_metadata.json"
-        if local.exists():
-            with open(local) as f:
-                return json.load(f)
-        raise FileNotFoundError(
-            f"feature_metadata.json not found at {local}. "
-            "Run ml_training/scripts/train.py or download from GCS artifact path."
-        )
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
