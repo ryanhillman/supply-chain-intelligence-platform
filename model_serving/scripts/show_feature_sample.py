@@ -26,15 +26,7 @@ import argparse
 import os
 import sys
 
-# The Bigtable column mapping and cell decoding come from the shared registry,
-# so this dashboard cannot drift from what the writer stores.
-from feature_registry import (
-    RAW_FEATURE_CELLS as _FEATURE_COLS,
-    RAW_FEATURE_FAMILIES as _FEATURE_FAMILIES,
-    decode_double as _decode_double,
-)
-
-_ALL_FAMILIES = _FEATURE_FAMILIES | {"predictions"}
+from model_serving.pipeline.feature_client import FeatureClient
 
 # Matches show_predictions.py's threshold so an entity doesn't flip between
 # "high risk" and not depending on which dashboard script you run.
@@ -99,70 +91,28 @@ def read_all_rows(
     sa_key: str | None,
 ) -> list[dict]:
     """
-    Scan the entire inventory_features table.
-
-    Returns a list of dicts, one per valid row key, containing:
-        warehouse_id, sku_id, plus all decoded feature and prediction fields.
-    Predictions are included only if the 'predictions' column family has been
-    written by score.py; missing values are stored as None.
+    One dict per entity in the inventory_features table: warehouse_id, sku_id,
+    the decoded raw features, and shortage_prob_7d / stockout_risk_score where
+    score.py has written them.
     """
-    from google.cloud import bigtable
-    from google.cloud.bigtable import row_filters
-
     try:
-        if sa_key:
-            from google.oauth2 import service_account
-            creds  = service_account.Credentials.from_service_account_file(sa_key)
-            client = bigtable.Client(project=project, credentials=creds, admin=False)
-        else:
-            # Application default credentials.
-            client = bigtable.Client(project=project, admin=False)
+        with FeatureClient(project, instance_id, table_id, credentials_path=sa_key) as client:
+            feature_rows = client.scan_all()
+            predictions  = {p.row_key: p for p in client.read_predictions()}
     except Exception as exc:
-        print(f"\n  [ERROR] Authentication failed: {exc}")
-        print(f"  Key path: {sa_key or '(none: application default credentials)'}")
+        print(f"\n  [ERROR] Failed to read from Bigtable: {exc}")
         sys.exit(1)
 
-    table = client.instance(instance_id).table(table_id)
-
-    filter_ = row_filters.RowFilterChain(filters=[
-        row_filters.FamilyNameRegexFilter("|".join(sorted(_ALL_FAMILIES))),
-        row_filters.CellsColumnLimitFilter(1),
-    ])
-
     records: list[dict] = []
-    try:
-        for row_data in table.read_rows(filter_=filter_):
-            row_key = row_data.row_key.decode("utf-8")
-            parts   = row_key.split("#", 1)
-            if len(parts) != 2:
-                continue
-
-            warehouse_id, sku_id = parts
-            rec: dict = {"warehouse_id": warehouse_id, "sku_id": sku_id}
-
-            for cf_name, cf_data in row_data.cells.items():
-                if cf_name in _FEATURE_FAMILIES:
-                    for col_bytes, cells in cf_data.items():
-                        col    = col_bytes.decode("utf-8")
-                        fname  = _FEATURE_COLS.get((cf_name, col))
-                        if fname:
-                            val = _decode_double(cells[0].value)
-                            if val is not None:
-                                rec[fname] = val
-
-                elif cf_name == "predictions":
-                    for col_bytes, cells in cf_data.items():
-                        col = col_bytes.decode("utf-8")
-                        if col in ("shortage_prob_7d", "stockout_risk_score"):
-                            try:
-                                rec[col] = float(cells[0].value.decode("utf-8"))
-                            except (ValueError, UnicodeDecodeError):
-                                pass
-
-            records.append(rec)
-    finally:
-        client.close()
-
+    for row in feature_rows:
+        rec: dict = {"warehouse_id": row.warehouse_id, "sku_id": row.sku_id, **row.features}
+        pred = predictions.get(row.row_key)
+        if pred is not None:
+            for name in ("shortage_prob_7d", "stockout_risk_score"):
+                value = getattr(pred, name)
+                if value is not None:
+                    rec[name] = value
+        records.append(rec)
     return records
 
 

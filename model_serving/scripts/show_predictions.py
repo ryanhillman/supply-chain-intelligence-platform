@@ -25,6 +25,7 @@ import os
 import sys
 
 from model_serving.pipeline.constants import variance_collapsed
+from model_serving.pipeline.feature_client import FeatureClient
 
 # -- SKU category mapping (mirrors simulation/world.py SKUS) ------------------
 # Hard-coded so show_predictions.py has zero dependency on ml_training modules.
@@ -92,70 +93,27 @@ def parse_args() -> argparse.Namespace:
 # -- Bigtable read -------------------------------------------------------------
 
 def read_predictions(project: str, instance_id: str, table_id: str, sa_key: str | None) -> list[dict]:
-    """Read all prediction rows from Bigtable. Returns list of dicts."""
-    from google.cloud import bigtable
-
+    """Every entity's latest prediction: one dict per row that has both values."""
     try:
-        if sa_key:
-            from google.oauth2 import service_account
-            creds  = service_account.Credentials.from_service_account_file(sa_key)
-            client = bigtable.Client(project=project, credentials=creds, admin=False)
-        else:
-            # Application default credentials.
-            client = bigtable.Client(project=project, admin=False)
-    except Exception as exc:
-        print(f"\n  [ERROR] Failed to authenticate: {exc}")
-        print(f"  Key path: {sa_key or '(none: application default credentials)'}")
-        sys.exit(1)
-
-    table = client.instance(instance_id).table(table_id)
-
-    records: list[dict] = []
-    try:
-        rows = table.read_rows()
-        for row in rows:
-            key  = row.row_key.decode("utf-8")
-            preds = row.cells.get("predictions", {})
-
-            prob_cells  = preds.get(b"shortage_prob_7d", [])
-            score_cells = preds.get(b"stockout_risk_score", [])
-            ver_cells   = preds.get(b"model_version", [])
-            ts_cells    = preds.get(b"prediction_timestamp", [])
-
-            if not prob_cells or not score_cells:
-                continue
-
-            try:
-                prob  = float(prob_cells[0].value.decode("utf-8"))
-                score = float(score_cells[0].value.decode("utf-8"))
-            except (ValueError, AttributeError):
-                continue
-
-            version = ver_cells[0].value.decode("utf-8")  if ver_cells  else "unknown"
-            ts      = ts_cells[0].value.decode("utf-8")   if ts_cells   else "unknown"
-
-            # Row key format: {warehouse_id}#{sku_id}
-            parts = key.split("#", 1)
-            if len(parts) != 2:
-                continue
-            wh_id, sku_id = parts
-
-            records.append({
-                "warehouse_id":        wh_id,
-                "sku_id":              sku_id,
-                "category":            _SKU_CATEGORIES.get(sku_id, "Unknown"),
-                "shortage_prob_7d":    prob,
-                "stockout_risk_score": score,
-                "model_version":       version,
-                "prediction_timestamp": ts,
-            })
+        with FeatureClient(project, instance_id, table_id, credentials_path=sa_key) as client:
+            rows = client.read_predictions()
     except Exception as exc:
         print(f"\n  [ERROR] Failed to read from Bigtable: {exc}")
         sys.exit(1)
-    finally:
-        client.close()
 
-    return records
+    return [
+        {
+            "warehouse_id":         r.warehouse_id,
+            "sku_id":               r.sku_id,
+            "category":             _SKU_CATEGORIES.get(r.sku_id, "Unknown"),
+            "shortage_prob_7d":     r.shortage_prob_7d,
+            "stockout_risk_score":  r.stockout_risk_score,
+            "model_version":        r.model_version or "unknown",
+            "prediction_timestamp": r.prediction_timestamp or "unknown",
+        }
+        for r in rows
+        if r.shortage_prob_7d is not None and r.stockout_risk_score is not None
+    ]
 
 
 # -- Formatting helpers --------------------------------------------------------
