@@ -129,7 +129,7 @@ Silver writes 22 columns per warehouse-SKU entity in six groups:
 - Risk metrics
 - Data lineage
 
-The model takes 21 numeric features plus the warehouse and SKU IDs, for which it learns embeddings.
+The model takes 21 numeric features, 15 stored by Silver and 6 derived from them, plus the warehouse and SKU IDs, for which it learns embeddings.
 
 ### Model
 
