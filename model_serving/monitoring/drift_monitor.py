@@ -738,10 +738,7 @@ class DriftMonitor:
     def _do_emit_cloud_monitoring(self, monitoring_v3, report: DriftReport) -> None:
         """Internal: build and write time series to Cloud Monitoring."""
 
-        client_kwargs: dict = {"project": self.project_id}
-        if self._creds:
-            client_kwargs["credentials"] = self._creds
-        cm_client = monitoring_v3.MetricServiceClient(**client_kwargs)
+        cm_client = monitoring_v3.MetricServiceClient(credentials=self._creds)
 
         project_name = f"projects/{self.project_id}"
         now_seconds  = int(datetime.now(timezone.utc).timestamp())
