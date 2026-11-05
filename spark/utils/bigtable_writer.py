@@ -8,7 +8,8 @@ Design:
   - Called by spark/jobs/silver_batch.py after the Silver write
   - Uses foreachPartition so each Spark executor opens its own Bigtable client
     (avoids serialising the client object across the network)
-  - Values encoded as big-endian double (numeric) or UTF-8 bytes (string)
+  - Values encoded by feature_registry.encode_cell: big-endian double
+    (numeric) or UTF-8 bytes (string)
   - Cell timestamp = current wall-clock time so GC max_age policies work
     correctly against write time, not window_end time
   - Batch size controlled by BIGTABLE_BATCH_SIZE (default 500)
@@ -19,15 +20,11 @@ Row key format: {warehouse_id}#{sku_id}
 from __future__ import annotations
 
 import logging
-import struct
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterator
 
-from config.feature_config import (
-    BIGTABLE_BATCH_SIZE,
-    FEATURE_REGISTRY,
-    STRING_FEATURES,
-)
+from config.feature_config import BIGTABLE_BATCH_SIZE
+from feature_registry import FEATURE_REGISTRY, encode_cell
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
@@ -44,29 +41,6 @@ _COL_TO_FAMILY_QUALIFIER: dict[str, tuple[str, str]] = {
     for family, qualifiers in FEATURE_REGISTRY.items()
     for attr, qualifier in qualifiers.items()
 }
-
-
-# ── Value encoding ────────────────────────────────────────────────────────────
-
-def _encode_value(col_name: str, value) -> bytes | None:
-    """
-    Encode a feature value to bytes for Bigtable storage.
-
-    Numeric features: big-endian IEEE 754 double (8 bytes).
-    String features:  UTF-8 bytes.
-    None/null:        returns None → caller deletes the cell.
-    """
-    if value is None:
-        return None
-
-    if col_name in STRING_FEATURES:
-        return str(value).encode("utf-8")
-
-    try:
-        return struct.pack(">d", float(value))
-    except (TypeError, ValueError) as exc:
-        logger.warning("Cannot encode %s=%r as double: %s — skipping cell", col_name, value, exc)
-        return None
 
 
 # ── Per-partition writer ───────────────────────────────────────────────────────
@@ -105,7 +79,7 @@ def _write_partition(
             cell_ts = datetime.now(timezone.utc)
 
             for col_name, (family, qualifier) in _COL_TO_FAMILY_QUALIFIER.items():
-                value_bytes = _encode_value(col_name, spark_row[col_name])
+                value_bytes = encode_cell(col_name, spark_row[col_name])
                 if value_bytes is None:
                     # Skipping would leave the previous run's cell to be read
                     # as today's value. With no cell, the scorer applies the

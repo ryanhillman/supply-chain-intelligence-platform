@@ -12,6 +12,10 @@ requires-python = ">=3.11"
 # scripts and tests need no sys.path edits. Third-party dependencies stay in
 # each component's requirements.txt: training, serving, Spark and the serving
 # container are separate environments.
+#
+# feature_registry lives under spark/ because the Spark container holds only
+# that directory. Spark's own config/, jobs/ and utils/ are not installed.
 [tool.setuptools.packages.find]
-include = ["ml_training*", "model_serving*", "simulation*"]
+where = [".", "spark"]
+include = ["ml_training*", "model_serving*", "simulation*", "feature_registry*"]
 namespaces = false

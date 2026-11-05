@@ -26,7 +26,7 @@ _SPARK_DIR = str(Path(__file__).parents[1] / "spark")   # for Spark's Python wor
 
 from pyspark.sql import SparkSession  # noqa: E402
 
-from config.feature_config import FEATURE_REGISTRY  # noqa: E402
+from feature_registry import FEATURE_REGISTRY  # noqa: E402
 from jobs import silver_batch  # noqa: E402
 from jobs.bronze_ingestion import TOPIC_SCHEMA_MAP, prepare_bronze_df  # noqa: E402
 from jobs.schemas.feature_schema import conform_to_silver_schema  # noqa: E402

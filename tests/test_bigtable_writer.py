@@ -8,7 +8,7 @@ import types
 
 import pytest
 
-from config.feature_config import FEATURE_REGISTRY
+from feature_registry import FEATURE_REGISTRY
 from utils import bigtable_writer as bw
 
 _COLUMNS = [f"{family}__{attr}" for family, attrs in FEATURE_REGISTRY.items() for attr in attrs]

@@ -25,7 +25,7 @@ pytestmark = pytest.mark.slow
 
 from pyspark.sql import SparkSession  # noqa: E402
 
-from config.feature_config import FEATURE_REGISTRY  # noqa: E402
+from feature_registry import FEATURE_REGISTRY  # noqa: E402
 from jobs.bronze_ingestion import TOPIC_SCHEMA_MAP, prepare_bronze_df  # noqa: E402
 from jobs.silver_features import _risk, compute_features  # noqa: E402
 from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler  # noqa: E402

@@ -5,7 +5,7 @@ no sys.path edits: checked in a fresh interpreter started outside the repo.
 import subprocess
 import sys
 
-PACKAGES = "ml_training, model_serving, simulation"
+PACKAGES = "feature_registry, ml_training, model_serving, simulation"
 
 
 def test_packages_import_from_the_install(tmp_path):
