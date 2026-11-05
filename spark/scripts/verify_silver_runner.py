@@ -1,6 +1,6 @@
 """
 Silver GCS validation script.
-Invoked by validate_pipeline.ps1 (Check 4) inside the scip-spark Docker container.
+Invoked by validate_pipeline.sh (Check 4) inside the scip-spark Docker container.
 Reads Silver Parquet and reports row counts, schema conformance, null rates.
 """
 import sys
