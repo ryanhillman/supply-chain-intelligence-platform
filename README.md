@@ -67,7 +67,7 @@ flowchart TD
     B --> F
     F --> BT
 
-    BT --> PT
+    B --> PT
     PT --> ONNX
     ONNX --> REG
     REG --> EP
