@@ -11,11 +11,6 @@ Envelope fields:
   dlq_id, failed_at, consumer_group, original_topic, original_partition,
   original_offset, original_key, original_payload, error_reason,
   error_detail, epoch_id
-
-An earlier version also had a Kafka sink producing to *.dlq topics behind a
-DLQ_SINK switch. It was never selected — the simulator always emits the
-required fields, so the DLQ sees nothing in practice — and the extra topics,
-handler classes and factory were removed.
 """
 from __future__ import annotations
 

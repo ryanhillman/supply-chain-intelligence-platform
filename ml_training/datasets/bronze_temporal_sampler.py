@@ -307,13 +307,11 @@ class BronzeTemporalSampler:
         does not guarantee any given pair's own first sale is that old (a
         pair with sparse or late-starting history can still be sampled
         during its individual cold start). Dividing by a fixed constant in
-        that case manufactures a velocity_trend artifact exactly like the
-        one fixed in spark/jobs/silver_features.py's
-        _compute_velocity: when sales_7d == sales_30d (no sales before the
-        last 7 days), trend becomes a numeric artifact of the window-length
-        ratio rather than a real trend. This matters more here than in the
-        live Spark job, since this is the TRAINING label generator -- the
-        artifact would be baked into the model's training data itself.
+        that case manufactures a velocity_trend artifact: when sales_7d ==
+        sales_30d (no sales before the last 7 days), trend becomes a numeric
+        artifact of the window-length ratio rather than a real trend.
+        spark/jobs/silver_features.py's _velocity divides by the days observed
+        in the same way, so training rows and Silver agree.
         """
         sales = inv[inv["event_type"] == "SALE"].copy()
         sales["units_sold"] = (-sales["quantity_delta"]).clip(lower=0).astype(float)

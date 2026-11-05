@@ -40,19 +40,9 @@ services:
       - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
       - "--conf"
       - "spark.kafka.consumer.cache.enabled=false"
-      # ── GCS connector configuration ─────────────────────────────────────────
-      - "--conf"
-      - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
-      - "--conf"
-      - "spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
-      - "--conf"
-      - "spark.hadoop.google.cloud.auth.service.account.enable=true"
-      - "--conf"
-      - "spark.hadoop.google.cloud.auth.service.account.json.keyfile=${GOOGLE_APPLICATION_CREDENTIALS:-/opt/spark-app/keys/scip-spark-sa.json}"
-      - "--conf"
-      - "spark.hadoop.fs.gs.outputstream.type=FLUSHABLE_COMPOSITE"
-      - "--conf"
-      - "spark.hadoop.fs.gs.implicit.dir.infer.enable=true"
+      # GCS connector settings, shared by both jobs.
+      - "--properties-file"
+      - "config/spark-gcs.conf"
       # ── Job entrypoint ──────────────────────────────────────────────────────
       - "jobs/bronze_ingestion.py"
     restart: on-failure:3
@@ -76,19 +66,9 @@ services:
       - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
       - "--conf"
       - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
-      # ── GCS connector configuration ─────────────────────────────────────────
-      - "--conf"
-      - "spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
-      - "--conf"
-      - "spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
-      - "--conf"
-      - "spark.hadoop.google.cloud.auth.service.account.enable=true"
-      - "--conf"
-      - "spark.hadoop.google.cloud.auth.service.account.json.keyfile=${GOOGLE_APPLICATION_CREDENTIALS:-/opt/spark-app/keys/scip-spark-sa.json}"
-      - "--conf"
-      - "spark.hadoop.fs.gs.outputstream.type=FLUSHABLE_COMPOSITE"
-      - "--conf"
-      - "spark.hadoop.fs.gs.implicit.dir.infer.enable=true"
+      # GCS connector settings, shared by both jobs.
+      - "--properties-file"
+      - "config/spark-gcs.conf"
       # ── Job entrypoint ──────────────────────────────────────────────────────
       - "jobs/silver_batch.py"
 

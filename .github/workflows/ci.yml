@@ -28,7 +28,7 @@ jobs:
 
       # CPU-only torch first, from PyTorch's index, so the requirements files'
       # "torch>=2.5,<3" constraint is already satisfied and pip does not pull
-      # the multi-GB CUDA build from PyPI (same approach as ml_training/Dockerfile).
+      # the multi-GB CUDA build from PyPI.
       #
       # The serving container's requirements.txt is NOT installed here: it pins
       # the image's exact versions (numpy 1.26.4, onnxruntime 1.19.2) for a
@@ -104,18 +104,10 @@ jobs:
           terraform_version: "1.9.8"
 
       # No credentials and no backend: this validates syntax, types and
-      # provider schemas only.
-      #
-      # The committed .terraform.lock.hcl records only windows_amd64 checksums
-      # for hashicorp/google, so init on this linux runner fails with a
-      # checksum mismatch (-upgrade does not help: it re-selects the same
-      # version and still checks the recorded hashes). Until the lock carries
-      # linux/darwin hashes (terraform providers lock -platform=...), this
-      # validate-only job drops the lock and resolves ~> 5.40 fresh.
+      # provider schemas only. -lockfile=readonly fails the job if the
+      # committed lock file lacks this platform's provider checksums.
       - name: terraform init (no backend)
-        run: |
-          rm -f .terraform.lock.hcl
-          terraform init -backend=false -input=false
+        run: terraform init -backend=false -input=false -lockfile=readonly
 
       - name: terraform fmt
         run: terraform fmt -check -recursive -diff

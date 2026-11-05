@@ -1,23 +1,21 @@
 """
-Regression tests for the drift monitor's PSI computation and its reference.
+Tests for the drift monitor's PSI computation and its reference.
 
-Two bugs are pinned here:
+Two failure modes are pinned here:
 
-1. Normal-quantile bins (the original implementation) assumed every monitored
-   feature is Gaussian. For the skewed and clustered features monitored here
-   that packed most training mass into one or two bins and reported PSI >> 0.20
-   for the training data compared with itself. The fix was empirical decile
-   bins with each bin's real training fraction as `expected`.
-2. Units. That fix read its bins from train.parquet while the parquet splits
-   were StandardScaler-transformed, so standardized training bins were
-   compared with raw live values and PSI came out at 2-8 for train-vs-itself.
-   The splits are now stored in raw units, so both sides of the comparison are
-   produced by engineer_features() on raw features.
+1. Bins. Normal-quantile bins assume every monitored feature is Gaussian. For
+   the skewed and clustered features monitored here they pack most training
+   mass into one or two bins and report PSI >> 0.20 for the training data
+   compared with itself. The reference uses empirical decile bins with each
+   bin's real training fraction as `expected`.
+2. Units. Standardized training bins compared with raw live values give PSI
+   of 2-8 for train-vs-itself. The splits are stored in raw units, so both
+   sides of the comparison are produced by engineer_features() on raw features.
 
-The reference itself now lives in drift_reference.json, written next to the
-model by the trainer (ml_training/evaluation/drift_reference.py), so the
-monitor's baseline travels with the model artifacts. There is no approximate
-fallback: a missing reference is an error.
+The reference lives in drift_reference.json, written next to the model by the
+trainer (ml_training/evaluation/drift_reference.py), so the monitor's baseline
+travels with the model artifacts. There is no approximate fallback: a missing
+reference is an error.
 
 supplier_reliability is computed per warehouse, so it is checked per
 warehouse against its training p1-p99 instead of with PSI, as an informational
@@ -129,8 +127,7 @@ def test_training_rows_through_the_live_path_give_zero_psi(tmp_path):
 
 
 def test_standardized_training_rows_would_have_falsely_triggered(tmp_path):
-    """The units bug, kept as a regression: a reference built from
-    StandardScaler-transformed columns (as the old train.parquet held them)
+    """Units: a reference built from StandardScaler-transformed columns
     against raw live values reports a TRIGGER for the training data compared
     with itself."""
     train_df = _raw_training_frame()

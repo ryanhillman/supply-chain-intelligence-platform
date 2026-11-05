@@ -1,4 +1,4 @@
-# Phase 5 Python dependencies
+# Model serving Python dependencies
 # Used by: pipeline (batch_scorer, prediction_writer, feature_client, request_builder)
 #          monitoring (drift_monitor)
 #          scripts (register, deploy, score, monitor)

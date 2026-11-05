@@ -1,9 +1,9 @@
 """
-evaluate.py — CLI entry point for Phase 4 model evaluation.
+evaluate.py — CLI entry point for model evaluation.
 
 Loads model artifacts, runs inference on a dataset split, computes
 AUC-ROC / AUPRC / Brier for both model and baseline, and prints the
-Phase 4 success verdict.
+success verdict.
 
 Usage
 -----
@@ -27,7 +27,7 @@ logging.basicConfig(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Evaluate Phase 4 ShortagePredictor vs baseline")
+    p = argparse.ArgumentParser(description="Evaluate ShortagePredictor vs baseline")
     p.add_argument("--artifacts", default="ml_training/artifacts",         help="Directory with model.pt")
     p.add_argument("--dataset",   default="ml_training/artifacts/dataset", help="Directory with split Parquet")
     p.add_argument("--split",     default="test", choices=["train", "val", "test"])

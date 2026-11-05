@@ -1,5 +1,5 @@
 """
-train.py — CLI entry point for Phase 4 model training.
+train.py — CLI entry point for model training.
 
 Loads the dataset built by build_dataset.py, trains ShortagePredictor,
 evaluates on the test split and exports to ONNX. Uploading and registering
@@ -33,7 +33,7 @@ logger = logging.getLogger("train")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train Phase 4 ShortagePredictor")
+    p = argparse.ArgumentParser(description="Train ShortagePredictor")
     p.add_argument(
         "--dataset",
         default="ml_training/artifacts/dataset",
@@ -96,7 +96,7 @@ def main() -> None:
     logger.info("ONNX written to %s", onnx_path)
 
     training_status = "PASSED" if report.get("outperforms_baseline") else "FAILED"
-    print(f"\nPhase 4 training complete — success criterion: {training_status}")
+    print(f"\nTraining complete — success criterion: {training_status}")
     if not report.get("outperforms_baseline"):
         print("  Model did not outperform baseline on all metrics.")
         print("  Consider: more data, longer training, hyperparameter tuning.")

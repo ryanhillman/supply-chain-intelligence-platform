@@ -17,9 +17,8 @@ units.
 
 There is one output. stockout_risk_score, the second value the pipeline
 publishes, is the closed-form Normal-approximation P(stockout ≤ 7d) computed
-from three raw features (feature_engineer.normal_stockout_prob); an earlier
-version trained a second head to regress that formula, which only ever
-approximated something the code can evaluate exactly.
+from three raw features (feature_engineer.normal_stockout_prob). The code
+evaluates it exactly, so the model does not predict it.
 
 forward() returns logit_prob: raw logit, feed directly to BCEWithLogitsLoss.
 predict() returns prob ∈ [0, 1], for inference use.

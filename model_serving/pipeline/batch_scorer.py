@@ -6,13 +6,13 @@ Flow
 1. FeatureClient.scan_all() — scan all rows from Bigtable inventory_features,
    then split_fresh() drops rows whose lineage:silver_ts is older than
    max_feature_age_hours (default 48 h): stale features are not scored.
-2. RequestBuilder.build()   — fill defaults, engineer features, scale, map vocab.
+2. RequestBuilder.build()   — fill defaults, engineer features, map vocab.
 3. endpoint.predict()       — call the Vertex AI endpoint in batches of `batch_size`.
    The endpoint returns {"shortage_prob_7d": float} per instance (see
    model_serving/serving/container/main.py). stockout_risk_score is the
    closed-form Normal-approximation P(stockout ≤ 7d) that RequestBuilder
-   computes from the raw features — the same formula as the
-   continuous_risk_score training column.
+   computes from the raw features — the same formula as the training
+   rows' stockout_risk_score column.
 4. For each prediction: build a JSON Pub/Sub message and publish to the
    prediction-results topic.
 
@@ -174,7 +174,7 @@ class BatchScorer:
         t_start = time.perf_counter()
 
         # Step 1: read all feature rows from Bigtable.
-        logger.info("=== Phase 5.4 Batch Scoring — start ===")
+        logger.info("=== Batch scoring — start ===")
         feature_rows = self._feature_client.scan_all()
         stats.rows_scanned = len(feature_rows)
         logger.info("rows_scanned=%d", stats.rows_scanned)
@@ -194,7 +194,7 @@ class BatchScorer:
             logger.warning("No fresh feature rows — aborting scoring run")
             return stats
 
-        # Step 2: apply defaults, engineer features, scale, vocab-map.
+        # Step 2: apply defaults, engineer features, vocab-map.
         requests = self._request_builder.build(feature_rows)
         stats.rows_scored = len(requests)
         # feature_rows holds only the fresh rows here, so stale rows are not counted.

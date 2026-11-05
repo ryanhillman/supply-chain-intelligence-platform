@@ -1,7 +1,7 @@
 """
 register.py — CLI for ModelRegistrar.
 
-Uploads Phase 4 artifacts to a versioned GCS path and registers the model
+Uploads the training artifacts to a versioned GCS path and registers the model
 in Vertex AI Model Registry. Does NOT deploy to the endpoint.
 
 Usage
@@ -43,7 +43,7 @@ logger = logging.getLogger("register")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Upload Phase 4 artifacts to GCS and register in Vertex AI Model Registry"
+        description="Upload the training artifacts to GCS and register in Vertex AI Model Registry"
     )
     p.add_argument(
         "--bucket",
@@ -149,7 +149,7 @@ def main() -> None:
     print("=" * 68)
     print(
         f"\nNext step: deploy the model to the endpoint.\n"
-        f"  python model_serving/scripts/deploy.py \\\n"
+        f"  python model_serving/scripts/deploy.py deploy \\\n"
         f"      --project {args.project} \\\n"
         f"      --region  {args.region} \\\n"
         f"      --sa-key  {args.sa_key or 'infrastructure/gcp/keys/scip-vertex-sa.json'} \\\n"
@@ -167,7 +167,7 @@ def _check_local_artifacts(artifacts_dir: Path) -> None:
     missing = [p for p in required if not p.exists()]
     if missing:
         logger.error(
-            "Required Phase 4 artifacts not found:\n%s",
+            "Required training artifacts not found:\n%s",
             "\n".join(f"  {p}" for p in missing),
         )
         logger.error(

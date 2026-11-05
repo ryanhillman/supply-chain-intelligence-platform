@@ -2,7 +2,7 @@
 
 <p align="center">
   <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white">
-  <img alt="GCP" src="https://img.shields.io/badge/GCP-Deployed-4285F4?logo=googlecloud&logoColor=white">
+  <img alt="GCP" src="https://img.shields.io/badge/GCP-4285F4?logo=googlecloud&logoColor=white">
 </p>
 
 ---
@@ -67,7 +67,7 @@ flowchart TD
     B --> F
     F --> BT
 
-    BT --> PT
+    B --> PT
     PT --> ONNX
     ONNX --> REG
     REG --> EP
@@ -129,7 +129,7 @@ Silver writes 22 columns per warehouse-SKU entity in six groups:
 - Risk metrics
 - Data lineage
 
-The model takes 21 numeric features plus the warehouse and SKU IDs, for which it learns embeddings.
+The model takes 21 numeric features, 15 stored by Silver and 6 derived from them, plus the warehouse and SKU IDs, for which it learns embeddings.
 
 ### Model
 
@@ -197,6 +197,12 @@ Features are raw values in training order; the IDs are integer indices from `fea
 
 ---
 
+## Model Promotion
+
+Promotion goes through two commands of `model_serving/scripts/deploy.py`. `deploy` puts a newly registered model on the endpoint as a challenger, at 0% traffic by default. `promote` compares it with the champion, the model receiving traffic, and moves all traffic to the challenger only if it is better on all three test metrics: AUPRC, AUC-ROC and Brier score. If the two models were evaluated on different test splits, both are first rescored on the challenger's split.
+
+---
+
 ## Drift Monitoring
 
 The drift monitor compares live features in Bigtable with the training split using the Population Stability Index (PSI). Its reference bins (deciles of the raw training split) are written next to the model as `drift_reference.json`, so the reference travels with the model. PSI thresholds:
@@ -206,6 +212,8 @@ The drift monitor compares live features in Bigtable with the training split usi
 | < 0.10 | Stable — no action required |
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
+
+The thresholds are illustrative at this size. A snapshot has 120 entities, and 120 rows drawn at random from the training split score a median PSI of about 0.07 against that split, reaching 0.10 in about a quarter of draws and 0.20 in about 1%.
 
 Retraining is recommended when either of these trips:
 

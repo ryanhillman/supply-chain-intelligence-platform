@@ -1,9 +1,9 @@
 """
-score.py — CLI entry point for the Phase 5.4 batch scoring pipeline.
+score.py — CLI entry point for the batch scoring pipeline.
 
 This script:
 1. Scans all rows from Bigtable inventory_features.
-2. Applies fill_defaults() and engineer_features() from Phase 4 (raw units).
+2. Applies fill_defaults() and engineer_features() from ml_training (raw units).
 3. Calls the Vertex AI endpoint in batches to obtain predictions.
 4. Publishes each prediction to the Pub/Sub prediction-results topic.
 
@@ -17,7 +17,7 @@ Usage
     python model_serving/scripts/score.py \\
         --project your-gcp-project-id \\
         --region  us-central1 \\
-        --endpoint $env:VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
+        --endpoint $VERTEX_AI_ENDPOINT_RESOURCE_NAME \\
         --bigtable-instance scip-feature-store \\
         --topic prediction-results \\
         --model-version v20260620_180918 \\

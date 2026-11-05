@@ -1,11 +1,10 @@
 """
-Regression test for model_serving/serving/container/main.py's vocab-range
-validation, fixed in this branch: an out-of-range warehouse_id/sku_id
-(e.g. warehouse_id: 99) reached the ONNX embedding Gather op at inference
-time and raised there, landing in the generic
-`except Exception -> HTTPException(500)` handler, instead of being
-rejected as a 422 the way the documented contract (and FastAPI's own
-pydantic validation) implies.
+Test for model_serving/serving/container/main.py's vocab-range validation.
+Without it, an out-of-range warehouse_id/sku_id (e.g. warehouse_id: 99)
+reaches the ONNX embedding Gather op at inference time and raises there,
+landing in the generic `except Exception -> HTTPException(500)` handler
+instead of being rejected as a 422, as the documented contract (and FastAPI's
+own pydantic validation) implies.
 
 predictor.py's own ONNXPredictor.__init__ needs GCS + onnxruntime model
 files, so this test swaps in a fake predictor exposing just the

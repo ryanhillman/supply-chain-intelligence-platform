@@ -75,12 +75,7 @@ def create_spark_session() -> SparkSession:
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.sql.shuffle.partitions", "6")
         .config("spark.kafka.consumer.cache.enabled", "false")
-        # GCS connector (JAR pre-installed in Dockerfile)
-        .config("spark.hadoop.fs.gs.impl",
-                "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
-        .config("spark.hadoop.fs.AbstractFileSystem.gs.impl",
-                "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
-        .config("spark.hadoop.google.cloud.auth.service.account.enable", "true")
+        # GCS connector settings come from config/spark-gcs.conf (--properties-file).
         .getOrCreate()
     )
 

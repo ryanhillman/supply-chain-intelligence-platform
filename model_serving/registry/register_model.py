@@ -1,5 +1,5 @@
 """
-ModelRegistrar — uploads Phase 4 artifacts to a versioned GCS path and
+ModelRegistrar — uploads the training artifacts to a versioned GCS path and
 registers the model in Vertex AI Model Registry.
 
 GCS layout after registration:
@@ -48,7 +48,7 @@ _GCS_MODEL_PREFIX = "models/shortage-predictor"
 
 class ModelRegistrar:
     """
-    Uploads Phase 4 artifacts to GCS and registers the model with Vertex AI.
+    Uploads the training artifacts to GCS and registers the model with Vertex AI.
 
     Parameters
     ----------
@@ -204,10 +204,7 @@ class ModelRegistrar:
                 "MODEL_GCS_PATH": gcs_artifact_uri,
                 "PYTHONIOENCODING": "utf-8",
             },
-            labels={
-                "phase":   "5",
-                "project": "scip",
-            },
+            labels={"project": "scip"},
             sync=True,
         )
 

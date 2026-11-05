@@ -1,5 +1,5 @@
 ###############################################################################
-# Pub/Sub Infrastructure — Phase 5
+# Pub/Sub Infrastructure
 # prediction-results topic, prediction-writer subscription, dead-letter topic,
 # prediction-writer service account + IAM.
 #
@@ -115,7 +115,7 @@ resource "google_service_account" "prediction_writer_sa" {
   project      = var.project_id
   account_id   = "scip-prediction-writer-sa"
   display_name = "SCIP Prediction Writer Service Account"
-  description  = "Subscribes to prediction-results and writes Bigtable predictions family (Phase 5)"
+  description  = "Subscribes to prediction-results and writes Bigtable predictions family"
 
   depends_on = [google_project_service.iam]
 }

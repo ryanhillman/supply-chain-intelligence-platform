@@ -1,9 +1,10 @@
 """
-monitor.py — CLI entry point for Phase 5.5 drift monitoring.
+monitor.py — CLI entry point for drift monitoring.
 
 Reads the current feature distribution from Bigtable, computes PSI for the
-four key monitoring features, checks prediction variance collapse, and prints
-a structured report with a retraining recommendation.
+monitored features, checks supplier_reliability against each warehouse's
+training range, checks prediction variance collapse, and prints a structured
+report with a retraining recommendation.
 
 Usage
 -----

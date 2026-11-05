@@ -1,6 +1,6 @@
 """
 Silver GCS validation script.
-Invoked by validate_pipeline.ps1 (Check 4) inside the scip-spark Docker container.
+Invoked by validate_pipeline.sh (Check 4) inside the scip-spark Docker container.
 Reads Silver Parquet and reports row counts, schema conformance, null rates.
 """
 import sys
@@ -17,11 +17,6 @@ if not SILVER_PATH:
 spark = (
     SparkSession.builder
     .appName("scip-verify-silver")
-    .config("spark.hadoop.fs.gs.impl",
-            "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
-    .config("spark.hadoop.fs.AbstractFileSystem.gs.impl",
-            "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
-    .config("spark.hadoop.google.cloud.auth.service.account.enable", "true")
     .getOrCreate()
 )
 spark.sparkContext.setLogLevel("ERROR")

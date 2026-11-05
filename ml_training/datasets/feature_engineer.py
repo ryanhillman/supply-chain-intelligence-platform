@@ -17,8 +17,8 @@ Leakage columns explicitly absent from NUMERIC_FEATURE_COLS:
   All lineage__* columns     — pipeline metadata with no predictive value
 
 Also home to normal_stockout_prob(): the closed-form P(stockout ≤ horizon)
-used as the continuous_risk_score label column, the baseline the model must
-beat, and the stockout_risk_score the batch scorer publishes — one definition
+used for the stockout_risk_score column of the training rows, the baseline the
+model must beat, and the value the batch scorer publishes — one definition
 for all three.
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ CATEGORICAL_FEATURE_COLS: list[str] = ["warehouse_id", "sku_id"]
 
 # Label and auxiliary target columns (not features)
 TARGET_COL:     str = "stockout_label_7d"
-RISK_SCORE_COL: str = "continuous_risk_score"
+RISK_SCORE_COL: str = "stockout_risk_score"
 BASELINE_COL:   str = "baseline_pred"
 
 # Passthrough identity columns kept in dataset rows for split logic and reporting
@@ -67,7 +67,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     All transformations use deterministic formulas with no dependency on
     the training set distribution. Safe to apply identically to train/val/test
-    and to inference data from Silver Parquet.
+    and to the feature rows the scorer reads from Bigtable.
     """
     df = df.copy()
 

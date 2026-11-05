@@ -17,11 +17,11 @@ Two targets are produced:
       structurally low AUC/AUPRC, so it is not the bar the model must clear.
       days_of_supply = current_qty / max(avg_daily_sales_7d, EPS)
 
-  continuous_risk_score (float, 0.0–1.0)
+  stockout_risk_score (float, 0.0–1.0)
       Closed-form probability from a Normal approximation. It is the baseline
       the PyTorch model must outperform (see evaluation/metrics.py): if the
       network cannot beat a formula of three of its own inputs, it is not
-      adding value. It is also the stockout_risk_score the batch scorer publishes.
+      adding value. The batch scorer publishes the same value under the same name.
       Computed as:
 
           P(stockout ≤ horizon) ≈ Φ((horizon − μ) / σ)
@@ -53,7 +53,7 @@ def generate_labels(
     horizon_days: int = HORIZON_DAYS,
 ) -> pd.DataFrame:
     """
-    Attach stockout_label_7d, baseline_pred, and continuous_risk_score to
+    Attach stockout_label_7d, baseline_pred, and stockout_risk_score to
     each row in `feature_rows`.
 
     Parameters
@@ -83,7 +83,7 @@ def generate_labels(
     result = feature_rows.copy()
     result["stockout_label_7d"]    = labels["stockout_label_7d"].values
     result["baseline_pred"]        = labels["baseline_pred"].values
-    result["continuous_risk_score"] = labels["continuous_risk_score"].values
+    result["stockout_risk_score"] = labels["stockout_risk_score"].values
 
     pos_rate  = result["stockout_label_7d"].mean()
     logger.info(
@@ -145,7 +145,7 @@ def _compute_labels(
         rows.append({
             "stockout_label_7d":     stockout,
             "baseline_pred":         baseline,
-            "continuous_risk_score": continuous,
+            "stockout_risk_score": continuous,
         })
 
     return pd.DataFrame(rows)

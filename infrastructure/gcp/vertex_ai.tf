@@ -1,5 +1,5 @@
 ###############################################################################
-# Vertex AI Infrastructure — Phase 5
+# Vertex AI Infrastructure
 # Artifact Registry, Vertex AI Endpoint, serving service account + IAM.
 #
 # Resources created here do NOT deploy any model or container. They provision
@@ -93,7 +93,7 @@ resource "google_service_account" "vertex_sa" {
   project      = var.project_id
   account_id   = "scip-vertex-sa"
   display_name = "SCIP Vertex AI Service Account"
-  description  = "Used by the batch scorer and Vertex AI serving container (Phase 5)"
+  description  = "Used by the batch scorer and Vertex AI serving container"
 
   depends_on = [google_project_service.iam]
 }
