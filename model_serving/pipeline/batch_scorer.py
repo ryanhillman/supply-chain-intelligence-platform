@@ -253,7 +253,6 @@ class BatchScorer:
         stats.score_std  = float(np.std(all_scores))
         stats.variance_collapsed = stats.prob_std < _VARIANCE_COLLAPSE_THRESHOLD
 
-        self._log_summary(stats)
         return stats
 
     # ── Internal helpers ───────────────────────────────────────────────────────
@@ -324,43 +323,6 @@ class BatchScorer:
                 logger.error("Publish failed for %s: %s", row_key, exc)
 
         return n_published
-
-    def _log_summary(self, stats: ScoringStats) -> None:
-        logger.info(
-            "=== Batch Scoring Summary ===\n"
-            "  model_version           : %s\n"
-            "  rows_scanned            : %d\n"
-            "  rows_stale              : %d\n"
-            "  rows_scored             : %d\n"
-            "  batches_sent            : %d\n"
-            "  predictions_published   : %d\n"
-            "  publish_failures        : %d\n"
-            "  mean_endpoint_latency   : %.1f ms\n"
-            "  shortage_prob_7d        : mean=%.4f  std=%.4f\n"
-            "  stockout_risk_score     : mean=%.4f  std=%.4f\n"
-            "  variance_collapsed      : %s\n"
-            "  elapsed                 : %.1f s",
-            stats.model_version,
-            stats.rows_scanned,
-            stats.rows_stale,
-            stats.rows_scored,
-            stats.batches_sent,
-            stats.predictions_published,
-            stats.publish_failures,
-            stats.mean_endpoint_latency_ms,
-            stats.prob_mean, stats.prob_std,
-            stats.score_mean, stats.score_std,
-            stats.variance_collapsed,
-            stats.elapsed_seconds,
-        )
-
-        if stats.variance_collapsed:
-            logger.warning(
-                "DISTRIBUTION SHIFT ALERT: shortage_prob_7d std=%.4f < %.2f. "
-                "Model predictions have collapsed to a near-constant value. "
-                "Run monitor.py to check feature drift.",
-                stats.prob_std, _VARIANCE_COLLAPSE_THRESHOLD,
-            )
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────

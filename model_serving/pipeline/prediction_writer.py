@@ -267,7 +267,6 @@ class PredictionWriter:
             )
 
         stats.elapsed_seconds = time.perf_counter() - t_start
-        self._log_summary(stats)
         return stats
 
     def close(self) -> None:
@@ -426,25 +425,6 @@ class PredictionWriter:
             return None
 
     # ── Logging ────────────────────────────────────────────────────────────────
-
-    def _log_summary(self, stats: WriterStats) -> None:
-        logger.info(
-            "=== Prediction Writer Summary ===\n"
-            "  batches_processed     : %d\n"
-            "  messages_pulled       : %d\n"
-            "  bigtable_rows_written : %d\n"
-            "  bigtable_rows_failed  : %d\n"
-            "  messages_acknowledged : %d\n"
-            "  messages_nacked       : %d\n"
-            "  elapsed               : %.1f s",
-            stats.batches_processed,
-            stats.messages_pulled,
-            stats.bigtable_rows_written,
-            stats.bigtable_rows_failed,
-            stats.messages_acknowledged,
-            stats.messages_nacked,
-            stats.elapsed_seconds,
-        )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
