@@ -197,6 +197,12 @@ Features are raw values in training order; the IDs are integer indices from `fea
 
 ---
 
+## Model Promotion
+
+Promotion goes through two commands of `model_serving/scripts/deploy.py`. `deploy` puts a newly registered model on the endpoint as a challenger, at 0% traffic by default. `promote` compares it with the champion, the model receiving traffic, and moves all traffic to the challenger only if it is better on all three test metrics: AUPRC, AUC-ROC and Brier score. If the two models were evaluated on different test splits, both are first rescored on the challenger's split.
+
+---
+
 ## Drift Monitoring
 
 The drift monitor compares live features in Bigtable with the training split using the Population Stability Index (PSI). Its reference bins (deciles of the raw training split) are written next to the model as `drift_reference.json`, so the reference travels with the model. PSI thresholds:
