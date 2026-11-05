@@ -107,7 +107,6 @@ ml_training/artifacts/**/*.parquet
 ml_training/artifacts/**/*.pt
 ml_training/artifacts/**/*.pkl
 ml_training/artifacts/**/*.onnx
-ml_training/artifacts/**/*.onnx.data
 ml_training/artifacts/**/*.json
 ml_training/artifacts/dataset/
 

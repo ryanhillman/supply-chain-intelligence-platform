@@ -291,18 +291,15 @@ class ModelPromoter:
         return self._download_model_files(info.artifact_uri, workdir / info.deployed_model_id)
 
     def _download_model_files(self, artifact_uri: str, dest: Path) -> tuple[Path, dict]:
-        """Fetch model.onnx (+ sidecar if any) and feature_metadata.json into dest."""
+        """Fetch model.onnx and feature_metadata.json into dest."""
         bucket_name, prefix = _split_gcs_uri(artifact_uri)
         bucket = self._storage_client.bucket(bucket_name)
         dest.mkdir(parents=True, exist_ok=True)
 
-        for fname, required in (("model.onnx", True), ("model.onnx.data", False),
-                                ("feature_metadata.json", True)):
+        for fname in ("model.onnx", "feature_metadata.json"):
             blob = bucket.blob(f"{prefix}/{fname}")
             if not blob.exists():
-                if required:
-                    raise FileNotFoundError(f"{fname} not found at {artifact_uri}")
-                continue
+                raise FileNotFoundError(f"{fname} not found at {artifact_uri}")
             blob.download_to_filename(str(dest / fname))
 
         with open(dest / "feature_metadata.json") as f:

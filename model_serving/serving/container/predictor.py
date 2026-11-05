@@ -148,13 +148,7 @@ class ONNXPredictor:
         return Path(path.rstrip("/")).name
 
     def _download_model_files(self) -> None:
-        """
-        Download model.onnx and model.onnx.data (if present) from GCS.
-
-        model.onnx.data is the external weights sidecar created when PyTorch
-        exports large models. onnxruntime requires it to be co-located with
-        model.onnx at load time.
-        """
+        """Download model.onnx and feature_metadata.json from GCS."""
         path_without_scheme = self._gcs_path.removeprefix("gs://")
         bucket_name, _, prefix = path_without_scheme.partition("/")
         prefix = prefix.rstrip("/") + "/"
@@ -172,7 +166,7 @@ class ONNXPredictor:
         downloaded: list[str] = []
         for blob in blobs:
             filename = blob.name.rsplit("/", 1)[-1]
-            if filename in ("model.onnx", "model.onnx.data", _METADATA_FILENAME):
+            if filename in ("model.onnx", _METADATA_FILENAME):
                 dest = self._model_dir / filename
                 blob.download_to_filename(str(dest))
                 downloaded.append(filename)
