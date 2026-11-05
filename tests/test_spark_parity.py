@@ -31,9 +31,9 @@ from pyspark.sql import SparkSession  # noqa: E402
 
 from config.feature_config import FEATURE_REGISTRY  # noqa: E402
 from jobs.bronze_ingestion import TOPIC_SCHEMA_MAP, prepare_bronze_df  # noqa: E402
-from jobs.silver_features import compute_features  # noqa: E402
+from jobs.silver_features import _risk, compute_features  # noqa: E402
 from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler  # noqa: E402
-from ml_training.datasets.feature_engineer import fill_defaults  # noqa: E402
+from ml_training.datasets.feature_engineer import engineer_features, fill_defaults  # noqa: E402
 from model_serving.pipeline.request_builder import _RAW_FEATURES  # noqa: E402
 from world_fixture import (  # noqa: E402
     BRONZE_PARTITIONS,
@@ -92,3 +92,19 @@ def test_silver_matches_the_sampler_on_every_raw_feature(spark, bronze):
                 actual[col].astype(float).to_numpy(), expected[col].astype(float).to_numpy(),
                 rtol=1e-9, atol=1e-9, err_msg=f"{col} on {as_of}",
             )
+
+
+def test_silver_days_of_supply_is_the_models_formula(spark):
+    # current_qty, avg_daily_sales_7d: in range; out of stock with no sales;
+    # in stock with no sales; no sales recorded at all; over the cap.
+    cases = [(50.0, 10.0), (0.0, 0.0), (50.0, 0.0), (50.0, None), (5000.0, 1.0)]
+    silver = _risk(spark.createDataFrame(
+        [(i, qty, avg) for i, (qty, avg) in enumerate(cases)],
+        "i int, inventory__current_qty double, velocity__avg_daily_sales_7d double",
+    )).orderBy("i").collect()
+
+    raw = pd.DataFrame(cases, columns=["current_qty", "avg_daily_sales_7d"])
+    model = engineer_features(raw.reindex(columns=list(_RAW_FEATURES)))["days_of_supply"].tolist()
+
+    assert [r["inventory__days_of_supply"] for r in silver] == model == [5.0, 0.0, 365.0, 365.0, 365.0]
+    assert [r["risk__reorder_urgency"] for r in silver] == [2, 3, 0, 0, 0]

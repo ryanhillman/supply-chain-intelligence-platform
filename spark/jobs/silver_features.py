@@ -38,6 +38,8 @@ from pyspark.sql.window import Window
 import pyspark.sql.functions as F
 
 from config.feature_config import (
+    DAYS_OF_SUPPLY_CAP,
+    DAYS_OF_SUPPLY_EPS,
     REORDER_CRITICAL_DAYS,
     REORDER_WATCH_DAYS,
     STOCKOUT_CRITICAL_DAYS,
@@ -219,13 +221,18 @@ def _supplier(supplier_90d: DataFrame, po_90d: DataFrame, shipments_30d: DataFra
 def _risk(df: DataFrame) -> DataFrame:
     """
     days_of_supply and reorder_urgency (0 OK, 1 WATCH, 2 REORDER, 3 CRITICAL).
+    days_of_supply is the formula the model's input uses
+    (ml_training/datasets/feature_engineer.py): with no sales it is the cap
+    for an entity in stock and 0 for one that is out.
     stockout_risk_score and shortage_prob_7d stay null in Silver: predictions
     are stored in Bigtable, never written back here.
     """
-    dos = F.when(
-        F.col("velocity__avg_daily_sales_7d") > 0,
-        F.col("inventory__current_qty") / F.col("velocity__avg_daily_sales_7d"),
-    ).otherwise(F.lit(999.0))   # no recent sales: effectively unlimited supply
+    # greatest() skips a null average (a pair with no sales in 30 days).
+    dos = F.least(
+        F.col("inventory__current_qty")
+        / F.greatest(F.col("velocity__avg_daily_sales_7d"), F.lit(DAYS_OF_SUPPLY_EPS)),
+        F.lit(DAYS_OF_SUPPLY_CAP),
+    )
     return (
         df.withColumn("inventory__days_of_supply", dos)
         .withColumn("risk__reorder_urgency",
