@@ -207,11 +207,10 @@ The drift monitor compares live features in Bigtable with the training split usi
 | 0.10 – 0.20 | Warning — investigate distribution shift |
 | ≥ 0.20 | Trigger — flagged as a retraining recommendation |
 
-Retraining is recommended when any of these trips:
+Retraining is recommended when either of these trips:
 
 - PSI ≥ 0.20 on `days_of_supply`, `sales_7d` or `avg_daily_sales_7d`
-- Prediction variance collapse: standard deviation of `shortage_prob_7d` or `stockout_risk_score` below 0.01 across scored entities
-- Baseline divergence: the model agrees with the `risk__reorder_urgency` rule on more than 95% of entities
+- Prediction variance collapse: standard deviation of `shortage_prob_7d` below 0.01 across scored entities
 
 `supplier_reliability` is computed per warehouse, so a snapshot holds only six values, too few for PSI. Each warehouse's value is checked against its training p1–p99, and an out-of-range warehouse is reported as a warning, not a trigger.
 

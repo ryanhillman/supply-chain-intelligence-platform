@@ -5,8 +5,8 @@ Background
 ----------
 A model scored on features unlike its training data keeps returning
 predictions; nothing fails. This monitor detects that kind of shift: feature
-PSI against the training split, prediction spread, and agreement with the
-reorder-urgency rule, flagged in the printed report / drift_report.json.
+PSI against the training split and the spread of the model's predictions,
+flagged in the printed report / drift_report.json.
 It is advisory only: nothing in score.py, batch_scorer.py or promote_model.py
 reads requires_retraining back, so it does not block or reject predictions.
 A human has to act on the report.
@@ -21,8 +21,8 @@ Flow
    - FeatureClient.scan_all() returns raw Bigtable features.
    - fill_defaults() + engineer_features() derive all 21 features.
    - Extract the PSI features and the warehouse-grain features.
-3. Read current predictions from Bigtable predictions column family
-   (shortage_prob_7d, stockout_risk_score) — optional; skipped if empty.
+3. Read shortage_prob_7d from the Bigtable predictions column family —
+   optional; skipped if empty.
 4. Compute PSI for each monitored feature using bins at the deciles of the
    raw training rows (drift_reference.json). supplier_reliability is a
    per-warehouse 90-day rate, so a snapshot holds 6 values, too few for a
@@ -34,12 +34,10 @@ Flow
      PSI < 0.10  → stable
      0.10 ≤ PSI < 0.20 → warning
      PSI ≥ 0.20  → retraining trigger
-6. Detect prediction variance collapse: std < 0.01.
-7. Compare the model's binary risk call (shortage_prob_7d >= 0.5) against
-   the rule-based risk__reorder_urgency heuristic (urgency >= REORDER) for
-   every entity with both values present. Agreement > 95% means the model
-   adds no signal over the heuristic — retraining trigger.
-8. Print a tabular report. Optionally emit Cloud Monitoring metrics.
+6. Detect prediction variance collapse: std of shortage_prob_7d < 0.01.
+   stockout_risk_score is not checked: it is a formula of stock and sales,
+   so its spread reflects stock levels, not the model.
+7. Print a tabular report. Optionally emit Cloud Monitoring metrics.
 
 PSI formula
 -----------
@@ -95,13 +93,6 @@ _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
 _PSI_STABLE_THRESHOLD  = 0.10
 _PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
 
-# Baseline divergence: if the model's binary
-# risk call agrees with the rule-based risk__reorder_urgency heuristic more
-# than this fraction of the time, the model adds no signal over the heuristic.
-_BASELINE_DIVERGENCE_THRESHOLD = 0.95
-_BASELINE_PROB_THRESHOLD       = 0.5   # shortage_prob_7d >= this → model says "at risk"
-_BASELINE_AT_RISK_URGENCY_MIN  = 2     # urgency >= REORDER(2) → heuristic says "at risk"
-
 # Monitored features come from ml_training.evaluation.drift_reference, shared
 # with the trainer, which writes their PSI bins next to the model.
 
@@ -125,28 +116,12 @@ class FeatureMetrics:
 
 @dataclass
 class PredictionMetrics:
-    """Variance stats read from the Bigtable predictions column family."""
+    """Spread of shortage_prob_7d read from the Bigtable predictions column family."""
 
-    prob_mean:                float
-    prob_std:                 float
-    score_mean:               float
-    score_std:                float
-    prob_variance_collapsed:  bool
-    score_variance_collapsed: bool
-    n_entities:               int
-
-
-@dataclass
-class BaselineDivergenceMetrics:
-    """
-    Agreement between the model's binary risk call and the rule-based
-    risk__reorder_urgency heuristic.
-    """
-
-    n_compared:     int
-    n_agree:        int
-    agreement_rate: float
-    status:         str   # "stable" | "trigger"
+    prob_mean:               float
+    prob_std:                float
+    prob_variance_collapsed: bool
+    n_entities:              int
 
 
 @dataclass
@@ -169,7 +144,6 @@ class DriftReport:
     feature_metrics:    list[FeatureMetrics]
     range_metrics:      list[WarehouseRangeMetrics]
     prediction_metrics: PredictionMetrics | None
-    baseline_metrics:   BaselineDivergenceMetrics | None
     requires_retraining: bool
     trigger_reasons:    list[str]  # human-readable reasons for retraining flag
     warnings:           list[str]  # informational only; never set requires_retraining
@@ -256,7 +230,6 @@ class DriftMonitor:
             project_id=project_id, instance_id=instance_id,
             table_id=table_id, credentials_path=credentials_path,
         )
-        self._prediction_rows_cache = None
 
         logger.info(
             "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
@@ -278,8 +251,8 @@ class DriftMonitor:
         Parameters
         ----------
         read_predictions:
-            If True, read shortage_prob_7d and stockout_risk_score from the
-            Bigtable predictions column family to compute variance stats.
+            If True, read shortage_prob_7d from the Bigtable predictions
+            column family to compute variance stats.
             Set False if Phase 5.4 scoring has not been run yet.
         report_path:
             If provided, save the DriftReport as JSON to this path.
@@ -293,7 +266,6 @@ class DriftMonitor:
         DriftReport
         """
         run_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._prediction_rows_cache = None   # one Bigtable prediction read per run
         logger.info("=== SCIP Drift Monitor — %s ===", run_ts)
 
         # Step 1: collect current feature values from Bigtable.
@@ -330,32 +302,10 @@ class DriftMonitor:
                     prediction_metrics.prob_mean, prediction_metrics.prob_std,
                     prediction_metrics.prob_variance_collapsed,
                 )
-                logger.info(
-                    "  stockout_risk_score mean=%.4f  std=%.4f  collapsed=%s",
-                    prediction_metrics.score_mean, prediction_metrics.score_std,
-                    prediction_metrics.score_variance_collapsed,
-                )
             else:
                 logger.warning(
                     "No predictions found in Bigtable predictions family. "
                     "Run model_serving/scripts/score.py first."
-                )
-
-        # Step 3b: compare model predictions against the rule-based heuristic.
-        baseline_metrics: BaselineDivergenceMetrics | None = None
-        if read_predictions:
-            logger.info("Comparing predictions against risk__reorder_urgency heuristic ...")
-            baseline_metrics = self._collect_baseline_divergence()
-            if baseline_metrics:
-                logger.info(
-                    "  baseline agreement=%.4f  n=%d  %s",
-                    baseline_metrics.agreement_rate, baseline_metrics.n_compared,
-                    baseline_metrics.status.upper(),
-                )
-            else:
-                logger.warning(
-                    "No entities with both a prediction and a risk__reorder_urgency "
-                    "value — skipping baseline divergence check."
                 )
 
         # Step 4: build report and assess retraining recommendation.
@@ -370,23 +320,10 @@ class DriftMonitor:
             "training p1-p99 (informational, not a retraining trigger)"
             for rm in range_metrics if rm.status == "warning"
         ]
-        if prediction_metrics:
-            if prediction_metrics.prob_variance_collapsed:
-                trigger_reasons.append(
-                    f"shortage_prob_7d variance collapsed: "
-                    f"std={prediction_metrics.prob_std:.4f} < {_VARIANCE_COLLAPSE_THRESHOLD}"
-                )
-            if prediction_metrics.score_variance_collapsed:
-                trigger_reasons.append(
-                    f"stockout_risk_score variance collapsed: "
-                    f"std={prediction_metrics.score_std:.4f} < {_VARIANCE_COLLAPSE_THRESHOLD}"
-                )
-        if baseline_metrics and baseline_metrics.status == "trigger":
+        if prediction_metrics and prediction_metrics.prob_variance_collapsed:
             trigger_reasons.append(
-                f"baseline divergence: model agrees with risk__reorder_urgency "
-                f"heuristic {baseline_metrics.agreement_rate:.1%} of the time "
-                f"(n={baseline_metrics.n_compared}) "
-                f"> {_BASELINE_DIVERGENCE_THRESHOLD:.0%} — model adds no signal"
+                f"shortage_prob_7d variance collapsed: "
+                f"std={prediction_metrics.prob_std:.4f} < {_VARIANCE_COLLAPSE_THRESHOLD}"
             )
 
         report = DriftReport(
@@ -394,7 +331,6 @@ class DriftMonitor:
             feature_metrics     = feature_metrics,
             range_metrics       = range_metrics,
             prediction_metrics  = prediction_metrics,
-            baseline_metrics    = baseline_metrics,
             requires_retraining = bool(trigger_reasons),
             trigger_reasons     = trigger_reasons,
             warnings            = warnings,
@@ -474,62 +410,22 @@ class DriftMonitor:
             display_name, feature_name, values, ranges, out, "warning" if out else "stable"
         )
 
-    def _prediction_rows(self):
-        """One read of the predictions family and risk:urgency per run, shared
-        by the variance-collapse and baseline-divergence checks."""
-        if self._prediction_rows_cache is None:
-            self._prediction_rows_cache = self._feature_client.read_predictions()
-        return self._prediction_rows_cache
-
     def _collect_prediction_values(self) -> PredictionMetrics | None:
-        """Variance statistics of shortage_prob_7d and stockout_risk_score.
-        Returns None if no prediction rows are found."""
-        rows   = self._prediction_rows()
-        probs  = np.array([r.shortage_prob_7d    for r in rows if r.shortage_prob_7d    is not None], dtype=float)
-        scores = np.array([r.stockout_risk_score for r in rows if r.stockout_risk_score is not None], dtype=float)
-        if len(probs) == 0 and len(scores) == 0:
+        """Mean and spread of shortage_prob_7d. Returns None if no predictions are found."""
+        probs = np.array(
+            [r.shortage_prob_7d for r in self._feature_client.read_predictions()
+             if r.shortage_prob_7d is not None],
+            dtype=float,
+        )
+        if len(probs) == 0:
             return None
 
-        prob_std  = float(np.std(probs))  if len(probs)  > 1 else 0.0
-        score_std = float(np.std(scores)) if len(scores) > 1 else 0.0
+        prob_std = float(np.std(probs)) if len(probs) > 1 else 0.0
         return PredictionMetrics(
-            prob_mean                = float(np.mean(probs))  if len(probs)  else 0.0,
-            prob_std                 = prob_std,
-            score_mean               = float(np.mean(scores)) if len(scores) else 0.0,
-            score_std                = score_std,
-            prob_variance_collapsed  = prob_std  < _VARIANCE_COLLAPSE_THRESHOLD,
-            score_variance_collapsed = score_std < _VARIANCE_COLLAPSE_THRESHOLD,
-            n_entities               = max(len(probs), len(scores)),
-        )
-
-    def _collect_baseline_divergence(self) -> BaselineDivergenceMetrics | None:
-        """
-        Compare the model's binary risk call against the rule-based
-        risk__reorder_urgency heuristic for every entity that has both.
-
-        model_at_risk     = shortage_prob_7d >= _BASELINE_PROB_THRESHOLD
-        heuristic_at_risk = reorder_urgency  >= _BASELINE_AT_RISK_URGENCY_MIN
-
-        Returns None if no entity has both values present.
-        """
-        pairs = [
-            (r.shortage_prob_7d, r.reorder_urgency)
-            for r in self._prediction_rows()
-            if r.shortage_prob_7d is not None and r.reorder_urgency is not None
-        ]
-        if not pairs:
-            return None
-
-        n_agree = sum(
-            1 for prob, urgency in pairs
-            if (prob >= _BASELINE_PROB_THRESHOLD) == (urgency >= _BASELINE_AT_RISK_URGENCY_MIN)
-        )
-        agreement_rate = n_agree / len(pairs)
-        return BaselineDivergenceMetrics(
-            n_compared     = len(pairs),
-            n_agree        = n_agree,
-            agreement_rate = agreement_rate,
-            status         = "trigger" if agreement_rate > _BASELINE_DIVERGENCE_THRESHOLD else "stable",
+            prob_mean               = float(np.mean(probs)),
+            prob_std                = prob_std,
+            prob_variance_collapsed = prob_std < _VARIANCE_COLLAPSE_THRESHOLD,
+            n_entities              = len(probs),
         )
 
     # ── PSI computation ────────────────────────────────────────────────────────
@@ -709,42 +605,16 @@ class DriftMonitor:
             pm = report.prediction_metrics
             print(f"\nPrediction Variance  (n={pm.n_entities} entities)")
             print(sep2)
+            flag = f"  [COLLAPSED < {_VARIANCE_COLLAPSE_THRESHOLD}]" if pm.prob_variance_collapsed else ""
+            print(f"  {'shortage_prob_7d':<28} mean={pm.prob_mean:>7.4f}  std={pm.prob_std:>7.4f}{flag}")
 
-            def _var_line(name, mean, std, collapsed):
-                flag = f"  [COLLAPSED < {_VARIANCE_COLLAPSE_THRESHOLD}]" if collapsed else ""
-                print(f"  {name:<28} mean={mean:>7.4f}  std={std:>7.4f}{flag}")
-
-            _var_line("shortage_prob_7d",    pm.prob_mean,  pm.prob_std,  pm.prob_variance_collapsed)
-            _var_line("stockout_risk_score", pm.score_mean, pm.score_std, pm.score_variance_collapsed)
-
-            if pm.prob_variance_collapsed or pm.score_variance_collapsed:
+            if pm.prob_variance_collapsed:
                 print(
                     "\n  [NOTE] Near-constant predictions mean the model no longer separates\n"
                     "         entities. Check the feature PSI above and retrain."
                 )
         else:
             print("\nPrediction Variance  — no predictions in Bigtable yet")
-            print(sep2)
-            print("  Run model_serving/scripts/score.py first to populate predictions.")
-
-        # Baseline divergence table
-        if report.baseline_metrics:
-            bm = report.baseline_metrics
-            print("\nBaseline Divergence  (vs. risk__reorder_urgency heuristic)")
-            print(sep2)
-            flag = "  [TRIGGER]" if bm.status == "trigger" else ""
-            print(
-                f"  agreement={bm.agreement_rate:.1%}  n={bm.n_compared}  "
-                f"threshold={_BASELINE_DIVERGENCE_THRESHOLD:.0%}{flag}"
-            )
-            if bm.status == "trigger":
-                print(
-                    "\n  [NOTE] The model agrees with the rule-based heuristic on\n"
-                    "         almost every entity — it is not adding predictive signal\n"
-                    "         over the simple days-of-supply threshold."
-                )
-        else:
-            print("\nBaseline Divergence  — no entities with both a prediction and urgency value")
             print(sep2)
             print("  Run model_serving/scripts/score.py first to populate predictions.")
 
@@ -813,23 +683,13 @@ class DriftMonitor:
             "prediction_variance": {
                 "prob_mean":               report.prediction_metrics.prob_mean,
                 "prob_std":                report.prediction_metrics.prob_std,
-                "score_mean":              report.prediction_metrics.score_mean,
-                "score_std":               report.prediction_metrics.score_std,
                 "prob_variance_collapsed": report.prediction_metrics.prob_variance_collapsed,
-                "score_variance_collapsed": report.prediction_metrics.score_variance_collapsed,
                 "n_entities":              report.prediction_metrics.n_entities,
             } if report.prediction_metrics else None,
-            "baseline_divergence": {
-                "n_compared":     report.baseline_metrics.n_compared,
-                "n_agree":        report.baseline_metrics.n_agree,
-                "agreement_rate": report.baseline_metrics.agreement_rate,
-                "status":         report.baseline_metrics.status,
-            } if report.baseline_metrics else None,
             "thresholds": {
                 "psi_stable":           _PSI_STABLE_THRESHOLD,
                 "psi_trigger":          _PSI_WARNING_THRESHOLD,
                 "variance_collapse":    _VARIANCE_COLLAPSE_THRESHOLD,
-                "baseline_divergence":  _BASELINE_DIVERGENCE_THRESHOLD,
                 "n_psi_bins":           _N_BINS,
             },
         }
@@ -849,8 +709,6 @@ class DriftMonitor:
           custom.googleapis.com/scip/drift/feature_psi  [GAUGE, double]
             label: feature_name
           custom.googleapis.com/scip/drift/prob_std     [GAUGE, double]
-          custom.googleapis.com/scip/drift/score_std    [GAUGE, double]
-          custom.googleapis.com/scip/drift/baseline_agreement_rate  [GAUGE, double]
           custom.googleapis.com/scip/drift/retraining_required  [GAUGE, int64]
 
         Requires:
@@ -922,19 +780,9 @@ class DriftMonitor:
 
         # Prediction variance
         if report.prediction_metrics:
-            pm = report.prediction_metrics
             time_series.append(_build_series(
-                "custom.googleapis.com/scip/drift/prob_std",  pm.prob_std
-            ))
-            time_series.append(_build_series(
-                "custom.googleapis.com/scip/drift/score_std", pm.score_std
-            ))
-
-        # Baseline divergence
-        if report.baseline_metrics:
-            time_series.append(_build_series(
-                "custom.googleapis.com/scip/drift/baseline_agreement_rate",
-                report.baseline_metrics.agreement_rate,
+                "custom.googleapis.com/scip/drift/prob_std",
+                report.prediction_metrics.prob_std,
             ))
 
         # Retraining flag (1 = required, 0 = not required)
