@@ -11,8 +11,8 @@ Flow
    The endpoint returns {"shortage_prob_7d": float} per instance (see
    model_serving/serving/container/main.py). stockout_risk_score is the
    closed-form Normal-approximation P(stockout ≤ 7d) that RequestBuilder
-   computes from the raw features — the same formula as the
-   continuous_risk_score training column.
+   computes from the raw features — the same formula as the training
+   rows' stockout_risk_score column.
 4. For each prediction: build a JSON Pub/Sub message and publish to the
    prediction-results topic.
 

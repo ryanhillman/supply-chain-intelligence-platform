@@ -3,7 +3,7 @@ evaluate.py — standalone evaluation runner.
 
 Loads model artifacts from output_dir, runs inference on a dataset split,
 compares the model against the closed-form Normal-approximation baseline
-(continuous_risk_score) with the days_of_supply < 7 rule reported for
+(stockout_risk_score) with the days_of_supply < 7 rule reported for
 context, and saves an evaluation report JSON.
 
 Called by scripts/evaluate.py.

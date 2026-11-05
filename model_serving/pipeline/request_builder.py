@@ -57,7 +57,7 @@ class ScoringRequest:
     stockout_risk_score:
         Closed-form Normal-approximation P(stockout ≤ horizon) from the raw
         current_qty / avg_daily_sales_7d / stddev_daily_7d — the same formula
-        as the continuous_risk_score training column. Published next to the
+        as the training rows' stockout_risk_score column. Published next to the
         endpoint's shortage_prob_7d; not a model output.
     """
 
