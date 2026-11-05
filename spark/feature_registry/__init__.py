@@ -122,13 +122,5 @@ def encode_cell(column: str, value) -> bytes | None:
 
 
 def decode_double(value: bytes) -> float | None:
-    """
-    A numeric cell as a float. An 8-byte value is a big-endian double; anything
-    else is tried as a UTF-8 number (a non-standard write). None if neither.
-    """
-    if len(value) == 8:
-        return struct.unpack(">d", value)[0]
-    try:
-        return float(value.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None
+    """A numeric cell, an 8-byte big-endian double, as a float. None for anything else."""
+    return struct.unpack(">d", value)[0] if len(value) == 8 else None

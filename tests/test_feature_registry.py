@@ -48,10 +48,9 @@ def test_strings_and_nulls():
     assert encode_cell("velocity__sales_7d", "not a number") is None
 
 
-def test_decode_accepts_a_utf8_number_and_rejects_anything_else():
-    assert decode_double(b"0.25") == 0.25
-    assert decode_double(b"SALE") is None
-    assert decode_double(b"\xff\xfe") is None
+def test_decode_rejects_anything_but_an_8_byte_double():
+    assert decode_double(b"0.25") is None
+    assert decode_double(b"") is None
 
 
 def test_training_reads_the_same_inputs_and_has_a_default_for_each():
