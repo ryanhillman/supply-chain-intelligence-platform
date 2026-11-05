@@ -26,7 +26,6 @@ from ml_training.datasets.feature_engineer import (
 from ml_training.evaluation.drift_reference import build_drift_reference, write_drift_reference
 from ml_training.evaluation.metrics import compute_metrics
 from ml_training.training.config import TrainingConfig
-from ml_training.training.loss import build_loss
 from ml_training.training.model import ShortagePredictor
 
 logger = logging.getLogger(__name__)
@@ -137,8 +136,7 @@ class Trainer:
 
         model = ShortagePredictor.from_metadata(metadata, self.config)
 
-        pos_weight = float(metadata.get("pos_weight", 1.0))
-        criterion  = build_loss(self.config, pos_weight)
+        criterion  = nn.BCEWithLogitsLoss()
         optimizer  = torch.optim.AdamW(
             model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay
         )

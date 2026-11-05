@@ -25,7 +25,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
@@ -245,7 +244,6 @@ class DatasetBuilder:
                 "val_frac":   VAL_FRAC,
             },
             "positive_rate_train": pos_rate_train,
-            "pos_weight":          _compute_pos_weight(train[TARGET_COL].values),
             "created_at":          datetime.now(timezone.utc).isoformat(),
         }
         metadata_path = self.output_dir / "feature_metadata.json"
@@ -286,14 +284,3 @@ class DatasetBuilder:
         logger.info("DatasetBuilder complete: %s", asdict(manifest))
         return manifest
 
-
-def _compute_pos_weight(labels: np.ndarray) -> float:
-    """
-    n_negative / n_positive for BCEWithLogitsLoss pos_weight.
-    Clamped to [0.1, 10.0] to avoid extreme weighting on tiny datasets.
-    """
-    n_pos = float(labels.sum())
-    n_neg = float(len(labels) - n_pos)
-    if n_pos == 0:
-        return 1.0
-    return float(np.clip(n_neg / n_pos, 0.1, 10.0))

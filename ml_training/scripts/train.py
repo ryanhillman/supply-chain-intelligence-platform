@@ -48,11 +48,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int,   default=64)
     p.add_argument("--lr",         type=float, default=1e-3)
     p.add_argument("--patience",   type=int,   default=10)
-    p.add_argument(
-        "--loss",
-        choices=["bce", "weighted_bce"],
-        default="bce",
-    )
     return p.parse_args()
 
 
@@ -80,7 +75,6 @@ def main() -> None:
         batch_size = args.batch_size,
         lr         = args.lr,
         patience   = args.patience,
-        loss_type  = args.loss,
         dataset_dir = str(dataset),
         output_dir  = str(output),
     )
