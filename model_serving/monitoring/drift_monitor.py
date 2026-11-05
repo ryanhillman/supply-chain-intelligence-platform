@@ -206,7 +206,7 @@ class DriftMonitor:
         self._engineer_features    = engineer_features
         self._fill_defaults        = fill_defaults
 
-        # Build lookup: flat feature name → scaler index
+        # Build lookup: flat feature name → index into feature_mean / feature_scale
         self._feature_to_idx: dict[str, int] = {
             name: i for i, name in enumerate(NUMERIC_FEATURE_COLS)
         }

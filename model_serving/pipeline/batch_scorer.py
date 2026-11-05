@@ -6,7 +6,7 @@ Flow
 1. FeatureClient.scan_all() — scan all rows from Bigtable inventory_features,
    then split_fresh() drops rows whose lineage:silver_ts is older than
    max_feature_age_hours (default 48 h): stale features are not scored.
-2. RequestBuilder.build()   — fill defaults, engineer features, scale, map vocab.
+2. RequestBuilder.build()   — fill defaults, engineer features, map vocab.
 3. endpoint.predict()       — call the Vertex AI endpoint in batches of `batch_size`.
    The endpoint returns {"shortage_prob_7d": float} per instance (see
    model_serving/serving/container/main.py). stockout_risk_score is the
@@ -194,7 +194,7 @@ class BatchScorer:
             logger.warning("No fresh feature rows — aborting scoring run")
             return stats
 
-        # Step 2: apply defaults, engineer features, scale, vocab-map.
+        # Step 2: apply defaults, engineer features, vocab-map.
         requests = self._request_builder.build(feature_rows)
         stats.rows_scored = len(requests)
         # feature_rows holds only the fresh rows here, so stale rows are not counted.

@@ -1,9 +1,8 @@
 """
 PySpark schema for inventory.events Bronze topic.
 
-16 fields. FloatType for unit_cost (matches Avro float).
-The quantity_* fields are IntegerType (Avro int).
-reference_id is nullable — only present on TRANSFER events.
+16 fields, parsed from the producer's JSON. reference_id is nullable: it holds
+the purchase order ID on RECEIVE events and is null on SALE events.
 """
 from __future__ import annotations
 

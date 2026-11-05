@@ -111,7 +111,7 @@ class DatasetBuilder:
         inv_events:   "pd.DataFrame",
     ) -> DatasetManifest:
         """
-        Steps 2-8: labels, derived features, split, statistics, baselines and
+        Steps 2-10: labels, derived features, split, statistics, baselines and
         output files, from BronzeTemporalSampler's (feature_rows, inv_events).
         """
         # ── Step 2: Generate labels ────────────────────────────────────────────
@@ -219,7 +219,7 @@ class DatasetBuilder:
         test[cols_to_save].to_parquet(test_path,  index=False)
         logger.info("Parquet splits written to %s", self.output_dir)
 
-        # ── Step 10: Save feature metadata ───────────────────────────────────
+        # ── Step 9: Save feature metadata ────────────────────────────────────
         pos_rate_train = float(train[TARGET_COL].mean())
         metadata = {
             "numeric_features":   NUMERIC_FEATURE_COLS,
@@ -250,7 +250,7 @@ class DatasetBuilder:
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
 
-        # ── Step 11: Save baseline metrics ───────────────────────────────────
+        # ── Step 10: Save baseline metrics ───────────────────────────────────
         baseline_path = self.output_dir / "baseline_metrics.json"
         with open(baseline_path, "w") as f:
             json.dump(

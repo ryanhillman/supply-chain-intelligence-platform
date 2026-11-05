@@ -7,7 +7,7 @@
 #   broker       — Kafka KRaft broker/controller, reachable at kafka:29092
 #                  (internal) and localhost:9092 (host)
 #   kafka-init   — One-shot container that creates all topics then exits
-#   producer     — Continuous warehouse event simulator
+#   producer     — Replays the simulated world (simulation/world.py), then exits
 #
 # Network:
 #   kafka_scip-net — named so Spark containers can join it as an external network.

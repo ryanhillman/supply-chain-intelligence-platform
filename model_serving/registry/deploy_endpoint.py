@@ -12,10 +12,10 @@ Design
 Usage
 -----
     # First deployment (no champion yet): set traffic to 100
-    python model_serving/scripts/deploy.py --traffic 100
+    python model_serving/scripts/deploy.py deploy --traffic 100
 
     # Challenger deployment (champion already live): keep at 0, then promote
-    python model_serving/scripts/deploy.py --traffic 0
+    python model_serving/scripts/deploy.py deploy --traffic 0
     python model_serving/scripts/deploy.py promote   # after smoke test passes
 
 Required packages:

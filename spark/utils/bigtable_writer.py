@@ -10,8 +10,8 @@ Design:
     (avoids serialising the client object across the network)
   - Values encoded by feature_registry.encode_cell: big-endian double
     (numeric) or UTF-8 bytes (string)
-  - Cell timestamp = current wall-clock time so GC max_age policies work
-    correctly against write time, not window_end time
+  - Cell timestamp = current wall-clock time, so the newest cell is the
+    latest write; the GC policy keeps one version per column
   - Batch size controlled by BIGTABLE_BATCH_SIZE (default 500)
 
 Row key format: {warehouse_id}#{sku_id}
@@ -74,8 +74,8 @@ def _write_partition(
             row_key: str = spark_row["row_key"]
             bt_row = table.direct_row(row_key.encode("utf-8"))
 
-            # Timestamp applied to every cell in this row snapshot.
-            # Using wall-clock time so max_age GC policies trigger on write time.
+            # One wall-clock timestamp for every cell in this row, so the latest
+            # write is the newest cell version.
             cell_ts = datetime.now(timezone.utc)
 
             for col_name, (family, qualifier) in _COL_TO_FAMILY_QUALIFIER.items():

@@ -67,7 +67,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     All transformations use deterministic formulas with no dependency on
     the training set distribution. Safe to apply identically to train/val/test
-    and to inference data from Silver Parquet.
+    and to the feature rows the scorer reads from Bigtable.
     """
     df = df.copy()
 

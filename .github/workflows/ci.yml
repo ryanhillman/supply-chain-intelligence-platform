@@ -28,7 +28,7 @@ jobs:
 
       # CPU-only torch first, from PyTorch's index, so the requirements files'
       # "torch>=2.5,<3" constraint is already satisfied and pip does not pull
-      # the multi-GB CUDA build from PyPI (same approach as ml_training/Dockerfile).
+      # the multi-GB CUDA build from PyPI.
       #
       # The serving container's requirements.txt is NOT installed here: it pins
       # the image's exact versions (numpy 1.26.4, onnxruntime 1.19.2) for a

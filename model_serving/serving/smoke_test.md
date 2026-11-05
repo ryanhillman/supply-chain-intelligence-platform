@@ -72,7 +72,7 @@ Expected:
 ### 1e. Prediction request
 
 The 21 numeric features below are **all-zero raw values** (zero stock, zero sales)
-— valid shape, not a meaningful entity. The check is: response has 2 instances and
+— valid shape, not a meaningful entity. The check is: the response has 3 predictions and
 each `shortage_prob_7d` is a finite float in [0, 1].
 
 ```bash
