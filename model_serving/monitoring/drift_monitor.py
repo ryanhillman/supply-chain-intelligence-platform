@@ -492,13 +492,10 @@ class DriftMonitor:
         naive equal-frequency binning degenerates in that case.
 
         Both sides are in raw feature units: the reference bins come from the
-        raw training split (DatasetBuilder no longer standardizes the splits)
-        and the live values from engineer_features() on raw Bigtable cells. An
-        earlier version binned raw live values against standardized
-        training rows and reported PSI 2–8 (TRIGGER) for the training data
-        compared with itself; before that, a normal-quantile approximation
-        of the training distribution did the same for skewed features.
-        Neither path exists any more — see tests/test_drift_monitor_psi.py.
+        raw training split and the live values from engineer_features() on raw
+        Bigtable cells. Mixing units (standardized training rows against raw
+        live values) reports PSI 2–8 for the training data compared with
+        itself; tests/test_drift_monitor_psi.py pins that.
 
         PSI = Σ_i (A_i - E_i) × ln(A_i / E_i)
 

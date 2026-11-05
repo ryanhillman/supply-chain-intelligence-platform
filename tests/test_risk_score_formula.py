@@ -2,7 +2,7 @@
 Tests for feature_engineer.normal_stockout_prob — the one definition of the
 Normal-approximation P(stockout ≤ horizon) that serves as the
 stockout_risk_score column of the training rows, the evaluation baseline, and
-the value the batch scorer publishes (it is no longer a model head).
+the value the batch scorer publishes. It is not a model output.
 """
 import numpy as np
 from scipy.stats import norm

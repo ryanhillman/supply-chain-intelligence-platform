@@ -5,8 +5,7 @@ ranges for features computed per warehouse.
 Computed from the raw training split when the model is trained and written
 next to model.pt as drift_reference.json. The drift monitor reads this file,
 so its reference distribution travels with the model artifacts rather than
-with whatever train.parquet happens to be on the operator's disk — the same
-provenance problem the old preprocessor.pkl had.
+with whatever train.parquet happens to be on the operator's disk.
 
 Bins are the training rows' deciles, deduplicated (clustered features such as
 days_of_supply, capped at 365, collapse several decile edges onto one value),

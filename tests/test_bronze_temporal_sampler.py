@@ -1,10 +1,9 @@
 """
-Regression tests for ml_training/datasets/bronze_temporal_sampler.py's
-_velocity_features, covering the velocity_trend cold-start artifact fixed
-in this branch: avg_daily_sales_{7,30}d divided by hardcoded 7.0/30.0
-regardless of how much real history existed, so a pair with only a few
-days of sales got velocity_trend == 30/7 (~4.29) as a pure divisor
-artifact instead of a real trend.
+Tests for ml_training/datasets/bronze_temporal_sampler.py's
+_velocity_features and the velocity_trend cold-start artifact: dividing
+avg_daily_sales_{7,30}d by a fixed 7.0/30.0 regardless of how much history
+exists gives a pair with only a few days of sales velocity_trend == 30/7
+(~4.29), a divisor artifact instead of a real trend.
 
 The velocity tests build an instance via __new__ and call
 _velocity_features directly -- it only touches its DataFrame arguments.

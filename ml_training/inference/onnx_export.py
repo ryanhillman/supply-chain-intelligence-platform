@@ -141,7 +141,7 @@ def export_to_onnx(
     if prob_out.shape != (batch_size,):
         raise ValueError(f"Unexpected output shape: {prob_out.shape}")
 
-    # With the two rows now distinct, outputs should differ across the
+    # The two rows are distinct, so the outputs should differ across the
     # batch — if they didn't, that would indicate a broadcast/transpose bug
     # collapsing the batch dimension that identical dummy rows would hide.
     if prob_out[0] == prob_out[1]:
