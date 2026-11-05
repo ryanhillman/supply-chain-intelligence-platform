@@ -98,40 +98,15 @@ services:
         set -e
         echo "=== Creating source topics ==="
 
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic inventory.events \
-          --partitions 3 \
-          --replication-factor 1 \
-          --config retention.ms=2592000000
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic shipments.events \
-          --partitions 3 \
-          --replication-factor 1 \
-          --config retention.ms=2592000000
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic purchase.orders.events \
-          --partitions 3 \
-          --replication-factor 1 \
-          --config retention.ms=2592000000
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic demand.signals \
-          --partitions 3 \
-          --replication-factor 1 \
-          --config retention.ms=2592000000
-
-        kafka-topics --bootstrap-server kafka:29092 \
-          --create --if-not-exists \
-          --topic suppliers.events \
-          --partitions 3 \
-          --replication-factor 1 \
-          --config retention.ms=2592000000
+        for topic in inventory.events shipments.events purchase.orders.events \
+                     demand.signals suppliers.events; do
+          kafka-topics --bootstrap-server kafka:29092 \
+            --create --if-not-exists \
+            --topic "$$topic" \
+            --partitions 3 \
+            --replication-factor 1 \
+            --config retention.ms=2592000000
+        done
 
         echo "=== Verifying topics ==="
         kafka-topics --bootstrap-server kafka:29092 --list
