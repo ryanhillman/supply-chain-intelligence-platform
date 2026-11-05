@@ -24,16 +24,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import struct
 import sys
 
-# Bigtable column mapping — imported rather than duplicated so this dashboard
-# can't silently drift out of sync with FEATURE_REGISTRY the way it already
-# had (this local copy was missing avg_daily_sales_30d, velocity_trend,
-# stddev_daily_7d, and lead_time_stddev relative to the canonical mapping).
-from model_serving.pipeline.feature_client import (
-    _BIGTABLE_TO_FEATURE as _FEATURE_COLS,
-    _FEATURE_FAMILIES,
+# The Bigtable column mapping and cell decoding come from the shared registry,
+# so this dashboard cannot drift from what the writer stores.
+from feature_registry import (
+    RAW_FEATURE_CELLS as _FEATURE_COLS,
+    RAW_FEATURE_FAMILIES as _FEATURE_FAMILIES,
+    decode_double as _decode_double,
 )
 
 _ALL_FAMILIES = _FEATURE_FAMILIES | {"predictions"}
@@ -93,15 +91,6 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 # Bigtable read
 # ---------------------------------------------------------------------------
-
-def _decode_double(value: bytes) -> float | None:
-    if len(value) == 8:
-        return struct.unpack(">d", value)[0]
-    try:
-        return float(value.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None
-
 
 def read_all_rows(
     project: str,
