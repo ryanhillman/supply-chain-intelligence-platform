@@ -159,7 +159,7 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 
 | Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
 |---|---|---|---|---|---|---|
-| Normal-approximation formula (baseline) | 0.874 | 0.639 | 0.161 | 0.890 | 0.554 | 0.149 |
+| Normal-approximation formula (baseline) | 0.902 | 0.657 | 0.157 | 0.890 | 0.554 | 0.149 |
 | PyTorch MLP | 0.941 | 0.838 | 0.079 | 0.934 | 0.774 | 0.072 |
 | LightGBM (comparison only) | 0.945 | 0.849 | 0.078 | 0.938 | 0.791 | 0.070 |
 

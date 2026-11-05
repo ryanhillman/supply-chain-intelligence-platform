@@ -148,9 +148,10 @@ def normal_stockout_prob(
 
     T = days to zero = Q / D with daily demand D ~ N(μ_D, σ_D²). By the delta
     method T ≈ N(Q/μ_D, (Q·σ_D/μ_D²)²) for μ_D > 0, so P(T ≤ h) = Φ((h − μ_T)/σ_T).
-    Edge cases match the original scalar label code: no demand (μ_D ≤ EPS) →
-    0.0 (supply is effectively infinite); deterministic demand (σ_T ≤ EPS) →
-    step function on μ_T < h, which also gives 1.0 for zero stock.
+    Edge cases, in order: no stock (Q ≤ 0) → 1.0, the entity is already out,
+    with or without recent sales; no demand (μ_D ≤ EPS) → 0.0, the stock is
+    not being drawn down; deterministic demand (σ_T ≤ EPS) → step function
+    on μ_T < h.
     """
     q  = np.asarray(current_qty,  dtype=float)
     mu = np.asarray(avg_daily,    dtype=float)
@@ -163,4 +164,4 @@ def normal_stockout_prob(
     step       = (mu_t < horizon_days).astype(float)
     cdf        = norm.cdf(horizon_days, loc=mu_t, scale=np.where(sig_t > EPS, sig_t, 1.0))
 
-    return np.where(~has_demand, 0.0, np.where(sig_t <= EPS, step, cdf))
+    return np.select([q <= 0, ~has_demand, sig_t <= EPS], [1.0, 0.0, step], default=cdf)
