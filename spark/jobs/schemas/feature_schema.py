@@ -26,7 +26,6 @@ from pyspark.sql import DataFrame
 from pyspark.sql.types import (
     DoubleType,
     IntegerType,
-    LongType,
     StringType,
     StructField,
     StructType,
@@ -70,13 +69,8 @@ _VELOCITY_FIELDS: list[StructField] = [
 # ── demand family ─────────────────────────────────────────────────────────────
 
 _DEMAND_FIELDS: list[StructField] = [
-    # Reserved demand forecast columns; not populated by any current pipeline stage
-    StructField("demand__demand_forecast_7d",      DoubleType(),  nullable=True),
-    StructField("demand__demand_forecast_30d",     DoubleType(),  nullable=True),
     StructField("demand__demand_signal_count_24h", DoubleType(),  nullable=True),
     StructField("demand__last_signal_type",        StringType(),  nullable=True),
-    # demand_multiplier = forecast_7d / (avg_daily_7d * 7); null when forecast absent
-    StructField("demand__demand_multiplier",       DoubleType(),  nullable=True),
 ]
 
 # ── supplier family ───────────────────────────────────────────────────────────
@@ -92,9 +86,6 @@ _SUPPLIER_FIELDS: list[StructField] = [
 # ── risk family ───────────────────────────────────────────────────────────────
 
 _RISK_FIELDS: list[StructField] = [
-    # stockout_risk_score and shortage_prob_7d are reserved null columns
-    StructField("risk__stockout_risk_score", DoubleType(),  nullable=True),
-    StructField("risk__shortage_prob_7d",    DoubleType(),  nullable=True),
     # 0=OK, 1=WATCH, 2=REORDER, 3=CRITICAL (derived from inventory__days_of_supply)
     StructField("risk__reorder_urgency",     IntegerType(), nullable=False),
 ]
@@ -102,9 +93,7 @@ _RISK_FIELDS: list[StructField] = [
 # ── lineage family ────────────────────────────────────────────────────────────
 
 _LINEAGE_FIELDS: list[StructField] = [
-    StructField("lineage__last_bronze_epoch",  LongType(),   nullable=False),
     StructField("lineage__last_silver_write",  StringType(), nullable=False),  # ISO-8601
-    StructField("lineage__source_event_count", LongType(),   nullable=False),
     StructField("lineage__pipeline_version",   StringType(), nullable=False),
 ]
 
@@ -130,7 +119,7 @@ SILVER_FEATURE_SCHEMA = StructType(
 )
 """
 Full schema for Silver Parquet output.
-29 feature columns + 4 identity/window columns + 3 partition columns = 36 total.
+22 feature columns + 4 identity/window columns + 3 partition columns = 29 total.
 """
 
 # Columns used as partition keys when writing Silver Parquet.

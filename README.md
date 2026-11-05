@@ -120,7 +120,7 @@ The model predicts whether a `(warehouse_id, sku_id)` entity is at risk of a sto
 
 ### Features
 
-Silver writes 29 columns per warehouse-SKU entity in six groups:
+Silver writes 22 columns per warehouse-SKU entity in six groups:
 
 - Inventory position
 - Demand velocity
@@ -129,7 +129,7 @@ Silver writes 29 columns per warehouse-SKU entity in six groups:
 - Risk metrics
 - Data lineage
 
-Five are reserved and left empty: the three demand-forecast columns and the two prediction columns. The model takes 21 numeric features plus the warehouse and SKU IDs, for which it learns embeddings.
+The model takes 21 numeric features plus the warehouse and SKU IDs, for which it learns embeddings.
 
 ### Model
 

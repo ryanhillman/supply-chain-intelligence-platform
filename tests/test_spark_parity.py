@@ -66,7 +66,7 @@ def bronze(spark, tmp_path_factory):
 
 
 def _silver_raw_features(spark, bronze, as_of) -> pd.DataFrame:
-    features, _ = compute_features(spark, str(bronze), as_of)
+    features = compute_features(spark, str(bronze), as_of)
     df = pd.DataFrame([r.asDict() for r in features.collect()]).rename(columns=_SILVER_TO_RAW)
     fill_defaults(df)          # what the scorer does with Silver's nulls
     return df.set_index(["warehouse_id", "sku_id"]).sort_index()

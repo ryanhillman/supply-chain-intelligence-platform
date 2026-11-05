@@ -36,4 +36,4 @@ DAYS_OF_SUPPLY_CAP: float = 365.0
 # ── Pipeline versioning ───────────────────────────────────────────────────────
 # Increment when feature computation logic changes.
 # Written to lineage#pipeline_version on every Bigtable row.
-PIPELINE_VERSION: str = "1.1.0"
+PIPELINE_VERSION: str = "1.2.0"

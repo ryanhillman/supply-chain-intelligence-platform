@@ -32,7 +32,7 @@ def test_every_model_input_has_exactly_one_numeric_cell():
 
 def test_string_features_are_registry_columns():
     assert STRING_FEATURES <= _COLUMNS
-    assert len(_COLUMNS) == 29
+    assert len(_COLUMNS) == 22
 
 
 def test_numbers_round_trip_as_big_endian_doubles():

@@ -3,7 +3,7 @@ The Bigtable feature-store layout: one definition for everything that writes
 or reads it (the Spark writer, FeatureClient, RequestBuilder, the feature
 dashboard and the training code).
 
-  FEATURE_REGISTRY      family -> {feature: qualifier} for the 29 Silver columns
+  FEATURE_REGISTRY      family -> {feature: qualifier} for the 22 Silver columns
   STRING_FEATURES       Silver columns stored as UTF-8 rather than a double
   RAW_FEATURE_COLS      the 15 stored features the model takes, in model order
   RAW_FEATURE_CELLS     (family, qualifier) -> feature, for RAW_FEATURE_COLS
@@ -41,11 +41,8 @@ FEATURE_REGISTRY: dict[str, dict[str, str]] = {
         "stddev_daily_7d":      "stddev_7d",
     },
     "demand": {
-        "demand_forecast_7d":       "fcst_7d",
-        "demand_forecast_30d":      "fcst_30d",
         "demand_signal_count_24h":  "sig_24h",
         "last_signal_type":         "last_sig",  # string
-        "demand_multiplier":        "d_mult",    # fcst_7d / (avg_d_7d * 7)
     },
     "supplier": {
         "lead_time_days":           "lt_days",
@@ -55,14 +52,10 @@ FEATURE_REGISTRY: dict[str, dict[str, str]] = {
         "in_transit_qty":           "transit_qty",
     },
     "risk": {
-        "stockout_risk_score":      "risk_score",   # 0.0–1.0, reserved; Silver leaves it empty
-        "shortage_prob_7d":         "short_p7d",    # 0.0–1.0
         "reorder_urgency":          "urgency",      # 0|1|2|3
     },
     "lineage": {
-        "last_bronze_epoch":    "bronze_epoch",   # int
         "last_silver_write":    "silver_ts",      # string ISO-8601
-        "source_event_count":   "evt_count",
         "pipeline_version":     "pipeline_ver",   # string
     },
 }

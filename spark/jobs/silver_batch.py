@@ -55,10 +55,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("silver_batch")
 
-# Written to lineage:bronze_epoch. A batch run has no streaming epoch; the
-# constant marks rows as written by this job.
-BATCH_EPOCH_ID: int = 9000
-
 
 def create_spark_session() -> SparkSession:
     return (
@@ -79,16 +75,11 @@ def create_spark_session() -> SparkSession:
     )
 
 
-def add_lineage(df: DataFrame, epoch_id: int, event_count: int) -> DataFrame:
-    """
-    Provenance columns. event_count is the number of inventory events this
-    run read (the 30-day window), the same value on every row.
-    """
+def add_lineage(df: DataFrame) -> DataFrame:
+    """Provenance columns: the wall-clock write time and the pipeline version."""
     return (
         df
-        .withColumn("lineage__last_bronze_epoch", F.lit(epoch_id).cast("long"))
         .withColumn("lineage__last_silver_write", F.lit(datetime.now(timezone.utc).isoformat()))
-        .withColumn("lineage__source_event_count", F.lit(event_count).cast("long"))
         .withColumn("lineage__pipeline_version", F.lit(PIPELINE_VERSION))
     )
 
@@ -106,13 +97,13 @@ def add_row_key_and_partitions(df: DataFrame, as_of: date) -> DataFrame:
     )
 
 
-def write_silver(feature_df: DataFrame, epoch_id: int) -> int:
+def write_silver(feature_df: DataFrame) -> int:
     """Write the snapshot to Silver Parquet, replacing the as-of date's partitions."""
     deduped = feature_df.dropDuplicates(SILVER_DEDUP_COLS)
     row_count = deduped.count()
     if row_count:
         deduped.write.mode("overwrite").partitionBy(*SILVER_PARTITION_COLS).parquet(SILVER_BASE_PATH)
-    logger.info("write_silver | epoch=%d rows=%d path=%s", epoch_id, row_count, SILVER_BASE_PATH)
+    logger.info("write_silver | rows=%d path=%s", row_count, SILVER_BASE_PATH)
     return row_count
 
 
@@ -139,24 +130,19 @@ def main() -> None:
     logger.info("Silver batch starting | as_of=%s bronze=%s silver=%s",
                 as_of, BRONZE_BASE_PATH, SILVER_BASE_PATH)
 
-    features, event_count = compute_features(spark, BRONZE_BASE_PATH, as_of)
-    if event_count == 0:
-        logger.error("No inventory events in the 30 days up to %s", as_of)
-        spark.stop()
-        sys.exit(1)
-
     feature_df = conform_to_silver_schema(add_row_key_and_partitions(
-        add_lineage(features, BATCH_EPOCH_ID, event_count), as_of
+        add_lineage(compute_features(spark, BRONZE_BASE_PATH, as_of)), as_of
     )).cache()
     try:
-        write_silver(feature_df, BATCH_EPOCH_ID)
+        if write_silver(feature_df) == 0:
+            logger.error("No inventory events in the 30 days up to %s", as_of)
+            sys.exit(1)
         try:
             write_to_bigtable(
                 df=feature_df,
                 project_id=GCP_PROJECT_ID,
                 instance_id=BIGTABLE_INSTANCE_ID,
                 table_id=BIGTABLE_TABLE_ID,
-                epoch_id=BATCH_EPOCH_ID,
             )
         except Exception as bt_exc:
             logger.error(

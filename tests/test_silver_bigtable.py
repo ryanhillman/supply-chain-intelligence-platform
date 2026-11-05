@@ -88,11 +88,10 @@ def table():
 
 
 def _silver_to_bigtable(spark, bronze, as_of: date) -> None:
-    features, event_count = compute_features(spark, str(bronze), as_of)
     df = conform_to_silver_schema(silver_batch.add_row_key_and_partitions(
-        silver_batch.add_lineage(features, 1, event_count), as_of
+        silver_batch.add_lineage(compute_features(spark, str(bronze), as_of)), as_of
     ))
-    write_to_bigtable(df, _PROJECT, _INSTANCE, _TABLE, epoch_id=1)
+    write_to_bigtable(df, _PROJECT, _INSTANCE, _TABLE)
 
 
 def _days_where_values_disappear(rows: pd.DataFrame) -> tuple[date, date]:
@@ -133,15 +132,28 @@ def test_scorer_reads_the_second_days_values_after_two_silver_runs(spark, bronze
         )
 
 
-def test_silver_batch_exits_non_zero_when_the_bigtable_write_fails(monkeypatch):
-    for name in ("create_spark_session", "add_lineage", "add_row_key_and_partitions",
-                 "conform_to_silver_schema", "write_silver"):
+def _mock_job(monkeypatch, silver_rows: int, bigtable: mock.MagicMock) -> None:
+    """silver_batch.main() with Spark, the feature computation and both writers replaced."""
+    for name in ("create_spark_session", "compute_features", "add_lineage",
+                 "add_row_key_and_partitions", "conform_to_silver_schema"):
         monkeypatch.setattr(silver_batch, name, mock.MagicMock())
-    monkeypatch.setattr(silver_batch, "compute_features", lambda *_: (mock.MagicMock(), 1))
-    monkeypatch.setattr(silver_batch, "write_to_bigtable",
-                        mock.MagicMock(side_effect=RuntimeError("Bigtable write failed")))
+    monkeypatch.setattr(silver_batch, "write_silver", mock.MagicMock(return_value=silver_rows))
+    monkeypatch.setattr(silver_batch, "write_to_bigtable", bigtable)
     monkeypatch.setattr(sys, "argv", ["silver_batch.py", "--as-of", "2026-01-01"])
+
+
+def test_silver_batch_exits_non_zero_when_the_bigtable_write_fails(monkeypatch):
+    _mock_job(monkeypatch, 120, mock.MagicMock(side_effect=RuntimeError("Bigtable write failed")))
 
     with pytest.raises(RuntimeError, match="Bigtable write failed"):
         silver_batch.main()
     silver_batch.write_silver.assert_called_once()   # Silver is written first and stays
+
+
+def test_silver_batch_exits_non_zero_when_silver_has_no_rows(monkeypatch):
+    _mock_job(monkeypatch, 0, mock.MagicMock())
+
+    with pytest.raises(SystemExit) as exit_info:
+        silver_batch.main()
+    assert exit_info.value.code == 1
+    silver_batch.write_to_bigtable.assert_not_called()
