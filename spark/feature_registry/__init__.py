@@ -10,6 +10,9 @@ dashboard and the training code).
   RAW_FEATURE_FAMILIES  the families that hold RAW_FEATURE_COLS
   encode_cell, decode_double   the cell encoding
 
+It also holds HORIZON_DAYS, the label horizon that the Spark training-set job
+and the training code share.
+
 This package lives under spark/ because the Spark container holds only that
 directory; pyproject.toml installs it as `feature_registry` for the rest of
 the project. Standard library only.
@@ -102,6 +105,9 @@ RAW_FEATURE_CELLS: dict[tuple[str, str], str] = {
     if feature in RAW_FEATURE_COLS
 }
 RAW_FEATURE_FAMILIES: frozenset[str] = frozenset(family for family, _ in RAW_FEATURE_CELLS)
+
+# The stockout label looks this many days ahead of the feature snapshot.
+HORIZON_DAYS: int = 7
 
 
 def encode_cell(column: str, value) -> bytes | None:

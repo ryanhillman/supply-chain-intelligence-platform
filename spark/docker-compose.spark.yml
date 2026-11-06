@@ -9,10 +9,26 @@
 #   docker build -t scip-spark:latest .
 #   docker compose -f docker-compose.spark.yml up -d spark-bronze
 #   docker compose -f docker-compose.spark.yml run --rm spark-silver-batch
+#   docker compose -f docker-compose.spark.yml run --rm spark-training-set
 
 x-spark: &spark
   image: scip-spark:latest
   env_file: .env
+  # spark-submit with the flags every job shares. A service's command adds
+  # its own flags and the job file.
+  entrypoint:
+    - "/opt/spark/bin/spark-submit"
+    - "--master"
+    - "${SPARK_MASTER:-local[*]}"
+    - "--conf"
+    - "spark.jars.ivy=${IVY_CACHE:-/opt/ivy2}"
+    - "--conf"
+    - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
+    - "--conf"
+    - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
+    # GCS connector settings.
+    - "--properties-file"
+    - "config/spark-gcs.conf"
   volumes:
     # Source mount — live-reload job code without rebuild.
     - .:/opt/spark-app
@@ -28,22 +44,10 @@ services:
   spark-bronze:
     <<: *spark
     command:
-      - "--master"
-      - "${SPARK_MASTER:-local[*]}"
       - "--packages"
       - "${KAFKA_PACKAGE}"
       - "--conf"
-      - "spark.jars.ivy=${IVY_CACHE:-/opt/ivy2}"
-      - "--conf"
-      - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
-      - "--conf"
-      - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
-      - "--conf"
       - "spark.kafka.consumer.cache.enabled=false"
-      # GCS connector settings, shared by both jobs.
-      - "--properties-file"
-      - "config/spark-gcs.conf"
-      # ── Job entrypoint ──────────────────────────────────────────────────────
       - "jobs/bronze_ingestion.py"
     restart: on-failure:3
 
@@ -51,26 +55,23 @@ services:
   # jobs/silver_batch.py: computes one feature snapshot per pair as of a date,
   # writes Silver and the Bigtable rows, and exits. Profile-gated so `up -d`
   # does not start it; run it explicitly (SILVER_AS_OF defaults to the latest
-  # day in Bronze):
+  # day in Bronze; SILVER_FROM also writes every day from that date on):
   #   docker compose -f docker-compose.spark.yml run --rm spark-silver-batch
   #   docker compose -f docker-compose.spark.yml run --rm -e SILVER_AS_OF=2026-09-30 spark-silver-batch
+  #   docker compose -f docker-compose.spark.yml run --rm -e SILVER_FROM=2025-10-31 spark-silver-batch
   spark-silver-batch:
     <<: *spark
     profiles: ["batch"]
-    command:
-      - "--master"
-      - "${SPARK_MASTER:-local[*]}"
-      - "--conf"
-      - "spark.jars.ivy=${IVY_CACHE:-/opt/ivy2}"
-      - "--conf"
-      - "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
-      - "--conf"
-      - "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-2g}"
-      # GCS connector settings, shared by both jobs.
-      - "--properties-file"
-      - "config/spark-gcs.conf"
-      # ── Job entrypoint ──────────────────────────────────────────────────────
-      - "jobs/silver_batch.py"
+    command: ["jobs/silver_batch.py"]
+
+  # ── Training set (batch) ────────────────────────────────────────────────────
+  # jobs/training_set.py: joins Silver's snapshots with the stockout label and
+  # writes the rows the model is trained on. Needs Silver for every sample
+  # date first (SILVER_FROM above).
+  spark-training-set:
+    <<: *spark
+    profiles: ["batch"]
+    command: ["jobs/training_set.py"]
 
 volumes:
   spark-ivy-cache:

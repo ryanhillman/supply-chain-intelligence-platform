@@ -6,8 +6,8 @@ from the same Bronze data.
 This is the train/serve consistency check: the model is trained on sampler
 rows and scored on Silver rows. The fixture world (tests/world_fixture.py) is
 written to disk in Bronze's layout by bronze_ingestion.prepare_bronze_df, twice,
-the way a repeated replay lands. Both sides must drop the duplicates, and for
-several as-of dates every raw feature must match after the scorer's defaults
+the way a repeated replay lands. Both sides must drop the duplicates, and on
+every sample date every raw feature must match after the scorer's defaults
 (feature_engineer.fill_defaults) are applied to Silver's nulls.
 
 Needs PySpark and Java 17. Marked slow: CI runs it in its own job
@@ -65,28 +65,32 @@ def bronze(spark, tmp_path_factory):
     return root
 
 
-def _silver_raw_features(spark, bronze, as_of) -> pd.DataFrame:
-    features = compute_features(spark, str(bronze), as_of)
+def _silver_raw_features(spark, bronze, first, last=None) -> pd.DataFrame:
+    features = compute_features(spark, str(bronze), first, last)
     df = pd.DataFrame([r.asDict() for r in features.collect()]).rename(columns=_SILVER_TO_RAW)
     fill_defaults(df)          # what the scorer does with Silver's nulls
-    return df.set_index(["warehouse_id", "sku_id"]).sort_index()
+    return (df.rename(columns={"as_of": "sample_date"})
+            .set_index(["sample_date", "warehouse_id", "sku_id"]).sort_index())
 
 
 def test_silver_matches_the_sampler_on_every_raw_feature(spark, bronze):
     sampler_rows, _ = BronzeTemporalSampler(bronze_path=bronze).build()
-    last_sample_date = START + timedelta(days=DAYS - 1 - 7)
+    expected = sampler_rows.set_index(["sample_date", "warehouse_id", "sku_id"]).sort_index()
+    first, last = START + timedelta(days=30), START + timedelta(days=DAYS - 1 - 7)
 
-    for as_of in (START + timedelta(days=30), START + timedelta(days=34), last_sample_date):
-        expected = (sampler_rows[sampler_rows.sample_date == as_of]
-                    .set_index(["warehouse_id", "sku_id"]).sort_index())
-        actual = _silver_raw_features(spark, bronze, as_of)
+    actual = _silver_raw_features(spark, bronze, first, last)   # every sample date in one pass
+    assert list(actual.index) == list(expected.index)
+    for col in RAW_FEATURE_COLS:
+        np.testing.assert_allclose(
+            actual[col].astype(float).to_numpy(), expected[col].astype(float).to_numpy(),
+            rtol=1e-9, atol=1e-9, err_msg=col,
+        )
 
-        assert list(actual.index) == list(expected.index), as_of
-        for col in RAW_FEATURE_COLS:
-            np.testing.assert_allclose(
-                actual[col].astype(float).to_numpy(), expected[col].astype(float).to_numpy(),
-                rtol=1e-9, atol=1e-9, err_msg=f"{col} on {as_of}",
-            )
+    # A date computed on its own gives the rows it has in the range.
+    one_date = first + timedelta(days=4)
+    cols = list(RAW_FEATURE_COLS)
+    pd.testing.assert_frame_equal(
+        _silver_raw_features(spark, bronze, one_date)[cols], actual.loc[[one_date]][cols])
 
 
 def test_silver_days_of_supply_is_the_models_formula(spark):
