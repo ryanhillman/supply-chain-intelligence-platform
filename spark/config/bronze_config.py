@@ -28,6 +28,7 @@ CHECKPOINT_BASE_PATH: str = os.environ.get(
     "CHECKPOINT_BASE_PATH", "data/checkpoints/scip-spark-bronze"
 )
 DLQ_BASE_PATH: str = os.environ.get("DLQ_BASE_PATH", "data/dlq")
+TRAINING_BASE_PATH: str = os.environ.get("TRAINING_BASE_PATH", "data/training")
 
 # ── Bigtable ──────────────────────────────────────────────────────────────────
 BIGTABLE_INSTANCE_ID: str = os.environ.get("BIGTABLE_INSTANCE_ID", "scip-feature-store")

@@ -1,6 +1,7 @@
 """
 Silver job configuration: Bigtable write tuning, the row key separator, the
-reorder-urgency and days_of_supply constants, and the pipeline version.
+reorder-urgency and days_of_supply constants, the training set's history
+requirement, and the pipeline version.
 
 The Bigtable column layout and cell encoding are in feature_registry.
 """
@@ -32,6 +33,11 @@ STOCKOUT_CRITICAL_DAYS: int = 1
 # tests/test_spark_parity.py checks that the two agree.
 DAYS_OF_SUPPLY_EPS: float = 1e-6
 DAYS_OF_SUPPLY_CAP: float = 365.0
+
+# ── Training set ──────────────────────────────────────────────────────────────
+# A sample date needs this many days of Bronze before it, so that the 30-day
+# feature windows are full (spark/jobs/training_set.py).
+MIN_HISTORY_DAYS: int = 30
 
 # ── Pipeline versioning ───────────────────────────────────────────────────────
 # Increment when feature computation logic changes.

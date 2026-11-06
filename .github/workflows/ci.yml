@@ -87,7 +87,7 @@ jobs:
       - name: Spark tests
         env:
           BIGTABLE_EMULATOR_HOST: localhost:8086
-        run: pytest -q -m slow tests/test_spark_parity.py tests/test_silver_bigtable.py
+        run: pytest -q -m slow tests/test_spark_parity.py tests/test_silver_bigtable.py tests/test_training_set.py
 
   terraform:
     name: terraform fmt + validate

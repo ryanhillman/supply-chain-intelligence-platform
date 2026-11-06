@@ -9,6 +9,7 @@
 #   docker build -t scip-spark:latest .
 #   docker compose -f docker-compose.spark.yml up -d spark-bronze
 #   docker compose -f docker-compose.spark.yml run --rm spark-silver-batch
+#   docker compose -f docker-compose.spark.yml run --rm spark-training-set
 
 x-spark: &spark
   image: scip-spark:latest
@@ -62,6 +63,15 @@ services:
     <<: *spark
     profiles: ["batch"]
     command: ["jobs/silver_batch.py"]
+
+  # ── Training set (batch) ────────────────────────────────────────────────────
+  # jobs/training_set.py: joins Silver's snapshots with the stockout label and
+  # writes the rows the model is trained on. Needs Silver for every sample
+  # date first (SILVER_FROM above).
+  spark-training-set:
+    <<: *spark
+    profiles: ["batch"]
+    command: ["jobs/training_set.py"]
 
 volumes:
   spark-ivy-cache:
