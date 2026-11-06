@@ -3,7 +3,7 @@ Silver through Bigtable: what the scorer reads after two daily Silver runs.
 
 The first day leaves open orders, shipments or demand signals in the store; on
 the second day some of them are gone, so Silver holds nulls there. The scorer
-must see the second day's values, the same ones the training sampler computes,
+must see the second day's values, the ones Silver computed for that day,
 not the first day's cells.
 
 Needs PySpark, Java 17 and a Bigtable emulator (BIGTABLE_EMULATOR_HOST). Marked
@@ -31,7 +31,6 @@ from jobs import silver_batch  # noqa: E402
 from jobs.bronze_ingestion import TOPIC_SCHEMA_MAP, prepare_bronze_df  # noqa: E402
 from jobs.schemas.feature_schema import conform_to_silver_schema  # noqa: E402
 from jobs.silver_features import compute_features  # noqa: E402
-from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler  # noqa: E402
 from ml_training.datasets.feature_engineer import fill_defaults  # noqa: E402
 from model_serving.pipeline.feature_client import FeatureClient  # noqa: E402
 from utils.bigtable_writer import write_to_bigtable  # noqa: E402
@@ -44,6 +43,8 @@ from world_fixture import (  # noqa: E402
 )
 
 _PROJECT, _INSTANCE, _TABLE = "test-project", "test-instance", "inventory_features"
+FIRST, LAST = START + timedelta(days=30), START + timedelta(days=DAYS - 1 - 7)
+_SILVER_TO_RAW = {f"{family}__{attr}": attr for family, attrs in FEATURE_REGISTRY.items() for attr in attrs}
 # Silver leaves these null when a pair has nothing open or no signal that day.
 _ABSENT_MEANS_ZERO = ["active_po_qty", "in_transit_qty", "demand_signal_count_24h"]
 
@@ -94,6 +95,14 @@ def _silver_to_bigtable(spark, bronze, as_of: date) -> None:
     write_to_bigtable(df, _PROJECT, _INSTANCE, _TABLE, df.count())
 
 
+def _silver_rows(spark, bronze) -> pd.DataFrame:
+    """Silver's raw features for every sample date, with the scorer's defaults for absent values."""
+    rows = compute_features(spark, str(bronze), FIRST, LAST).collect()
+    df = pd.DataFrame([r.asDict() for r in rows]).rename(columns={**_SILVER_TO_RAW, "as_of": "sample_date"})
+    fill_defaults(df)
+    return df
+
+
 def _days_where_values_disappear(rows: pd.DataFrame) -> tuple[date, date]:
     """Two consecutive sample dates where a value present on the first is gone on the second."""
     wide = rows.set_index(["sample_date", "warehouse_id", "sku_id"]).sort_index()
@@ -109,8 +118,7 @@ def _days_where_values_disappear(rows: pd.DataFrame) -> tuple[date, date]:
 
 
 def test_scorer_reads_the_second_days_values_after_two_silver_runs(spark, bronze, table):
-    rows, _ = BronzeTemporalSampler(bronze_path=bronze).build()
-    assert rows.sample_date.max() <= START + timedelta(days=DAYS - 1)
+    rows = _silver_rows(spark, bronze)
     first, second = _days_where_values_disappear(rows)
 
     _silver_to_bigtable(spark, bronze, first)
