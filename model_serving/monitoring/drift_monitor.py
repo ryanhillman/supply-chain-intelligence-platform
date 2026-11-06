@@ -19,7 +19,7 @@ Flow
    required, no approximate fallback).
 2. Load current feature values from Bigtable:
    - FeatureClient.scan_all() returns raw Bigtable features.
-   - fill_defaults() + engineer_features() derive all 21 features.
+   - engineer_features() fills defaults and derives all 21 features.
    - Extract the PSI features and the warehouse-grain features.
 3. Read shortage_prob_7d from the Bigtable predictions column family —
    optional; skipped if empty.
@@ -200,11 +200,9 @@ class DriftMonitor:
         from ml_training.datasets.feature_engineer import (
             NUMERIC_FEATURE_COLS,
             engineer_features,
-            fill_defaults,
         )
         self._NUMERIC_FEATURE_COLS = NUMERIC_FEATURE_COLS
         self._engineer_features    = engineer_features
-        self._fill_defaults        = fill_defaults
 
         # Build lookup: flat feature name → index into feature_mean / feature_scale
         self._feature_to_idx: dict[str, int] = {
@@ -358,8 +356,8 @@ class DriftMonitor:
 
     def _live_features(self) -> pd.DataFrame:
         """
-        Scan all feature rows via FeatureClient and run fill_defaults() and
-        engineer_features(): the same read path and derivation as
+        Scan all feature rows via FeatureClient and run engineer_features()
+        (defaults, then derived features): the same read path and derivation as
         RequestBuilder.build(), so the monitor sees exactly what the scorer
         scores. One row per (warehouse_id, sku_id).
         """
@@ -375,9 +373,7 @@ class DriftMonitor:
             row["sku_id"]       = fr.sku_id
             records.append(row)
 
-        df = pd.DataFrame(records)
-        self._fill_defaults(df)
-        return self._engineer_features(df)
+        return self._engineer_features(pd.DataFrame(records))
 
     @staticmethod
     def _collect_feature_values(live: pd.DataFrame) -> dict[str, list[float]]:
