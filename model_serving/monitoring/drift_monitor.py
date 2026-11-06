@@ -78,6 +78,7 @@ import pandas as pd
 from feature_registry import RAW_FEATURE_COLS
 from ml_training.evaluation.drift_reference import (
     MONITORED_FEATURES as _MONITORED_FEATURES,
+    N_BINS as _N_BINS,
     WAREHOUSE_RANGE_FEATURES as _WAREHOUSE_RANGE_FEATURES,
     load_drift_reference,
     load_warehouse_ranges,
@@ -93,7 +94,6 @@ from model_serving.pipeline.constants import (
     variance_collapsed,
 )
 
-_N_BINS                = 10
 _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
 _PSI_STABLE_THRESHOLD  = 0.10
 _PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
