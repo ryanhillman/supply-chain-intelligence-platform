@@ -36,6 +36,8 @@ import pandas as pd
 import pyarrow.dataset as pads
 from pyarrow.fs import FSSpecHandler, PyFileSystem
 
+from ml_training.datasets.feature_engineer import fill_defaults
+
 logger = logging.getLogger(__name__)
 
 # Bronze partition columns injected by Parquet directory structure.
@@ -184,12 +186,7 @@ class BronzeTemporalSampler:
             .merge(demand,    on=["warehouse_id", "sku_id", "sample_date"],  how="left")
         )
 
-        features["active_po_qty"]           = features["active_po_qty"].fillna(0.0)
-        features["in_transit_qty"]          = features["in_transit_qty"].fillna(0.0)
-        features["demand_signal_count_24h"] = features["demand_signal_count_24h"].fillna(0.0)
-        features["lead_time_days"]          = features["lead_time_days"].fillna(14.0)
-        features["lead_time_stddev"]        = features["lead_time_stddev"].fillna(0.0)
-        features["supplier_reliability"]    = features["supplier_reliability"].fillna(0.9)
+        fill_defaults(features)
 
         logger.info("Feature DataFrame built: %d rows, %d columns", len(features), len(features.columns))
         return features, inv

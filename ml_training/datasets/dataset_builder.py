@@ -38,7 +38,7 @@ from ml_training.datasets.feature_engineer import (
     TARGET_COL,
     engineer_features,
 )
-from ml_training.datasets.label_generator import generate_labels
+from ml_training.datasets.label_generator import HORIZON_DAYS, generate_labels
 from ml_training.evaluation.metrics import compute_metrics
 
 logger = logging.getLogger(__name__)
@@ -77,8 +77,6 @@ class DatasetBuilder:
         Service account JSON path, or None for ADC.
     output_dir:
         Local directory for all output files.
-    horizon_days:
-        Stockout prediction horizon in days (default 7).
     """
 
     def __init__(
@@ -86,12 +84,10 @@ class DatasetBuilder:
         bucket:           str,
         credentials_path: str | None = None,
         output_dir:       str | Path  = "ml_training/artifacts/dataset",
-        horizon_days:     int         = 7,
     ) -> None:
         self.bucket           = bucket
         self.credentials_path = credentials_path
         self.output_dir       = Path(output_dir)
-        self.horizon_days     = horizon_days
 
     def build(self) -> DatasetManifest:
         """Run the full pipeline from Bronze and return a DatasetManifest."""
@@ -115,7 +111,7 @@ class DatasetBuilder:
         output files, from BronzeTemporalSampler's (feature_rows, inv_events).
         """
         # ── Step 2: Generate labels ────────────────────────────────────────────
-        labeled = generate_labels(feature_rows, inv_events, self.horizon_days)
+        labeled = generate_labels(feature_rows, inv_events)
 
         # ── Step 3: Derived features + leakage controls ────────────────────────
         df = engineer_features(labeled)
@@ -135,16 +131,16 @@ class DatasetBuilder:
         train_cutoff = sorted_dates[int(n_dates * TRAIN_FRAC) - 1]
         val_cutoff   = sorted_dates[int(n_dates * (TRAIN_FRAC + VAL_FRAC)) - 1]
 
-        # Purge gap: a sample's label looks horizon_days into the future, so a
+        # Purge gap: a sample's label looks HORIZON_DAYS into the future, so a
         # sample dated right at train_cutoff has its outcome determined by
         # events that chronologically fall inside the val period's date range.
-        # Dropping the horizon_days immediately before each cutoff from the
+        # Dropping the HORIZON_DAYS immediately before each cutoff from the
         # earlier split removes that boundary contamination — standard
         # purging for time-series train/val/test splits with a lookahead
         # label window (see e.g. López de Prado, "Advances in Financial
         # Machine Learning", ch. 7). These purged dates belong to neither
         # split; they're excluded entirely rather than reassigned.
-        purge = pd.Timedelta(days=self.horizon_days)
+        purge = pd.Timedelta(days=HORIZON_DAYS)
 
         train = df[df["sample_date"] <= train_cutoff - purge].copy()
         val   = df[
@@ -155,16 +151,15 @@ class DatasetBuilder:
 
         if train.empty or val.empty:
             raise ValueError(
-                f"Purge gap of {self.horizon_days}d emptied train (n={len(train)}) "
-                f"or val (n={len(val)}) — increase Bronze data volume or reduce "
-                "horizon_days relative to the date range."
+                f"Purge gap of {HORIZON_DAYS}d emptied train (n={len(train)}) "
+                f"or val (n={len(val)}) — increase Bronze data volume."
             )
 
         logger.info(
             "Split: train=%d (dates ≤ %s), val=%d (≤ %s), test=%d  [%dd purge gap before "
             "each cutoff]",
             len(train), train_cutoff.date(), len(val), val_cutoff.date(), len(test),
-            self.horizon_days,
+            HORIZON_DAYS,
         )
 
         # ── Step 5: Fit standardization statistics on train ─────────────────
@@ -236,7 +231,7 @@ class DatasetBuilder:
             # The model registers them as fixed buffers.
             "feature_mean":       feature_mean,
             "feature_scale":      feature_scale,
-            "horizon_days":       self.horizon_days,
+            "horizon_days":       HORIZON_DAYS,
             "split": {
                 "train_end": str(train_cutoff.date()),
                 "val_end":   str(val_cutoff.date()),

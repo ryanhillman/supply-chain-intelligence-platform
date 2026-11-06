@@ -4,14 +4,14 @@ request_builder.py — converts Bigtable FeatureRow objects into Vertex AI insta
 Pipeline per entity
 -------------------
 1. Ensure all 15 raw feature columns are present (add NaN for absent ones).
-2. Call fill_defaults() to replace NaN with safe domain defaults.
-3. Call engineer_features() to compute 6 derived features, yielding all 21
-   NUMERIC_FEATURE_COLS expected by the ONNX model.
-4. Map warehouse_id / sku_id strings to integer vocab indices. Numeric features
+2. Call engineer_features(): it replaces NaN with the domain defaults and
+   computes the 6 derived features, yielding all 21 NUMERIC_FEATURE_COLS
+   expected by the ONNX model.
+3. Map warehouse_id / sku_id strings to integer vocab indices. Numeric features
    are sent in raw units — the ONNX graph standardizes them.
-5. Compute stockout_risk_score with feature_engineer.normal_stockout_prob —
+4. Compute stockout_risk_score with feature_engineer.normal_stockout_prob —
    the closed-form Normal approximation, not a model output.
-6. Return a ScoringRequest containing the endpoint instance dict, the risk
+5. Return a ScoringRequest containing the endpoint instance dict, the risk
    score and entity metadata.
 
 The 15 raw feature names are feature_registry.RAW_FEATURE_COLS; their defaults
@@ -93,12 +93,10 @@ class RequestBuilder:
         from ml_training.datasets.feature_engineer import (
             NUMERIC_FEATURE_COLS,
             engineer_features,
-            fill_defaults,
             normal_stockout_prob,
         )
         self._NUMERIC_FEATURE_COLS  = NUMERIC_FEATURE_COLS
         self._engineer_features     = engineer_features
-        self._fill_defaults         = fill_defaults
         self._normal_stockout_prob  = normal_stockout_prob
         self._horizon_days: int     = int(self._metadata["horizon_days"])
 
@@ -170,13 +168,9 @@ class RequestBuilder:
 
         df = pd.DataFrame(records)
 
-        # Fill NaN in raw features with domain defaults (in-place).
-        # Any raw feature completely absent from Bigtable for a given entity
-        # was already set to NaN above; _fill_defaults replaces NaN with the
-        # domain default (e.g. velocity_trend=1.0, supplier_reliability=0.9).
-        self._fill_defaults(df)
-
-        # Compute 6 derived features (days_of_supply, effective_supply, etc.).
+        # engineer_features replaces NaN (a raw feature absent from Bigtable)
+        # with its domain default, e.g. velocity_trend=1.0, then computes the
+        # 6 derived features (days_of_supply, effective_supply, etc.).
         df = self._engineer_features(df)
 
         # Raw numeric features in NUMERIC_FEATURE_COLS order. No scaling here:
