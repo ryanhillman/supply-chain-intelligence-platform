@@ -8,7 +8,6 @@ import numpy as np
 from scipy.stats import norm
 
 from ml_training.datasets.feature_engineer import normal_stockout_prob
-from ml_training.datasets.label_generator import _normal_stockout_prob
 
 
 def test_edge_cases_match_the_original_scalar_rules():
@@ -18,7 +17,7 @@ def test_edge_cases_match_the_original_scalar_rules():
     assert normal_stockout_prob([100.0], [10.0], [0.0], 7)[0] == 0.0    # deterministic, 10 days >= 7
 
 
-def test_matches_independent_scipy_formula_and_scalar_wrapper():
+def test_matches_independent_scipy_formula():
     rng = np.random.default_rng(0)
     q   = rng.exponential(300.0, 500)
     mu  = rng.exponential(30.0, 500) + 0.5
@@ -30,9 +29,6 @@ def test_matches_independent_scipy_formula_and_scalar_wrapper():
 
     got = normal_stockout_prob(q, mu, sd, 7)
     np.testing.assert_allclose(got, expected, atol=1e-12)
-
-    scalar = np.array([_normal_stockout_prob(a, b, c, 7) for a, b, c in zip(q, mu, sd, strict=True)])
-    np.testing.assert_allclose(scalar, expected, atol=1e-12)
 
 
 def test_bounded_and_monotone_in_stock():
@@ -46,4 +42,3 @@ def test_bounded_and_monotone_in_stock():
 def test_out_of_stock_is_certain_even_with_no_recent_sales():
     # An entity out of stock all week has no sales either, so avg_daily is 0.
     assert normal_stockout_prob([0.0], [0.0], [0.0], 7)[0] == 1.0
-    assert _normal_stockout_prob(0.0, 0.0, 0.0, 7) == 1.0

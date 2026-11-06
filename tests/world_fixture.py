@@ -1,6 +1,6 @@
 """
-A small replayed world (4 pairs x 45 days) in Bronze's on-disk layout, shared
-by the sampler window tests and the Spark parity test.
+A small replayed world (4 pairs x 45 days), shared by the Spark tests of
+Silver's features and the training set.
 
 Two warehouses x two SKUs, so the per-warehouse supplier aggregation covers
 more than one SKU. SKU-002 (4-day lead time) and SKU-016 (10-day lead time)
@@ -11,9 +11,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
-from pathlib import Path
-
-import pandas as pd
 
 from simulation.world import Event, World
 
@@ -37,21 +34,6 @@ def events_by_topic(events: list[Event]) -> dict[str, list[dict]]:
     for e in events:
         out[e.topic].append(e.payload)
     return out
-
-
-def write_bronze_pandas(root: Path, events: list[Event]) -> None:
-    """
-    Bronze layout without Spark: <root>/<topic>/event_type=/year=/month=/day=,
-    with demand.signals' signal_type copied to event_type the way
-    bronze_ingestion.prepare_bronze_df does.
-    """
-    for topic, payloads in events_by_topic(events).items():
-        df = pd.DataFrame(payloads)
-        if "event_type" not in df.columns:
-            df["event_type"] = df["signal_type"]
-        ts = pd.to_datetime(df["timestamp"], utc=True)
-        df["year"], df["month"], df["day"] = ts.dt.year, ts.dt.month, ts.dt.day
-        df.to_parquet(root / topic, partition_cols=BRONZE_PARTITIONS)
 
 
 def event_date(payload: dict) -> date:
