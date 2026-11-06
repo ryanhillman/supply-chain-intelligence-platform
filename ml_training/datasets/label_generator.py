@@ -40,11 +40,10 @@ import logging
 import numpy as np
 import pandas as pd
 
+from feature_registry import HORIZON_DAYS
 from ml_training.datasets.feature_engineer import EPS, normal_stockout_prob
 
 logger = logging.getLogger(__name__)
-
-HORIZON_DAYS: int = 7
 
 
 def generate_labels(
