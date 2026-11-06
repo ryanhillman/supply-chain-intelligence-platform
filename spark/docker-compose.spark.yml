@@ -54,9 +54,10 @@ services:
   # jobs/silver_batch.py: computes one feature snapshot per pair as of a date,
   # writes Silver and the Bigtable rows, and exits. Profile-gated so `up -d`
   # does not start it; run it explicitly (SILVER_AS_OF defaults to the latest
-  # day in Bronze):
+  # day in Bronze; SILVER_FROM also writes every day from that date on):
   #   docker compose -f docker-compose.spark.yml run --rm spark-silver-batch
   #   docker compose -f docker-compose.spark.yml run --rm -e SILVER_AS_OF=2026-09-30 spark-silver-batch
+  #   docker compose -f docker-compose.spark.yml run --rm -e SILVER_FROM=2025-10-31 spark-silver-batch
   spark-silver-batch:
     <<: *spark
     profiles: ["batch"]
