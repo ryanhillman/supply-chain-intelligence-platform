@@ -1,8 +1,8 @@
 """
 simulation/world.py: the day-level world model the producer replays.
 
-Covers reproducibility, stock accounting, the order lifecycle the Silver and
-sampler netting relies on, and that every event carries the fields Bronze
+Covers reproducibility, stock accounting, the order lifecycle Silver's netting
+relies on, and that every event carries the fields Bronze
 requires for its topic.
 """
 from collections import Counter, defaultdict

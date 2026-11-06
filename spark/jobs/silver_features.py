@@ -10,9 +10,9 @@ range of one day. spark/jobs/silver_batch.py is the job that calls it and
 writes the result.
 
 Feature groups and their Bronze windows (as-of date D; every window ends at
-midnight after D). ml_training/datasets/bronze_temporal_sampler.py computes
-the same features for training with the same windows; tests/test_spark_parity.py
-checks that the two agree.
+midnight after D). The training set is built from these snapshots
+(spark/jobs/training_set.py), so training and scoring share one feature
+implementation; tests/test_silver_features.py checks the windows.
 
   inventory   latest event, D-29..D             current_qty, reorder_point,
                                                 safety_stock, last event
@@ -151,8 +151,7 @@ def _velocity(inventory_30d: DataFrame) -> DataFrame:
     Averages divide by the days actually observed (capped at the window),
     not by a fixed 7 or 30: during a pair's first week sales_7d == sales_30d,
     and fixed divisors would turn that into a velocity_trend of 30/7 instead
-    of a flat 1.0. stddev_daily_7d is the spread of daily totals, as in the
-    training sampler.
+    of a flat 1.0. stddev_daily_7d is the spread of the daily totals.
     """
     sales = inventory_30d.filter(F.col("event_type") == "SALE")
     units = -F.col("quantity_delta")

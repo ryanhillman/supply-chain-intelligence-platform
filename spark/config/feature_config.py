@@ -30,7 +30,7 @@ STOCKOUT_CRITICAL_DAYS: int = 1
 
 # days_of_supply = min(current_qty / max(avg_daily_sales_7d, EPS), CAP), the
 # formula ml_training/datasets/feature_engineer.py uses for the model's input.
-# tests/test_spark_parity.py checks that the two agree.
+# tests/test_silver_features.py checks that the two agree.
 DAYS_OF_SUPPLY_EPS: float = 1e-6
 DAYS_OF_SUPPLY_CAP: float = 365.0
 
