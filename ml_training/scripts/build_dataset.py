@@ -1,8 +1,8 @@
 """
 build_dataset.py — CLI entry point for Step 4.1.
 
-Reads Bronze Parquet -> engineers features -> generates labels ->
-splits 70/15/15 by time -> writes train/val/test Parquet + metadata.
+Reads the Spark training set (spark/jobs/training_set.py) -> derives features
+-> splits 70/15/15 by time -> writes train/val/test Parquet + metadata.
 
 Usage
 -----
@@ -33,14 +33,13 @@ logger = logging.getLogger("build_dataset")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Build the training dataset from Bronze on GCS"
+        description="Build the training dataset from the training set on GCS"
     )
 
-    # ── Bronze source ─────────────────────────────────────────────────────────
     p.add_argument(
         "--bucket",
         default=os.environ.get("GCS_BUCKET_NAME", ""),
-        help="GCS bucket name holding Bronze (e.g. my-project-scip-lake). Required.",
+        help="GCS bucket name holding the training set (e.g. my-project-scip-lake). Required.",
     )
     p.add_argument(
         "--sa-key",
@@ -60,10 +59,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if not args.bucket:
-        logger.error("A Bronze bucket is required: --bucket <name> or GCS_BUCKET_NAME.")
+        logger.error("A bucket is required: --bucket <name> or GCS_BUCKET_NAME.")
         sys.exit(1)
 
-    logger.info("Bronze bucket : %s (SA key: %s)", args.bucket,
+    logger.info("Bucket : %s (SA key: %s)", args.bucket,
                 args.sa_key or "Application Default Credentials")
     logger.info("Output : %s", args.output_dir)
 

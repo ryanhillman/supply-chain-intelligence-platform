@@ -14,8 +14,7 @@ seconds per day, continuous ticking adds decades of simulated history per
 wall-clock day.
 
 The same seed reproduces the same events and event IDs, so running the
-replay twice duplicates records harmlessly (Silver and the training sampler
-drop duplicate event IDs).
+replay twice duplicates records harmlessly (Silver drops duplicate event IDs).
 
 Environment:
   KAFKA_BOOTSTRAP_SERVERS  default kafka:29092

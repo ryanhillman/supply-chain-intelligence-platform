@@ -51,8 +51,8 @@ jobs:
       - name: Tests (pytest)
         run: pytest -q -m "not slow"
 
-  spark-parity:
-    name: Spark parity and Bigtable emulator
+  spark:
+    name: Spark jobs and Bigtable emulator
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -69,8 +69,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Only what Silver, the sampler and the Bigtable reader and writer
-      # import: no torch.
+      # Only what the Spark jobs and the Bigtable reader and writer import:
+      # no torch.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -87,7 +87,7 @@ jobs:
       - name: Spark tests
         env:
           BIGTABLE_EMULATOR_HOST: localhost:8086
-        run: pytest -q -m slow tests/test_spark_parity.py tests/test_silver_bigtable.py tests/test_training_set.py
+        run: pytest -q -m slow tests/test_silver_features.py tests/test_silver_bigtable.py tests/test_training_set.py
 
   terraform:
     name: terraform fmt + validate

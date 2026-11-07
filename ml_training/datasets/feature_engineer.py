@@ -1,7 +1,7 @@
 """
 feature_engineer.py — derived features and leakage controls.
 
-Input:  labeled DataFrame from label_generator.generate_labels()
+Input:  the training set's rows (DatasetBuilder) or the scorer's feature rows
 Output: clean feature DataFrame ready for DatasetBuilder
 
 Derived features added (all deterministic formulas, no data-distribution fitting):

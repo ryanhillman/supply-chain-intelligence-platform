@@ -67,7 +67,7 @@ flowchart TD
     B --> F
     F --> BT
 
-    B --> PT
+    F --> PT
     PT --> ONNX
     ONNX --> REG
     REG --> EP
@@ -95,7 +95,7 @@ A Silver batch job computes, as of a given date, a feature snapshot for each war
 
 Feature snapshots are stored in Google Cloud Bigtable, which serves as the online feature store for scoring and drift monitoring.
 
-A PyTorch shortage prediction model is trained on rows the training sampler builds from Bronze and exported to ONNX for portable deployment.
+A PyTorch shortage prediction model is trained on Silver's feature snapshots, joined with the 7-day stockout label by a Spark job, and exported to ONNX for portable deployment.
 
 The model is deployed to Vertex AI Endpoints using a containerized FastAPI application powered by ONNX Runtime.
 
@@ -145,7 +145,7 @@ Training and scoring data come from one simulated supply chain (`simulation/worl
 - Demand spikes
 - Inventory replenishment behavior
 
-The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. The training sampler builds 39,360 labeled rows from Bronze, one per warehouse-SKU-day, leaving out the first 30 days (feature warm-up) and the last 7 (no outcome yet), with the same feature windows Silver uses for scoring.
+The Kafka producer replays 365 simulated days for 6 warehouses and 20 SKUs, about 200,000 events, into Bronze. A Spark job joins Silver's snapshots with the outcome of the following 7 days into 39,360 labeled rows, one per warehouse-SKU-day, leaving out the first 30 days (feature warm-up) and the last 7 (no outcome yet). Training and scoring use the features Silver computes.
 
 ### Training Configuration
 
@@ -160,8 +160,8 @@ Test split of the replayed world: the last 15% of sample dates, 6,000 rows, 21.8
 | Model | AUC-ROC | AUPRC | Brier | In-stock AUC-ROC | In-stock AUPRC | In-stock Brier |
 |---|---|---|---|---|---|---|
 | Normal-approximation formula (baseline) | 0.902 | 0.657 | 0.157 | 0.890 | 0.554 | 0.149 |
-| PyTorch MLP | 0.941 | 0.838 | 0.079 | 0.934 | 0.774 | 0.072 |
-| LightGBM (comparison only) | 0.945 | 0.849 | 0.078 | 0.938 | 0.791 | 0.070 |
+| PyTorch MLP | 0.941 | 0.840 | 0.078 | 0.934 | 0.777 | 0.070 |
+| LightGBM (comparison only) | 0.945 | 0.849 | 0.075 | 0.938 | 0.791 | 0.068 |
 
 MLP and LightGBM rows are the mean of five training runs with different random seeds. LightGBM was better by small margins.
 

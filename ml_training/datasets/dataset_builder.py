@@ -2,9 +2,10 @@
 DatasetBuilder — orchestrates the full dataset construction pipeline.
 
 Pipeline:
-  1. BronzeTemporalSampler.build()  → (feature_rows, inv_events)
-  2. generate_labels()               → labeled feature rows
-  3. engineer_features()             → derived features added, leakage removed
+  1. Read the Spark training set     → one labeled row per (warehouse, SKU, day)
+     (spark/jobs/training_set.py: Silver's stored features + stockout_label_7d)
+  2. engineer_features()             → defaults filled, derived features added
+  3. Baseline columns                → baseline_pred, stockout_risk_score
   4. Time-based 70 / 15 / 15 split  → train / val / test
   5. Fit per-feature mean/scale on train → stored in feature_metadata.json
   6. Compute baseline metrics        → saved to baseline_metrics.json
@@ -25,10 +26,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import gcsfs
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from ml_training.datasets.bronze_temporal_sampler import BronzeTemporalSampler
+from feature_registry import HORIZON_DAYS
 from ml_training.datasets.feature_engineer import (
     BASELINE_COL,
     CATEGORICAL_FEATURE_COLS,
@@ -37,12 +39,13 @@ from ml_training.datasets.feature_engineer import (
     RISK_SCORE_COL,
     TARGET_COL,
     engineer_features,
+    normal_stockout_prob,
 )
-from ml_training.datasets.label_generator import HORIZON_DAYS, generate_labels
 from ml_training.evaluation.metrics import compute_metrics
 
 logger = logging.getLogger(__name__)
 
+TRAINING_PREFIX: str = "training"   # gs://<bucket>/training/, written by spark/jobs/training_set.py
 TRAIN_FRAC: float = 0.70
 VAL_FRAC:   float = 0.15   # test = 1 - TRAIN_FRAC - VAL_FRAC = 0.15
 
@@ -72,7 +75,7 @@ class DatasetBuilder:
     Parameters
     ----------
     bucket:
-        GCS bucket name (Bronze under gs://<bucket>/bronze/).
+        GCS bucket name (the training set is under gs://<bucket>/training/).
     credentials_path:
         Service account JSON path, or None for ADC.
     output_dir:
@@ -90,31 +93,31 @@ class DatasetBuilder:
         self.output_dir       = Path(output_dir)
 
     def build(self) -> DatasetManifest:
-        """Run the full pipeline from Bronze and return a DatasetManifest."""
+        """Run the full pipeline from the training set on GCS and return a DatasetManifest."""
+        # ── Step 1: Read the Spark training set ──────────────────────────────
+        return self.build_from_rows(read_training_set(self.bucket, self.credentials_path))
+
+    def build_from_rows(self, rows: pd.DataFrame) -> DatasetManifest:
+        """
+        Steps 2-10: derived features, baseline columns, split, statistics and
+        output files, from the training set's rows.
+        """
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # ── Step 1: Sample Bronze temporal features ───────────────────────────
-        sampler = BronzeTemporalSampler(
-            bucket=self.bucket,
-            credentials_path=self.credentials_path,
+        # Sorted, so the dataset does not depend on the order Spark wrote the rows.
+        rows = rows.sort_values(["warehouse_id", "sku_id", "sample_date"]).reset_index(drop=True)
+
+        # ── Step 2: Defaults and derived features ─────────────────────────────
+        df = engineer_features(rows)
+
+        # ── Step 3: Baseline columns ──────────────────────────────────────────
+        # The 0/1 rule and the closed-form formula the model is measured against
+        # (evaluation/metrics.py), each from the row's own features.
+        df[BASELINE_COL]   = (df["days_of_supply"] < HORIZON_DAYS).astype(float)
+        df[RISK_SCORE_COL] = normal_stockout_prob(
+            df["current_qty"].values, df["avg_daily_sales_7d"].values,
+            df["stddev_daily_7d"].values, HORIZON_DAYS,
         )
-        feature_rows, inv_events = sampler.build()
-        return self._build_from_raw(feature_rows, inv_events)
-
-    def _build_from_raw(
-        self,
-        feature_rows: "pd.DataFrame",
-        inv_events:   "pd.DataFrame",
-    ) -> DatasetManifest:
-        """
-        Steps 2-10: labels, derived features, split, statistics, baselines and
-        output files, from BronzeTemporalSampler's (feature_rows, inv_events).
-        """
-        # ── Step 2: Generate labels ────────────────────────────────────────────
-        labeled = generate_labels(feature_rows, inv_events)
-
-        # ── Step 3: Derived features + leakage controls ────────────────────────
-        df = engineer_features(labeled)
 
         # Ensure sample_date is comparable as Timestamp
         df["sample_date"] = pd.to_datetime(df["sample_date"])
@@ -125,7 +128,7 @@ class DatasetBuilder:
         if n_dates < 3:
             raise ValueError(
                 f"Only {n_dates} unique sample dates — need at least 3 for a split. "
-                "Increase Bronze data volume or reduce min_lookback_days."
+                "Replay more days into Bronze."
             )
 
         train_cutoff = sorted_dates[int(n_dates * TRAIN_FRAC) - 1]
@@ -152,7 +155,7 @@ class DatasetBuilder:
         if train.empty or val.empty:
             raise ValueError(
                 f"Purge gap of {HORIZON_DAYS}d emptied train (n={len(train)}) "
-                f"or val (n={len(val)}) — increase Bronze data volume."
+                f"or val (n={len(val)}) — replay more days into Bronze."
             )
 
         logger.info(
@@ -279,3 +282,17 @@ class DatasetBuilder:
         logger.info("DatasetBuilder complete: %s", asdict(manifest))
         return manifest
 
+
+def read_training_set(bucket: str, credentials_path: str | None = None) -> pd.DataFrame:
+    """The rows spark/jobs/training_set.py wrote to gs://<bucket>/training/."""
+    fs = gcsfs.GCSFileSystem(token=credentials_path if credentials_path else "google_default")
+    # Explicit file paths: gcsfs lists a directory as its own first entry, which
+    # pyarrow's directory walk then tries to open as a file.
+    paths = fs.glob(f"{bucket}/{TRAINING_PREFIX}/*.parquet")
+    if not paths:
+        raise FileNotFoundError(
+            f"No training set under gs://{bucket}/{TRAINING_PREFIX}/ — "
+            "run spark/jobs/training_set.py first."
+        )
+    logger.info("Reading the training set: %d file(s) under gs://%s/%s/", len(paths), bucket, TRAINING_PREFIX)
+    return pd.concat([pd.read_parquet(p, filesystem=fs) for p in paths], ignore_index=True)

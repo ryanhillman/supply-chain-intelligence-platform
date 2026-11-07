@@ -4,8 +4,8 @@ Day-level supply-chain world model.
 A World simulates 6 warehouses x 20 SKUs one day at a time. step() advances
 one day and returns that day's events for the five Kafka topics, stamped with
 simulated time. The Kafka producer (kafka/producer/simulate.py) replays it,
-and Bronze, Silver, the training sampler and the scorer all read the result,
-so training and scoring see one world.
+and Bronze, Silver, the training set and the scorer all read the result, so
+training and scoring see one world.
 
 Per (warehouse, SKU) pair and day, in timestamp order:
 
