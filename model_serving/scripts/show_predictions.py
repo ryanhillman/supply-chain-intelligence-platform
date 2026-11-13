@@ -143,7 +143,8 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
 
     # -- By warehouse ---------------------------------------------------------
     _section("RISK BY WAREHOUSE")
-    print(f"    {'Warehouse':<10}  {'Entities':>8}  {'Mean Risk':>9}  {'Max Risk':>8}  {'High-Risk (>0.50)':>17}")
+    high_risk = f"High-Risk (>{HIGH_RISK_THRESHOLD:.2f})"
+    print(f"    {'Warehouse':<10}  {'Entities':>8}  {'Mean Risk':>9}  {'Max Risk':>8}  {high_risk:>17}")
     print("    " + "-" * 58)
     wh_groups: dict[str, list[dict]] = {}
     for r in records:

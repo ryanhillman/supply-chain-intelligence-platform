@@ -119,6 +119,14 @@ class ShortagePredictor(nn.Module):
             feature_scale = metadata["feature_scale"],
         )
 
+    @classmethod
+    def from_checkpoint(cls, path, metadata: dict) -> "ShortagePredictor":
+        """The trained model from model.pt (written by Trainer), in eval mode."""
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+        model = cls.from_metadata(metadata, TrainingConfig(**checkpoint["config"]))
+        model.load_state_dict(checkpoint["model_state"])
+        return model.eval()
+
     def _init_weights(self) -> None:
         # prob_head is a final linear output with no following ReLU (it feeds
         # BCEWithLogitsLoss on the raw logit), so Kaiming's relu gain (sqrt(2))

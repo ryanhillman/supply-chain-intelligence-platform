@@ -251,7 +251,7 @@ class ModelPromoter:
         Download evaluation_test.json from the model's GCS artifact URI.
         Returns {"metrics": {"auprc", "auc_roc", "brier"}, "split_sha256": str | None}.
         """
-        bucket_name, prefix = _split_gcs_uri(artifact_uri)
+        bucket_name, prefix = cli.split_gcs_uri(artifact_uri)
         blob = self._storage_client.bucket(bucket_name).blob(f"{prefix}/evaluation_test.json")
 
         if not blob.exists():
@@ -268,7 +268,7 @@ class ModelPromoter:
         feature_metadata.json from its GCS artifact URI into
         workdir/<deployed model id>.
         """
-        bucket_name, prefix = _split_gcs_uri(info.artifact_uri)
+        bucket_name, prefix = cli.split_gcs_uri(info.artifact_uri)
         bucket = self._storage_client.bucket(bucket_name)
         dest   = workdir / info.deployed_model_id
         dest.mkdir(parents=True, exist_ok=True)
@@ -482,9 +482,3 @@ def score_onnx_on_split(onnx_path: Path, metadata: dict, df: pd.DataFrame) -> np
         },
     )
     return shortage_prob.astype(np.float64)
-
-
-def _split_gcs_uri(uri: str) -> tuple[str, str]:
-    """'gs://bucket/some/prefix/' -> ('bucket', 'some/prefix')."""
-    bucket_name, _, prefix = uri.removeprefix("gs://").partition("/")
-    return bucket_name, prefix.rstrip("/")

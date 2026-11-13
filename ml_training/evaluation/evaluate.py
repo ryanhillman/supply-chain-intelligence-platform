@@ -30,7 +30,6 @@ from ml_training.evaluation.metrics import (
     file_sha256,
     per_warehouse_metrics,
 )
-from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 
 logger = logging.getLogger(__name__)
@@ -64,17 +63,12 @@ def run_evaluation(
     artifacts_dir = Path(artifacts_dir)
     dataset_dir   = Path(dataset_dir)
 
-    metadata   = _load_json(dataset_dir / "feature_metadata.json")
+    metadata   = json.loads((dataset_dir / "feature_metadata.json").read_text())
     df         = pd.read_parquet(dataset_dir / f"{split}.parquet")
 
     wh_vocab   = metadata["warehouse_vocab"]
     sku_vocab  = metadata["sku_vocab"]
-    checkpoint = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=True)
-    config     = TrainingConfig(**checkpoint["config"])
-
-    model = ShortagePredictor.from_metadata(metadata, config)
-    model.load_state_dict(checkpoint["model_state"])
-    model.eval()
+    model      = ShortagePredictor.from_checkpoint(artifacts_dir / "model.pt", metadata)
 
     # Build tensors
     x_num   = torch.tensor(df[NUMERIC_FEATURE_COLS].values, dtype=torch.float32)
@@ -225,8 +219,3 @@ def _subset_metrics(
     block["baseline"]      = compute_metrics(y_sub, y_baseline[mask])
     block["rule_baseline"] = compute_metrics(y_sub, y_rule[mask])
     return block
-
-
-def _load_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)

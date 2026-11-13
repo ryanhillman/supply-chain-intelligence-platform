@@ -121,7 +121,7 @@ def parse_args() -> argparse.Namespace:
     deploy_p.add_argument(
         "--machine-type",
         default=DEFAULT_MACHINE_TYPE,
-        help="Vertex AI machine type (default: n1-standard-2)",
+        help=f"Vertex AI machine type (default: {DEFAULT_MACHINE_TYPE})",
     )
     deploy_p.add_argument(
         "--min-replicas",

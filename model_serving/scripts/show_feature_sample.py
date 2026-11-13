@@ -30,6 +30,9 @@ from model_serving import cli
 from model_serving.pipeline.constants import HIGH_RISK_THRESHOLD
 from model_serving.pipeline.feature_client import FeatureClient
 
+# shortage_prob_7d above this is tagged ELEVATED; above HIGH_RISK_THRESHOLD, HIGH RISK.
+_ELEVATED_RISK_THRESHOLD = 0.15
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -169,9 +172,9 @@ def _risk_tag(rec: dict) -> str:
     prob = rec.get("shortage_prob_7d")
     if prob is None:
         return ""
-    if prob >= HIGH_RISK_THRESHOLD:
+    if prob > HIGH_RISK_THRESHOLD:
         return "  [HIGH RISK]"
-    if prob >= 0.15:
+    if prob > _ELEVATED_RISK_THRESHOLD:
         return "  [ELEVATED]"
     return "  [LOW RISK]"
 

@@ -49,7 +49,6 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
 
 from model_serving                            import cli
 from model_serving.pipeline.constants         import VARIANCE_COLLAPSE_THRESHOLD
@@ -64,8 +63,6 @@ from model_serving.pipeline.batch_scorer      import (
 from model_serving.pipeline.prediction_writer import DEFAULT_MAX_MESSAGES, PredictionWriter
 
 logger = logging.getLogger("score")
-
-_LOCAL_REGISTRATION_INFO = Path("model_serving/artifacts/registration_info.json")
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--topic",
         default=os.environ.get("PUBSUB_TOPIC_ID", DEFAULT_TOPIC_ID),
-        help="Pub/Sub topic ID for predictions (default: prediction-results)",
+        help=f"Pub/Sub topic ID for predictions (default: {DEFAULT_TOPIC_ID})",
     )
     p.add_argument(
         "--subscription",
@@ -105,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         "--batch-size",
         type=int,
         default=DEFAULT_BATCH_SIZE,
-        help="Instances per endpoint.predict() call (default: 32)",
+        help=f"Instances per endpoint.predict() call (default: {DEFAULT_BATCH_SIZE})",
     )
     p.add_argument(
         "--max-feature-age-hours",
@@ -113,7 +110,7 @@ def parse_args() -> argparse.Namespace:
         default=float(os.environ.get("MAX_FEATURE_AGE_HOURS", DEFAULT_MAX_FEATURE_AGE_HOURS)),
         help=(
             "Skip rows whose lineage:silver_ts is older than this many hours "
-            "(default: 48). 0 disables the check."
+            f"(default: {DEFAULT_MAX_FEATURE_AGE_HOURS:g}). 0 disables the check."
         ),
     )
 
@@ -146,7 +143,7 @@ def parse_args() -> argparse.Namespace:
         "--writer-max-messages",
         type=int,
         default=DEFAULT_MAX_MESSAGES,
-        help="Max messages per Pub/Sub pull call in --write mode (default: 100)",
+        help=f"Max messages per Pub/Sub pull call in --write mode (default: {DEFAULT_MAX_MESSAGES})",
     )
 
     # ── Control ───────────────────────────────────────────────────────────────
@@ -172,9 +169,9 @@ def _resolve_model_version(args: argparse.Namespace) -> str:
     if args.model_version:
         return args.model_version
 
-    if _LOCAL_REGISTRATION_INFO.exists():
+    if cli.REGISTRATION_INFO_PATH.exists():
         try:
-            version = cli.read_json(_LOCAL_REGISTRATION_INFO).get("version", "")
+            version = cli.read_json(cli.REGISTRATION_INFO_PATH).get("version", "")
             if version:
                 logger.info("model_version resolved from registration_info.json: %s", version)
                 return version

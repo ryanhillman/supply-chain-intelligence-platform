@@ -208,7 +208,7 @@ class ModelRegistrar:
         payload = json.dumps(info, indent=2)
 
         # Save locally (picked up by deploy_endpoint.py as the default model source)
-        local_path = Path("model_serving/artifacts/registration_info.json")
+        local_path = cli.REGISTRATION_INFO_PATH
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_text(payload)
         logger.info("Registration info saved locally: %s", local_path)

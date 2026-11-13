@@ -115,7 +115,7 @@ class Trainer:
 
     def train(self) -> TrainingHistory:
         """Run the full training loop. Returns TrainingHistory."""
-        metadata = _load_metadata(self.dataset_dir / "feature_metadata.json")
+        metadata = json.loads((self.dataset_dir / "feature_metadata.json").read_text())
         train_df = pd.read_parquet(self.dataset_dir / "train.parquet")
         val_df   = pd.read_parquet(self.dataset_dir / "val.parquet")
 
@@ -281,11 +281,6 @@ def _seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-
-
-def _load_metadata(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)
 
 
 def _save_training_metrics(history: TrainingHistory, path: Path) -> None:
