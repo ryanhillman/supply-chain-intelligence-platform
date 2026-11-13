@@ -451,6 +451,12 @@ def main() -> None:
     if stats.messages_pulled > 0 and stats.bigtable_rows_written == 0:
         logger.error("No Bigtable rows written — check Bigtable connectivity and IAM")
         sys.exit(1)
+    if stats.bigtable_rows_written < stats.messages_pulled:
+        logger.error(
+            "Writer run incomplete: %d of %d pulled messages were written to Bigtable",
+            stats.bigtable_rows_written, stats.messages_pulled,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
