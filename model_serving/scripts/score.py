@@ -347,6 +347,22 @@ def _run_scoring(
             "\n  (add --sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json on GCP.)"
         )
 
+    # ── Exit status ───────────────────────────────────────────────────────────
+    # Checked after the write, so the predictions that were published reach Bigtable.
+    incomplete = []
+    if stats.publish_failures > 0:
+        incomplete.append(
+            f"{stats.publish_failures} of {stats.rows_scored} predictions were not published"
+        )
+    if args.write and writer_stats.bigtable_rows_written < stats.predictions_published:
+        incomplete.append(
+            f"{writer_stats.bigtable_rows_written} of {stats.predictions_published} "
+            "published predictions were written to Bigtable"
+        )
+    if incomplete:
+        logger.error("Scoring run incomplete: %s", "; ".join(incomplete))
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

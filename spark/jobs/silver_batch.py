@@ -151,10 +151,13 @@ def main() -> None:
     logger.info("Silver batch starting | from=%s as_of=%s bronze=%s silver=%s",
                 first, last, BRONZE_BASE_PATH, SILVER_BASE_PATH)
 
-    feature_df = conform_to_silver_schema(add_row_key_and_partitions(
+    # Cached before the schema check, whose null count is the first action on these
+    # rows; the Silver and Bigtable writes then read the cache, not Bronze again.
+    cached_df = add_row_key_and_partitions(
         add_lineage(compute_features(spark, BRONZE_BASE_PATH, first, last))
-    )).cache()
+    ).cache()
     try:
+        feature_df = conform_to_silver_schema(cached_df)
         row_count = write_silver(feature_df)
         if row_count == 0:
             logger.error("No inventory events in the 30 days up to %s", last)
@@ -176,7 +179,7 @@ def main() -> None:
             )
             raise   # exit non-zero: the scorer would read an out-of-date store
     finally:
-        feature_df.unpersist()
+        cached_df.unpersist()
         spark.stop()
 
     logger.info("Silver batch complete | from=%s as_of=%s", first, last)
