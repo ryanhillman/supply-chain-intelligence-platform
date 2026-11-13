@@ -489,9 +489,7 @@ class DriftMonitor:
 
         Both sides are in raw feature units: the reference bins come from the
         raw training split and the live values from engineer_features() on raw
-        Bigtable cells. Mixing units (standardized training rows against raw
-        live values) reports PSI 2–8 for the training data compared with
-        itself; tests/test_drift_monitor_psi.py pins that.
+        Bigtable cells.
 
         PSI = Σ_i (A_i - E_i) × ln(A_i / E_i)
 

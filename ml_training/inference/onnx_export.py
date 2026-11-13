@@ -53,9 +53,8 @@ def export_graph(model: ShortagePredictor, example_inputs: tuple, output_path: s
     example_inputs is one (x_numeric, wh_ids, sku_ids) batch for tracing.
     """
     # dynamo=False pins the TorchScript exporter. torch >= 2.9 defaults to
-    # the dynamo exporter, which ignores dynamic_axes (it wants dynamic_shapes),
-    # upgrades opset 17 to 18 on its own, and crashed here on a Windows console
-    # while printing its progress line. The TorchScript path honors the
+    # the dynamo exporter, which ignores dynamic_axes (it wants dynamic_shapes)
+    # and upgrades opset 17 to 18 on its own. The TorchScript path honors the
     # arguments below and emits the opset-17 graph the container documents.
     torch.onnx.export(
         _WithSigmoid(model),

@@ -1,5 +1,5 @@
 """
-build_dataset.py — CLI entry point for Step 4.1.
+build_dataset.py — CLI entry point for DatasetBuilder.
 
 Reads the Spark training set (spark/jobs/training_set.py) -> derives features
 -> splits 70/15/15 by time -> writes train/val/test Parquet + metadata.

@@ -50,10 +50,10 @@ resource "google_project_service" "iam" {
 #   silver/    — feature aggregates, permanent
 #   checkpoints/ — Spark streaming checkpoints. No lifecycle rule: Spark bounds
 #                its own checkpoint growth (minBatchesToRetain, log compaction),
-#                and an age rule deleted the live offsets after a pause, so the
-#                Bronze query restarted from "latest" and silently skipped the
-#                Kafka data produced in between. Remove abandoned checkpoint
-#                directories by hand.
+#                and an age rule would delete the live offsets of a paused
+#                query, which would then restart from its starting offsets
+#                instead of resuming. Remove abandoned checkpoint directories
+#                by hand.
 #   dlq/       — dead-letter queue (newline-delimited JSON envelopes)
 ###############################################################################
 

@@ -303,9 +303,9 @@ class PredictionWriter:
                 time.sleep(wait)
 
         # mutate_rows() returns a list of statuses positionally aligned with
-        # `rows` — one entry per input row, in order. There is no .index field
-        # (see spark/utils/bigtable_writer.py._flush_batch for the same API
-        # handled correctly via enumerate()).
+        # `rows` — one entry per input row, in order — and no .index field, so
+        # each status is matched to its message by position
+        # (spark/utils/bigtable_writer.py._flush_batch reads the same API).
         n_written = 0
         n_failed  = 0
         successful_ack_ids: list[str] = []
