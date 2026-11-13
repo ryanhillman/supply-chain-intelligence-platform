@@ -174,7 +174,7 @@ class EndpointDeployer:
         )
         if traffic_pct == 0:
             logger.info(
-                "Challenger deployed at 0%% traffic. "
+                "Challenger deployed at 0% traffic. "
                 "Run smoke_test.py, then promote_model.py to go live."
             )
 

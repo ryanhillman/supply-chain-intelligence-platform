@@ -138,13 +138,13 @@ class ModelPromoter:
         if not passes:
             logger.warning(
                 "PROMOTION BLOCKED — challenger did not beat champion on all metrics. "
-                "Champion remains at 100%% traffic."
+                "Champion remains at 100% traffic."
             )
             return False
 
         if dry_run:
             logger.info(
-                "[dry-run] Challenger WOULD be promoted to 100%% traffic. "
+                "[dry-run] Challenger WOULD be promoted to 100% traffic. "
                 "Re-run without --dry-run to apply."
             )
             return True
@@ -180,18 +180,18 @@ class ModelPromoter:
 
         if not champions:
             raise ValueError(
-                "No champion found (no model at > 0%% traffic). "
+                "No champion found (no model at > 0% traffic). "
                 "For the first deployment, use deploy.py deploy --traffic 100 directly."
             )
         if not challengers:
             raise ValueError(
-                "No challenger found (no model at 0%% traffic). "
+                "No challenger found (no model at 0% traffic). "
                 "Deploy a challenger first with deploy.py deploy --traffic 0."
             )
         if len(champions) > 1:
             raise ValueError(
                 f"Multiple champions found: {champions}. "
-                "Traffic split must have exactly one model at > 0%%."
+                "Traffic split must have exactly one model at > 0%."
             )
 
         # Build DeployedModelInfo for each
