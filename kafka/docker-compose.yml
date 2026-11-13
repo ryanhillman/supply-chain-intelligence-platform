@@ -19,8 +19,6 @@
 # View producer logs: docker compose logs producer -f
 ###############################################################################
 
-version: "3.8"
-
 services:
 
   # ── Kafka KRaft broker ───────────────────────────────────────────────────────
