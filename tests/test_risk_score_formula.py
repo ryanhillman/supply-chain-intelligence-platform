@@ -10,7 +10,7 @@ from scipy.stats import norm
 from ml_training.datasets.feature_engineer import normal_stockout_prob
 
 
-def test_edge_cases_match_the_original_scalar_rules():
+def test_edge_cases():
     assert normal_stockout_prob([100.0], [0.0], [5.0], 7)[0] == 0.0     # no demand -> no risk
     assert normal_stockout_prob([0.0], [10.0], [2.0], 7)[0] == 1.0      # already out of stock
     assert normal_stockout_prob([50.0], [10.0], [0.0], 7)[0] == 1.0     # deterministic, 5 days < 7
