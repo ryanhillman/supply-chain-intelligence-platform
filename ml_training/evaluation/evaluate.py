@@ -6,7 +6,7 @@ compares the model against the closed-form Normal-approximation baseline
 (stockout_risk_score) with the days_of_supply < 7 rule reported for
 context, and saves an evaluation report JSON.
 
-Called by scripts/evaluate.py.
+Called by scripts/evaluate.py and scripts/train.py.
 """
 from __future__ import annotations
 
@@ -49,8 +49,7 @@ def run_evaluation(
     artifacts_dir:
         Directory containing model.pt (trained ShortagePredictor state dict).
     dataset_dir:
-        Directory containing {split}.parquet, feature_metadata.json and
-        baseline_metrics.json.
+        Directory containing {split}.parquet and feature_metadata.json.
     split:
         "train", "val", or "test".
 

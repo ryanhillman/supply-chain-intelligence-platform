@@ -143,7 +143,7 @@ class ModelRegistrar:
             "registered_at":       registered_at,
         }
 
-        # Embed test metrics for promote_model.py (avoids a separate GCS download)
+        # The model's test metrics, copied from evaluation_test.json
         eval_path = artifacts_dir / "evaluation_test.json"
         if eval_path.exists():
             info["test_metrics"] = cli.read_json(eval_path).get("model", {})

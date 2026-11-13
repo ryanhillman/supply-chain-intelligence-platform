@@ -8,9 +8,11 @@ Pipeline:
   3. Baseline columns                → baseline_pred, stockout_risk_score
   4. Time-based 70 / 15 / 15 split  → train / val / test
   5. Fit per-feature mean/scale on train → stored in feature_metadata.json
-  6. Compute baseline metrics        → saved to baseline_metrics.json
-  7. Write train/val/test Parquet    → artifacts/dataset/ (raw feature units)
-  8. Write feature_metadata.json     → artifacts/dataset/
+  6. Build vocabulary mappings       → warehouse and SKU ids, from the full dataset
+  7. Compute baseline metrics        → on the test split
+  8. Write train/val/test Parquet    → artifacts/dataset/ (raw feature units)
+  9. Write feature_metadata.json     → artifacts/dataset/
+ 10. Write baseline_metrics.json     → artifacts/dataset/
 
 Standardization statistics are fit only on the train split and stored in
 feature_metadata.json as feature_mean / feature_scale. The parquet splits

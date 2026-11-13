@@ -156,7 +156,7 @@ class BatchScorer:
         ----------
         batch_size:
             Number of instances per endpoint.predict() call. Default 32.
-            Vertex AI Online Prediction supports up to 10 MB per request;
+            Vertex AI online prediction accepts requests up to 1.5 MB;
             32 × 21 float32 features is well within that limit.
         model_version:
             Version string embedded in each Pub/Sub message so PredictionWriter

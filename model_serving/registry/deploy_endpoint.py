@@ -146,8 +146,7 @@ class EndpointDeployer:
         split_after = set(endpoint_after.traffic_split.keys())
         new_ids     = split_after - split_before
         if not new_ids:
-            # Fallback: the ID with value == traffic_pct that wasn't there before.
-            # This case can occur when traffic_pct matches an existing entry's value.
+            # No new ID in the traffic split: the ID is recorded as "unknown".
             logger.warning(
                 "Could not identify new deployed model ID by diff. "
                 "Check endpoint.traffic_split manually."

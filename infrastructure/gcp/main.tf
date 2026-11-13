@@ -207,7 +207,7 @@ resource "google_bigtable_gc_policy" "family" {
 
 ###############################################################################
 # Service Account
-# Used by Spark jobs (running in Docker or GKE) to authenticate to GCS/Bigtable.
+# Used by Spark jobs (running in Docker) to authenticate to GCS/Bigtable.
 # Key created manually via:
 #   gcloud iam service-accounts keys create keys/scip-spark-sa.json \
 #     --iam-account=<SA_EMAIL>

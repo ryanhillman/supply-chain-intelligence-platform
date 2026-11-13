@@ -16,7 +16,8 @@ Column naming convention: {family}__{attribute}
 
 All numeric features are DoubleType for consistency.
 String features (event types, timestamps, version strings) are StringType.
-Partition columns (warehouse_id, sku_id, year, month, day) appended last.
+Partition columns are SILVER_PARTITION_COLS (warehouse_id, year, month, day);
+year, month and day are appended last.
 """
 from __future__ import annotations
 

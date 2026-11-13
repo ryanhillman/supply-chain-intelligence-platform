@@ -29,7 +29,7 @@ services:
     hostname: kafka          # Spark containers reach this as kafka:29092
     container_name: kafka
     ports:
-      - "9092:9092"          # External access from host (e.g. cbt-verify scripts)
+      - "9092:9092"          # External access from host
     environment:
       # KRaft identity
       KAFKA_NODE_ID: 1

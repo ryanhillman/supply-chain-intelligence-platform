@@ -10,7 +10,7 @@ This script:
 
 Optionally runs the PredictionWriter in the same process after publishing
 (--write flag) to drain the topic into Bigtable predictions column family.
-Alternatively, run prediction_writer.py separately as a Cloud Run job.
+Alternatively, run prediction_writer.py separately.
 
 Usage
 -----

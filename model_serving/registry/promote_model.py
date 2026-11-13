@@ -22,9 +22,8 @@ Flow
    {challenger: 100%, champion: 0%}.
 8. If any criterion fails: exit non-zero. The champion remains live.
 
-The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
-SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
-method in all SDK versions. The gapic PATCH call is the canonical approach.
+The traffic-split update is a Vertex AI v1 gapic update_endpoint call with a
+field mask on traffic_split, so no other endpoint setting is changed.
 
 Required packages:
     google-cloud-aiplatform>=1.38.0

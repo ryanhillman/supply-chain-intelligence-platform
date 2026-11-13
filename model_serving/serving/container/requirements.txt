@@ -1,7 +1,6 @@
 # SCIP shortage-predictor serving container dependencies
 #
 # Pin to exact versions for container reproducibility.
-# To regenerate: pip install -c constraints.txt -r requirements.txt && pip freeze
 #
 # onnxruntime-cpu: CPU-only wheel, ~25 MB vs ~600 MB for the CUDA variant.
 # The exported model.onnx uses opset 17 (TorchScript exporter pinned in

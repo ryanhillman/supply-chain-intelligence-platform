@@ -358,8 +358,8 @@ class DriftMonitor:
         """
         Scan all feature rows via FeatureClient and run engineer_features()
         (defaults, then derived features): the same read path and derivation as
-        RequestBuilder.build(), so the monitor sees exactly what the scorer
-        scores. One row per (warehouse_id, sku_id).
+        RequestBuilder.build(). The scorer also drops stale rows (split_fresh);
+        the monitor reads every row. One row per (warehouse_id, sku_id).
         """
         feature_rows = self._feature_client.scan_all()
         if not feature_rows:
@@ -689,7 +689,7 @@ class DriftMonitor:
 
         logger.info("Drift report saved: %s", path)
 
-    # ── Cloud Monitoring (optional stubs) ──────────────────────────────────────
+    # ── Cloud Monitoring (optional) ────────────────────────────────────────────
 
     def _emit_cloud_monitoring(self, report: DriftReport) -> None:
         """
@@ -706,9 +706,9 @@ class DriftMonitor:
           IAM: monitoring.metricWriter on scip-vertex-sa
                (granted in infrastructure/gcp/vertex_ai.tf)
 
-        This method is a stub — it is safe to call without Cloud Monitoring
-        configured. If the package is unavailable or auth fails, a warning is
-        logged and the run continues normally.
+        It is safe to call without Cloud Monitoring configured: if the package
+        is unavailable or auth fails, a warning is logged and the run continues
+        normally.
         """
         try:
             from google.cloud import monitoring_v3
@@ -818,9 +818,9 @@ class DriftMonitor:
         give PSI ~0 for training-vs-itself.
 
         Reading the reference from the model's artifacts directory, rather than
-        from a dataset directory, means the baseline is the one the deployed
-        model was trained on. Raises FileNotFoundError if absent: there is no
-        approximate fallback.
+        from a dataset directory, means the baseline is that of the model in
+        --artifacts, which is not necessarily the deployed one. Raises
+        FileNotFoundError if absent: there is no approximate fallback.
         """
         path = self._artifacts_dir / "drift_reference.json"
         if not path.exists():

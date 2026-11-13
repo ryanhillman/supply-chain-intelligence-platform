@@ -384,7 +384,8 @@ class PredictionWriter:
         missing = required - set(payload.keys())
         if missing:
             logger.error(
-                "Message missing fields %s (ack_id=%.20s...) — discarding",
+                "Message missing fields %s (ack_id=%.20s...) — left un-acked; "
+                "redelivered until the dead-letter policy takes it",
                 missing, ack_id,
             )
             return None

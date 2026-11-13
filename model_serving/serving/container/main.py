@@ -8,10 +8,10 @@ Vertex AI contract:
                    422 if request schema is invalid
                    500 on inference error
 
-Vertex AI deploy flags (set in model_serving/scripts/deploy.py):
-  --health-route   /health
-  --predict-route  /predict
-  --port           8080
+Routes and port (set by Model.upload() in model_serving/registry/register_model.py):
+  health route   /health
+  predict route  /predict
+  port           8080
 
 The container does NOT apply vocab mapping — that is the caller's
 responsibility (see request_builder.py). Numeric features arrive in raw
