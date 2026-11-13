@@ -4,7 +4,6 @@ Invoked by validate_pipeline.sh (Check 4) inside the scip-spark Docker container
 Reads Silver Parquet and reports row counts, schema conformance, null rates.
 """
 import sys
-sys.path.insert(0, "/opt/spark-app")
 
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F

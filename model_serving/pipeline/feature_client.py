@@ -20,9 +20,6 @@ Design
 - Only the latest cell version per column is read (CellsColumnLimitFilter(1)).
 
 Row key format: {warehouse_id}#{sku_id}  e.g. "W-001#SKU-005"
-
-Required packages:
-    google-cloud-bigtable>=2.22.0
 """
 from __future__ import annotations
 

@@ -16,10 +16,6 @@ Pipeline per entity
 
 The 15 raw feature names are feature_registry.RAW_FEATURE_COLS; their defaults
 are in ml_training/datasets/feature_engineer.fill_defaults().
-
-Required packages:
-    numpy>=1.26.0
-    pandas>=2.1.0
 """
 from __future__ import annotations
 

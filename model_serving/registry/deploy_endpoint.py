@@ -17,9 +17,6 @@ Usage
     # Challenger deployment (champion already live): keep at 0, then promote
     python model_serving/scripts/deploy.py deploy --traffic 0
     python model_serving/scripts/deploy.py promote   # after smoke test passes
-
-Required packages:
-    google-cloud-aiplatform>=1.38.0
 """
 from __future__ import annotations
 

@@ -18,13 +18,6 @@ Pass criterion
 The smoke test PASSES as long as every shortage_prob_7d is a finite float in
 [0, 1]. It does not assert meaningful probability values; use evaluate.py and
 the drift monitor for that.
-
-Required packages:
-    google-cloud-aiplatform>=1.38.0
-    google-cloud-bigtable>=2.22.0
-    google-cloud-storage>=2.16.0
-    numpy>=1.26.0
-    pandas>=2.1.0
 """
 from __future__ import annotations
 

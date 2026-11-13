@@ -26,21 +26,6 @@ Pub/Sub message schema (one per entity)
   "model_version":       "v20260620_180918",
   "prediction_timestamp": "2026-06-20T18:09:21Z"
 }
-
-Logging emitted
----------------
-- rows_scanned       : total FeatureRow objects returned by scan_all()
-- rows_stale         : rows skipped because their Silver write was too old or missing
-- rows_scored        : entities that passed vocab filter and were sent to endpoint
-- batches_sent       : number of endpoint.predict() calls
-- endpoint_latency_ms: per-batch and overall mean latency
-- predictions_published: total Pub/Sub messages published successfully
-- prediction variance  : std dev of shortage_prob_7d (collapse < 0.01 flagged)
-
-Required packages:
-    google-cloud-aiplatform>=1.38.0
-    google-cloud-pubsub>=2.20.0
-    numpy>=1.26.0
 """
 from __future__ import annotations
 

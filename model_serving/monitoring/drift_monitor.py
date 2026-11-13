@@ -55,11 +55,6 @@ PSI formula
     Zero-count bins replaced with ε=1e-4 to avoid log(0). drift_reference.json
     is required; there is no approximate fallback.
 
-Required packages:
-    numpy>=1.26.0
-    pandas>=2.1.0
-    google-cloud-bigtable>=2.22.0
-
 Optional:
     google-cloud-monitoring>=2.18.0   (for Cloud Monitoring metric emission)
 """

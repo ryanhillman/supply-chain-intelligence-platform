@@ -46,8 +46,6 @@ services:
     command:
       - "--packages"
       - "${KAFKA_PACKAGE}"
-      - "--conf"
-      - "spark.kafka.consumer.cache.enabled=false"
       - "jobs/bronze_ingestion.py"
     restart: on-failure:3
 

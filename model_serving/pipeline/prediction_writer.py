@@ -38,18 +38,6 @@ Error handling
 - Persistent failures: un-acknowledged messages are redelivered by Pub/Sub
   up to max_delivery_attempts=5 before landing on the DLQ.
 
-Logging emitted
----------------
-- messages_pulled       : total messages received per pull call
-- bigtable_rows_written : Bigtable rows written successfully per batch
-- bigtable_rows_failed  : rows that failed Bigtable write
-- messages_acknowledged : Pub/Sub ACKs sent
-- messages_nacked       : messages left un-acknowledged (will be redelivered)
-
-Required packages:
-    google-cloud-bigtable>=2.22.0
-    google-cloud-pubsub>=2.20.0
-
 CLI usage
 ---------
     python model_serving/pipeline/prediction_writer.py \\
@@ -164,7 +152,6 @@ class PredictionWriter:
     def run_batch(
         self,
         max_messages: int = _DEFAULT_MAX_MESSAGES,
-        max_batches: int | None = None,
     ) -> WriterStats:
         """
         Pull messages in batches until the subscription is empty, then return.
@@ -176,9 +163,6 @@ class PredictionWriter:
         ----------
         max_messages:
             Maximum messages per pull RPC call. Default 100.
-        max_batches:
-            Stop after this many pull calls (None = unlimited).
-            Useful for testing with a bounded number of iterations.
 
         Returns
         -------
@@ -187,17 +171,10 @@ class PredictionWriter:
         stats   = WriterStats()
         t_start = time.perf_counter()
 
-        logger.info(
-            "Starting batch writer: max_messages=%d  max_batches=%s",
-            max_messages, max_batches,
-        )
+        logger.info("Starting batch writer: max_messages=%d", max_messages)
 
         batch_count = 0
         while True:
-            if max_batches is not None and batch_count >= max_batches:
-                logger.info("max_batches=%d reached — stopping", max_batches)
-                break
-
             try:
                 response = self._subscriber.pull(
                     request={
@@ -410,8 +387,6 @@ class PredictionWriter:
                 "Failed to parse message fields (ack_id=%.20s...): %s", ack_id, exc
             )
             return None
-
-    # ── Logging ────────────────────────────────────────────────────────────────
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

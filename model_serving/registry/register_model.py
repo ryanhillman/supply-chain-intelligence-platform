@@ -14,10 +14,6 @@ GCS layout after registration:
 The serving container's MODEL_GCS_PATH environment variable is set to the version
 directory during Vertex AI Model.upload(), so the container knows where to
 download model.onnx at startup.
-
-Required packages (pip install):
-    google-cloud-aiplatform>=1.38.0
-    google-cloud-storage>=2.16.0
 """
 from __future__ import annotations
 

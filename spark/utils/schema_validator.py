@@ -13,14 +13,11 @@ Error reasons:
 """
 from __future__ import annotations
 
-import logging
 from pyspark.sql import DataFrame
 from pyspark.sql.types import StringType, StructField, StructType
 import pyspark.sql.functions as F
 
 from config.bronze_config import TOPIC_REQUIRED_FIELDS
-
-logger = logging.getLogger(__name__)
 
 
 def parse_and_validate(
