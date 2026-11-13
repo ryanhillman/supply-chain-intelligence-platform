@@ -49,9 +49,7 @@ from model_serving import cli
 logger = logging.getLogger(__name__)
 
 # Promotion requires improvement on ALL three metrics.
-# Brier is "lower is better"; AUPRC and AUC-ROC are "higher is better".
-_HIGHER_IS_BETTER = ("auprc", "auc_roc")
-_LOWER_IS_BETTER  = ("brier",)
+_HIGHER_IS_BETTER = {"auprc": True, "auc_roc": True, "brier": False}
 
 
 @dataclass
@@ -149,9 +147,7 @@ class ModelPromoter:
             )
             return True
 
-        self._apply_traffic_split(
-            challenger_id=challenger.deployed_model_id,
-        )
+        self._apply_traffic_split(challenger_id=challenger.deployed_model_id)
 
         logger.info(
             "PROMOTED — challenger %s is now champion at 100%% traffic. "
@@ -267,27 +263,25 @@ class ModelPromoter:
         return parse_evaluation(json.loads(blob.download_as_text()), artifact_uri)
 
     def _fetch_model(self, info: DeployedModelInfo, workdir: Path) -> tuple[Path, dict]:
-        """align_metrics() callback: a deployed model's files come from its GCS artifact URI."""
-        return self._download_model_files(info.artifact_uri, workdir / info.deployed_model_id)
-
-    def _download_model_files(self, artifact_uri: str, dest: Path) -> tuple[Path, dict]:
-        """Fetch model.onnx and feature_metadata.json into dest."""
-        bucket_name, prefix = _split_gcs_uri(artifact_uri)
+        """
+        align_metrics() callback: download a deployed model's model.onnx and
+        feature_metadata.json from its GCS artifact URI into
+        workdir/<deployed model id>.
+        """
+        bucket_name, prefix = _split_gcs_uri(info.artifact_uri)
         bucket = self._storage_client.bucket(bucket_name)
+        dest   = workdir / info.deployed_model_id
         dest.mkdir(parents=True, exist_ok=True)
 
         for fname in ("model.onnx", "feature_metadata.json"):
             blob = bucket.blob(f"{prefix}/{fname}")
             if not blob.exists():
-                raise FileNotFoundError(f"{fname} not found at {artifact_uri}")
+                raise FileNotFoundError(f"{fname} not found at {info.artifact_uri}")
             blob.download_to_filename(str(dest / fname))
 
         return dest / "model.onnx", cli.read_json(dest / "feature_metadata.json")
 
-    def _apply_traffic_split(
-        self,
-        challenger_id: str,
-    ) -> None:
+    def _apply_traffic_split(self, challenger_id: str) -> None:
         """
         Flip traffic to 100% challenger / 0% all others via the gapic client.
 
@@ -420,33 +414,18 @@ def compare_metrics(champion: dict, challenger: dict) -> tuple[bool, dict[str, d
     all_pass is True only if challenger beats champion on ALL metrics.
     """
     summary: dict[str, dict] = {}
-    all_pass = True
 
-    for metric in _HIGHER_IS_BETTER:
-        delta  = challenger[metric] - champion[metric]
-        passes = delta > 0
-        all_pass &= passes
+    for metric, higher_is_better in _HIGHER_IS_BETTER.items():
+        delta = challenger[metric] - champion[metric]
         summary[metric] = {
             "champion":   champion[metric],
             "challenger": challenger[metric],
             "delta":      delta,
-            "passes":     passes,
-            "criterion":  "higher is better",
+            "passes":     delta > 0 if higher_is_better else delta < 0,
+            "criterion":  "higher is better" if higher_is_better else "lower is better",
         }
 
-    for metric in _LOWER_IS_BETTER:
-        delta  = challenger[metric] - champion[metric]
-        passes = delta < 0
-        all_pass &= passes
-        summary[metric] = {
-            "champion":   champion[metric],
-            "challenger": challenger[metric],
-            "delta":      delta,
-            "passes":     passes,
-            "criterion":  "lower is better",
-        }
-
-    return all_pass, summary
+    return all(d["passes"] for d in summary.values()), summary
 
 
 def print_metric_comparison(summary: dict[str, dict], basis: str) -> None:

@@ -13,12 +13,9 @@ RUN curl -fsSL \
     "https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-${GCS_CONNECTOR_VERSION}.jar" \
     -o "/opt/spark/jars/gcs-connector-hadoop3-${GCS_CONNECTOR_VERSION}.jar"
 
-# ── App directories ───────────────────────────────────────────────────────────
+# ── App directory ─────────────────────────────────────────────────────────────
 # keys/ is the mount target for the service-account key.
-RUN mkdir -p /opt/spark-app/data/bronze \
-             /opt/spark-app/data/checkpoints \
-             /opt/spark-app/data/dlq \
-             /opt/spark-app/keys \
+RUN mkdir -p /opt/spark-app/keys \
     && chown -R 185:185 /opt/spark-app
 
 COPY requirements.txt /opt/spark-app/requirements.txt

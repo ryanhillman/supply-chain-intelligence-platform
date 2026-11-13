@@ -199,7 +199,7 @@ def main() -> None:
     cli.require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     if args.command == "deploy":
-        if not getattr(args, "service_account", None):
+        if not args.service_account:
             logger.warning(
                 "No --service-account specified. The default Vertex AI compute SA "
                 "lacks GCS bucket read access and the container will fail to start. "

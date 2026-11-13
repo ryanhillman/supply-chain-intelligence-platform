@@ -28,8 +28,8 @@ GC policy (configured in infrastructure/gcp/main.tf):
 
 Mode
 ----
-Pull until the subscription is empty, then exit. Suits a Cloud Run job: it
-finishes naturally after scoring is done.
+Pull until the subscription is empty, then exit: the process finishes on its
+own once scoring is done.
 
 Error handling
 --------------
@@ -84,16 +84,12 @@ class WriterStats:
     bigtable_rows_failed:  int = 0
     messages_acknowledged: int = 0
     messages_nacked:       int = 0
-    batches_processed:     int = 0
-    elapsed_seconds:       float = 0.0
 
 
 @dataclass
 class _ParsedMessage:
     ack_id:               str
     row_key:              str
-    warehouse_id:         str
-    sku_id:               str
     shortage_prob_7d:     float
     stockout_risk_score:  float
     model_version:        str
@@ -157,9 +153,6 @@ class PredictionWriter:
         """
         Pull messages in batches until the subscription is empty, then return.
 
-        Suitable for Cloud Run jobs: the process exits naturally once the
-        prediction-results topic has been drained.
-
         Parameters
         ----------
         max_messages:
@@ -169,8 +162,7 @@ class PredictionWriter:
         -------
         WriterStats with totals across all pull iterations.
         """
-        stats   = WriterStats()
-        t_start = time.perf_counter()
+        stats = WriterStats()
 
         logger.info("Starting batch writer: max_messages=%d", max_messages)
 
@@ -201,7 +193,6 @@ class PredictionWriter:
 
             stats.bigtable_rows_written  += n_written
             stats.bigtable_rows_failed   += n_failed
-            stats.batches_processed += 1
 
             # Acknowledge only the messages whose Bigtable write succeeded.
             if ack_ids:
@@ -230,7 +221,6 @@ class PredictionWriter:
                 len(ack_ids), nacked,
             )
 
-        stats.elapsed_seconds = time.perf_counter() - t_start
         return stats
 
     def close(self) -> None:
@@ -376,8 +366,6 @@ class PredictionWriter:
             return _ParsedMessage(
                 ack_id               = ack_id,
                 row_key              = row_key,
-                warehouse_id         = warehouse_id,
-                sku_id               = sku_id,
                 shortage_prob_7d     = float(payload["shortage_prob_7d"]),
                 stockout_risk_score  = float(payload["stockout_risk_score"]),
                 model_version        = str(payload["model_version"]),

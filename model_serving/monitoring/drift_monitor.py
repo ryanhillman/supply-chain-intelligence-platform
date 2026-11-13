@@ -84,6 +84,7 @@ from model_serving.pipeline.constants import (
     VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD,
     variance_collapsed,
 )
+from model_serving.pipeline.feature_client import FeatureClient
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,6 @@ class DriftMonitor:
         # For the Cloud Monitoring client; FeatureClient loads its own from the same key.
         self._creds = cli.load_credentials(credentials_path)
 
-        from model_serving.pipeline.feature_client import FeatureClient
         self._feature_client = FeatureClient(
             project_id=project_id, instance_id=instance_id,
             table_id=table_id, credentials_path=credentials_path,
@@ -721,8 +721,9 @@ class DriftMonitor:
         project_name = f"projects/{self.project_id}"
         now_seconds  = int(datetime.now(timezone.utc).timestamp())
 
-        def _build_series(metric_type: str, value: float,
-                          labels: dict | None = None) -> monitoring_v3.TimeSeries:
+        def _build_series(
+            metric_type: str, labels: dict | None = None, **value
+        ) -> monitoring_v3.TimeSeries:
             series = monitoring_v3.TimeSeries()
             series.metric.type   = metric_type
             series.resource.type = "global"
@@ -734,7 +735,7 @@ class DriftMonitor:
             )
             point = monitoring_v3.Point(
                 interval=interval,
-                value=monitoring_v3.TypedValue(double_value=value),
+                value=monitoring_v3.TypedValue(**value),
             )
             series.points.append(point)
             return series
@@ -746,44 +747,33 @@ class DriftMonitor:
             if not _is_nan(fm.psi):
                 time_series.append(_build_series(
                     "custom.googleapis.com/scip/drift/feature_psi",
-                    fm.psi,
                     labels={"feature_name": fm.feature_name},
+                    double_value=fm.psi,
                 ))
 
         # Prediction variance
         if report.prediction_metrics:
             time_series.append(_build_series(
                 "custom.googleapis.com/scip/drift/prob_std",
-                report.prediction_metrics.prob_std,
+                double_value=report.prediction_metrics.prob_std,
             ))
 
         # Retraining flag (1 = required, 0 = not required)
-        retraining_series = monitoring_v3.TimeSeries()
-        retraining_series.metric.type   = "custom.googleapis.com/scip/drift/retraining_required"
-        retraining_series.resource.type = "global"
-        interval = monitoring_v3.TimeInterval(
-            end_time={"seconds": now_seconds, "nanos": 0}
-        )
-        point = monitoring_v3.Point(
-            interval=interval,
-            value=monitoring_v3.TypedValue(
-                int64_value=1 if report.requires_retraining else 0
-            ),
-        )
-        retraining_series.points.append(point)
-        time_series.append(retraining_series)
+        time_series.append(_build_series(
+            "custom.googleapis.com/scip/drift/retraining_required",
+            int64_value=int(report.requires_retraining),
+        ))
 
-        if time_series:
-            cm_client.create_time_series(
-                request={
-                    "name":        project_name,
-                    "time_series": time_series,
-                }
-            )
-            logger.info(
-                "Emitted %d Cloud Monitoring time series to project %s",
-                len(time_series), self.project_id,
-            )
+        cm_client.create_time_series(
+            request={
+                "name":        project_name,
+                "time_series": time_series,
+            }
+        )
+        logger.info(
+            "Emitted %d Cloud Monitoring time series to project %s",
+            len(time_series), self.project_id,
+        )
 
     # ── Artifact loading ───────────────────────────────────────────────────────
 

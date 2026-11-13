@@ -115,12 +115,13 @@ def select_sample(records: list[dict], n: int, sort: str) -> list[dict]:
         ordered = sorted(records, key=lambda r: (r["warehouse_id"], r["sku_id"]))
         return ordered[:n]
 
-    if sort == "all" and _has_predictions(records):
-        scored   = sorted(
-            (r for r in records if "shortage_prob_7d" in r),
-            key=lambda r: r["shortage_prob_7d"],
-            reverse=True,
-        )
+    scored = sorted(
+        (r for r in records if "shortage_prob_7d" in r),
+        key=lambda r: r["shortage_prob_7d"],
+        reverse=True,
+    )
+
+    if sort == "all" and scored:
         top_high = n // 2 + (n % 2)
         top_low  = n // 2
         selected = scored[:top_high] + scored[-top_low:]
@@ -135,12 +136,7 @@ def select_sample(records: list[dict], n: int, sort: str) -> list[dict]:
         return unique[:n]
 
     # default: "risk" (or fallback if no predictions)
-    if _has_predictions(records):
-        scored = sorted(
-            (r for r in records if "shortage_prob_7d" in r),
-            key=lambda r: r["shortage_prob_7d"],
-            reverse=True,
-        )
+    if scored:
         return scored[:n]
 
     # no predictions: spread across warehouses

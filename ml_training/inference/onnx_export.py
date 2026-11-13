@@ -20,13 +20,10 @@ import onnx
 import onnxruntime as ort
 import torch
 
-from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
 from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 
 logger = logging.getLogger(__name__)
-
-N_NUMERIC = len(NUMERIC_FEATURE_COLS)
 
 
 class _WithSigmoid(torch.nn.Module):
