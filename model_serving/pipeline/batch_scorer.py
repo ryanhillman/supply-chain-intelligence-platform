@@ -45,9 +45,9 @@ from model_serving.pipeline.request_builder import RequestBuilder, ScoringReques
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BATCH_SIZE = 32
-_DEFAULT_TOPIC_ID   = "prediction-results"
-_DEFAULT_MAX_FEATURE_AGE_HOURS = 48.0
+DEFAULT_BATCH_SIZE = 32
+DEFAULT_TOPIC_ID   = "prediction-results"
+DEFAULT_MAX_FEATURE_AGE_HOURS = 48.0
 
 
 @dataclass
@@ -102,7 +102,7 @@ class BatchScorer:
         request_builder: RequestBuilder,
         *,
         endpoint_resource_name: str,
-        topic_id: str = _DEFAULT_TOPIC_ID,
+        topic_id: str = DEFAULT_TOPIC_ID,
         credentials_path: str | None = None,
     ) -> None:
         self.project_id             = project_id
@@ -130,9 +130,9 @@ class BatchScorer:
 
     def run(
         self,
-        batch_size: int = _DEFAULT_BATCH_SIZE,
+        batch_size: int = DEFAULT_BATCH_SIZE,
         model_version: str = "unknown",
-        max_feature_age_hours: float | None = _DEFAULT_MAX_FEATURE_AGE_HOURS,
+        max_feature_age_hours: float | None = DEFAULT_MAX_FEATURE_AGE_HOURS,
     ) -> ScoringStats:
         """
         Execute the full batch scoring pipeline.

@@ -63,7 +63,7 @@ resource "google_storage_bucket" "data_lake" {
   location = upper(var.region)
 
   uniform_bucket_level_access = true
-  force_destroy               = var.environment == "dev" ? true : false
+  force_destroy               = var.environment == "dev"
 
   versioning {
     enabled = false # Parquet files are immutable; versioning adds cost with no benefit
@@ -97,7 +97,7 @@ resource "google_bigtable_instance" "feature_store" {
   project             = var.project_id
   name                = "scip-feature-store"
   display_name        = "SCIP Feature Store"
-  deletion_protection = var.environment == "prod" ? true : false
+  deletion_protection = var.environment == "prod"
 
   cluster {
     cluster_id   = "scip-feature-store-c1"
@@ -156,7 +156,6 @@ resource "google_bigtable_table" "inventory_features" {
   # ML prediction outputs, kept separate from feature families.
   # Columns: shortage_prob_7d, stockout_risk_score, model_version,
   #          prediction_timestamp.
-  # GC policy: max 3 versions (current + 2 prior rounds for rollback inspection).
   column_family {
     family = "predictions"
   }

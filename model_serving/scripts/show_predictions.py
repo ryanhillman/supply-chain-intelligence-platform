@@ -24,16 +24,11 @@ import argparse
 import sys
 
 from model_serving import cli
-from model_serving.pipeline.constants import variance_collapsed
+from model_serving.pipeline.constants import HIGH_RISK_THRESHOLD, variance_collapsed
 from model_serving.pipeline.feature_client import FeatureClient
 from simulation.world import SKU_CATEGORIES
 
 _CATEGORY_ORDER = ["FMCG", "Electronics", "Industrial", "Seasonal"]
-
-# Kept in sync with show_feature_sample.py's threshold — same cutoff in
-# both dashboard scripts so an entity's "high risk" label doesn't depend on
-# which one you run.
-_HIGH_RISK_THRESHOLD = 0.50
 
 
 # -- CLI -----------------------------------------------------------------------
@@ -161,7 +156,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
         g_probs = [r["shortage_prob_7d"] for r in grp]
         g_mean  = sum(g_probs) / len(g_probs)
         g_max   = max(g_probs)
-        g_high  = sum(1 for p in g_probs if p > _HIGH_RISK_THRESHOLD)
+        g_high  = sum(1 for p in g_probs if p > HIGH_RISK_THRESHOLD)
         bar     = _bar(g_mean)
         print(f"    {wh:<10}  {len(grp):>8}  {_fmt(g_mean):>9}  {_fmt(g_max):>8}  {g_high:>17}  {bar}")
 

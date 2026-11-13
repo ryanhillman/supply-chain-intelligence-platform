@@ -25,12 +25,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from feature_registry import ROW_KEY_SEPARATOR
 from model_serving import cli
+from model_serving.pipeline.constants import HIGH_RISK_THRESHOLD
 from model_serving.pipeline.feature_client import FeatureClient
-
-# Matches show_predictions.py's threshold so an entity doesn't flip between
-# "high risk" and not depending on which dashboard script you run.
-_HIGH_RISK_THRESHOLD = 0.50
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +128,7 @@ def select_sample(records: list[dict], n: int, sort: str) -> list[dict]:
         seen: set[str] = set()
         unique: list[dict] = []
         for r in selected:
-            key = f"{r['warehouse_id']}#{r['sku_id']}"
+            key = f"{r['warehouse_id']}{ROW_KEY_SEPARATOR}{r['sku_id']}"
             if key not in seen:
                 seen.add(key)
                 unique.append(r)
@@ -175,7 +173,7 @@ def _risk_tag(rec: dict) -> str:
     prob = rec.get("shortage_prob_7d")
     if prob is None:
         return ""
-    if prob >= _HIGH_RISK_THRESHOLD:
+    if prob >= HIGH_RISK_THRESHOLD:
         return "  [HIGH RISK]"
     if prob >= 0.15:
         return "  [ELEVATED]"

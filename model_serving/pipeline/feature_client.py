@@ -27,7 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from feature_registry import RAW_FEATURE_CELLS, RAW_FEATURE_FAMILIES, decode_double
+from feature_registry import RAW_FEATURE_CELLS, RAW_FEATURE_FAMILIES, ROW_KEY_SEPARATOR, decode_double
 from model_serving import cli
 
 logger = logging.getLogger(__name__)
@@ -167,7 +167,7 @@ class FeatureClient:
 
         for row_data in self._table.read_rows(filter_=filter_, limit=limit):
             row_key = row_data.row_key.decode("utf-8")
-            parts   = row_key.split("#")
+            parts   = row_key.split(ROW_KEY_SEPARATOR)
 
             if len(parts) != 2:
                 logger.warning("Unexpected row key format %r — skipping", row_key)
@@ -240,7 +240,7 @@ class FeatureClient:
         rows: list[PredictionRow] = []
         for row_data in self._table.read_rows(filter_=filter_):
             row_key = row_data.row_key.decode("utf-8")
-            parts   = row_key.split("#")
+            parts   = row_key.split(ROW_KEY_SEPARATOR)
             if len(parts) != 2:
                 continue
             pred = _parse_prediction_row(row_key, parts[0], parts[1], row_data.cells)

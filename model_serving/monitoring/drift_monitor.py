@@ -71,6 +71,7 @@ import numpy as np
 import pandas as pd
 
 from feature_registry import RAW_FEATURE_COLS
+from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS, engineer_features
 from ml_training.evaluation.drift_reference import (
     MONITORED_FEATURES as _MONITORED_FEATURES,
     N_BINS as _N_BINS,
@@ -79,19 +80,18 @@ from ml_training.evaluation.drift_reference import (
     load_warehouse_ranges,
 )
 from model_serving import cli
-
-logger = logging.getLogger(__name__)
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-
 from model_serving.pipeline.constants import (
     VARIANCE_COLLAPSE_THRESHOLD as _VARIANCE_COLLAPSE_THRESHOLD,
     variance_collapsed,
 )
 
+logger = logging.getLogger(__name__)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
 _PSI_EPSILON           = 1e-4   # replace zero bin counts before log()
 _PSI_STABLE_THRESHOLD  = 0.10
-_PSI_WARNING_THRESHOLD = 0.20   # >= this → retraining trigger
+_PSI_TRIGGER_THRESHOLD = 0.20   # >= this → retraining trigger
 
 # Monitored features come from ml_training.evaluation.drift_reference, shared
 # with the trainer, which writes their PSI bins next to the model.
@@ -191,14 +191,6 @@ class DriftMonitor:
         self._training_quantiles, self._reference_info = self._load_drift_reference()
         self._warehouse_ranges = load_warehouse_ranges(self._artifacts_dir / "drift_reference.json")
 
-        # Import from ml_training — sys.path must include the repo root.
-        from ml_training.datasets.feature_engineer import (
-            NUMERIC_FEATURE_COLS,
-            engineer_features,
-        )
-        self._NUMERIC_FEATURE_COLS = NUMERIC_FEATURE_COLS
-        self._engineer_features    = engineer_features
-
         # Build lookup: flat feature name → index into feature_mean / feature_scale
         self._feature_to_idx: dict[str, int] = {
             name: i for i, name in enumerate(NUMERIC_FEATURE_COLS)
@@ -226,7 +218,7 @@ class DriftMonitor:
         logger.info(
             "DriftMonitor ready: bigtable=%s/%s  artifacts=%s  n_features=%d",
             instance_id, table_id, self._artifacts_dir,
-            len(self._NUMERIC_FEATURE_COLS),
+            len(NUMERIC_FEATURE_COLS),
         )
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -305,7 +297,7 @@ class DriftMonitor:
         for fm in feature_metrics:
             if fm.status == "trigger":
                 trigger_reasons.append(
-                    f"{fm.display_name}: PSI={fm.psi:.4f} >= {_PSI_WARNING_THRESHOLD}"
+                    f"{fm.display_name}: PSI={fm.psi:.4f} >= {_PSI_TRIGGER_THRESHOLD}"
                 )
         warnings = [
             f"{rm.display_name}: {', '.join(rm.out_of_range)} outside the warehouse's "
@@ -368,7 +360,7 @@ class DriftMonitor:
             row["sku_id"]       = fr.sku_id
             records.append(row)
 
-        return self._engineer_features(pd.DataFrame(records))
+        return engineer_features(pd.DataFrame(records))
 
     @staticmethod
     def _collect_feature_values(live: pd.DataFrame) -> dict[str, list[float]]:
@@ -579,8 +571,8 @@ class DriftMonitor:
         print(
             f"  PSI legend: "
             f"< {_PSI_STABLE_THRESHOLD}  = stable  |  "
-            f"{_PSI_STABLE_THRESHOLD}–{_PSI_WARNING_THRESHOLD} = warning  |  "
-            f">= {_PSI_WARNING_THRESHOLD} = TRIGGER"
+            f"{_PSI_STABLE_THRESHOLD}–{_PSI_TRIGGER_THRESHOLD} = warning  |  "
+            f">= {_PSI_TRIGGER_THRESHOLD} = TRIGGER"
         )
 
         # Prediction variance table
@@ -671,7 +663,7 @@ class DriftMonitor:
             } if report.prediction_metrics else None,
             "thresholds": {
                 "psi_stable":           _PSI_STABLE_THRESHOLD,
-                "psi_trigger":          _PSI_WARNING_THRESHOLD,
+                "psi_trigger":          _PSI_TRIGGER_THRESHOLD,
                 "variance_collapse":    _VARIANCE_COLLAPSE_THRESHOLD,
                 "n_psi_bins":           _N_BINS,
             },
@@ -852,7 +844,7 @@ def _classify_psi(psi: float) -> str:
         return "unknown"
     if psi < _PSI_STABLE_THRESHOLD:
         return "stable"
-    if psi < _PSI_WARNING_THRESHOLD:
+    if psi < _PSI_TRIGGER_THRESHOLD:
         return "warning"
     return "trigger"
 

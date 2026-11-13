@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -44,10 +45,10 @@ def parse_args() -> argparse.Namespace:
         default="ml_training/artifacts",
         help="Output directory for model.pt, ONNX, and metrics",
     )
-    p.add_argument("--epochs",     type=int,   default=100)
-    p.add_argument("--batch-size", type=int,   default=64)
-    p.add_argument("--lr",         type=float, default=1e-3)
-    p.add_argument("--patience",   type=int,   default=10)
+    p.add_argument("--epochs",     type=int,   default=TrainingConfig.max_epochs)
+    p.add_argument("--batch-size", type=int,   default=TrainingConfig.batch_size)
+    p.add_argument("--lr",         type=float, default=TrainingConfig.lr)
+    p.add_argument("--patience",   type=int,   default=TrainingConfig.patience)
     return p.parse_args()
 
 
@@ -64,7 +65,6 @@ def main() -> None:
         sys.exit(1)
 
     # Copy feature_metadata.json into artifacts dir so predictor.py finds it
-    import shutil
     meta_src = dataset / "feature_metadata.json"
     meta_dst = output / "feature_metadata.json"
     if meta_src != meta_dst:

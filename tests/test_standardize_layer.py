@@ -10,6 +10,7 @@ optimizer cannot touch, the zero-variance guard carries over, and the
 values survive a state_dict round trip.
 """
 import numpy as np
+import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
@@ -57,7 +58,6 @@ def test_statistics_are_buffers_not_parameters():
 
 
 def test_non_positive_scale_is_rejected():
-    import pytest
     with pytest.raises(ValueError):
         Standardize([0.0], [0.0])
 

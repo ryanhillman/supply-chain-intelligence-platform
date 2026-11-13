@@ -63,13 +63,14 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from feature_registry import ROW_KEY_SEPARATOR
 from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
 _PREDICTIONS_FAMILY    = "predictions"
 _PULL_TIMEOUT_SECONDS  = 30
-_DEFAULT_MAX_MESSAGES  = 100
+DEFAULT_MAX_MESSAGES   = 100
 _BIGTABLE_MAX_RETRIES        = 3
 _BIGTABLE_RETRY_BASE_SECONDS = 2
 
@@ -151,7 +152,7 @@ class PredictionWriter:
 
     def run_batch(
         self,
-        max_messages: int = _DEFAULT_MAX_MESSAGES,
+        max_messages: int = DEFAULT_MAX_MESSAGES,
     ) -> WriterStats:
         """
         Pull messages in batches until the subscription is empty, then return.
@@ -262,7 +263,7 @@ class PredictionWriter:
 
         for attempt in range(_BIGTABLE_MAX_RETRIES):
             try:
-                failed_statuses = self._table.mutate_rows(rows)
+                statuses = self._table.mutate_rows(rows)
                 break
             except Exception as exc:
                 if attempt == _BIGTABLE_MAX_RETRIES - 1:
@@ -287,7 +288,7 @@ class PredictionWriter:
         n_failed  = 0
         successful_ack_ids: list[str] = []
 
-        for i, (p, status) in enumerate(zip(parsed, failed_statuses, strict=True)):
+        for i, (p, status) in enumerate(zip(parsed, statuses, strict=True)):
             if status.code != 0:
                 n_failed += 1
                 logger.warning(
@@ -369,7 +370,7 @@ class PredictionWriter:
 
         warehouse_id = payload["warehouse_id"]
         sku_id       = payload["sku_id"]
-        row_key      = f"{warehouse_id}#{sku_id}"
+        row_key      = f"{warehouse_id}{ROW_KEY_SEPARATOR}{sku_id}"
 
         try:
             return _ParsedMessage(
@@ -409,8 +410,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--max-messages",
         type=int,
-        default=_DEFAULT_MAX_MESSAGES,
-        help=f"Max messages per Pub/Sub pull call (default: {_DEFAULT_MAX_MESSAGES})",
+        default=DEFAULT_MAX_MESSAGES,
+        help=f"Max messages per Pub/Sub pull call (default: {DEFAULT_MAX_MESSAGES})",
     )
     p.add_argument(
         "--verbose",

@@ -42,7 +42,8 @@ from config.bronze_config import (
     GCP_PROJECT_ID,
     SILVER_BASE_PATH,
 )
-from config.feature_config import PIPELINE_VERSION, ROW_KEY_SEPARATOR
+from config.feature_config import PIPELINE_VERSION
+from feature_registry import ROW_KEY_SEPARATOR
 from jobs.schemas.feature_schema import (
     SILVER_PARTITION_COLS,
     conform_to_silver_schema,

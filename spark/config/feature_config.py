@@ -1,9 +1,10 @@
 """
-Silver job configuration: Bigtable write tuning, the row key separator, the
-reorder-urgency and days_of_supply constants, the training set's history
-requirement, and the pipeline version.
+Silver job configuration: Bigtable write tuning, the reorder-urgency and
+days_of_supply constants, the training set's history requirement, and the
+pipeline version.
 
-The Bigtable column layout and cell encoding are in feature_registry.
+The Bigtable column layout, row key separator and cell encoding are in
+feature_registry.
 """
 from __future__ import annotations
 
@@ -12,10 +13,6 @@ from __future__ import annotations
 # Maximum rows per mutate_rows RPC call. Bigtable max is 100,000 but
 # 500 keeps individual RPC latency <100ms for the feature store write path.
 BIGTABLE_BATCH_SIZE: int = 500
-
-# Bigtable row key separator. Chosen to sort correctly under lexicographic order:
-# warehouse IDs (W-001..W-006) sort before the separator naturally.
-ROW_KEY_SEPARATOR: str = "#"
 
 # ── Stockout risk thresholds ──────────────────────────────────────────────────
 # Used by the risk feature derivations in spark/jobs/silver_features.py.

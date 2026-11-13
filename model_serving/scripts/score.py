@@ -55,8 +55,13 @@ from model_serving                            import cli
 from model_serving.pipeline.constants         import VARIANCE_COLLAPSE_THRESHOLD
 from model_serving.pipeline.feature_client    import FeatureClient, split_fresh
 from model_serving.pipeline.request_builder   import RequestBuilder
-from model_serving.pipeline.batch_scorer      import BatchScorer
-from model_serving.pipeline.prediction_writer import PredictionWriter
+from model_serving.pipeline.batch_scorer      import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MAX_FEATURE_AGE_HOURS,
+    DEFAULT_TOPIC_ID,
+    BatchScorer,
+)
+from model_serving.pipeline.prediction_writer import DEFAULT_MAX_MESSAGES, PredictionWriter
 
 logger = logging.getLogger("score")
 
@@ -77,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     # ── Pub/Sub ───────────────────────────────────────────────────────────────
     p.add_argument(
         "--topic",
-        default=os.environ.get("PUBSUB_TOPIC_ID", "prediction-results"),
+        default=os.environ.get("PUBSUB_TOPIC_ID", DEFAULT_TOPIC_ID),
         help="Pub/Sub topic ID for predictions (default: prediction-results)",
     )
     p.add_argument(
@@ -99,13 +104,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--batch-size",
         type=int,
-        default=32,
+        default=DEFAULT_BATCH_SIZE,
         help="Instances per endpoint.predict() call (default: 32)",
     )
     p.add_argument(
         "--max-feature-age-hours",
         type=float,
-        default=float(os.environ.get("MAX_FEATURE_AGE_HOURS", "48")),
+        default=float(os.environ.get("MAX_FEATURE_AGE_HOURS", DEFAULT_MAX_FEATURE_AGE_HOURS)),
         help=(
             "Skip rows whose lineage:silver_ts is older than this many hours "
             "(default: 48). 0 disables the check."
@@ -140,7 +145,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--writer-max-messages",
         type=int,
-        default=100,
+        default=DEFAULT_MAX_MESSAGES,
         help="Max messages per Pub/Sub pull call in --write mode (default: 100)",
     )
 

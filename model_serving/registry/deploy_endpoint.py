@@ -32,9 +32,9 @@ from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MACHINE_TYPE = "n1-standard-2"
-_DEFAULT_MIN_REPLICAS = 1
-_DEFAULT_MAX_REPLICAS = 1
+DEFAULT_MACHINE_TYPE = "n1-standard-2"
+DEFAULT_MIN_REPLICAS = 1
+DEFAULT_MAX_REPLICAS = 1
 _LOCAL_DEPLOYMENT_INFO = Path("model_serving/artifacts/deployment_info.json")
 _LOCAL_REGISTRATION_INFO = Path("model_serving/artifacts/registration_info.json")
 
@@ -73,9 +73,9 @@ class EndpointDeployer:
         self,
         model_resource_name: str | None = None,
         traffic_pct: int = 0,
-        machine_type: str = _DEFAULT_MACHINE_TYPE,
-        min_replicas: int = _DEFAULT_MIN_REPLICAS,
-        max_replicas: int = _DEFAULT_MAX_REPLICAS,
+        machine_type: str = DEFAULT_MACHINE_TYPE,
+        min_replicas: int = DEFAULT_MIN_REPLICAS,
+        max_replicas: int = DEFAULT_MAX_REPLICAS,
         service_account: str | None = None,
     ) -> dict:
         """
