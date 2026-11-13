@@ -1,5 +1,5 @@
 """
-feature_engineer.py — derived features and leakage controls.
+feature_engineer.py — the model's input columns and derived features.
 
 Input:  the training set's rows (DatasetBuilder) or the scorer's feature rows
 Output: clean feature DataFrame ready for DatasetBuilder
@@ -12,8 +12,8 @@ Derived features added (all deterministic formulas, no data-distribution fitting
   supply_coverage_days = effective_supply / max(avg_daily_sales_7d, EPS)
   replenishment_gap    = lead_time_days - days_of_supply
 
-Leakage columns explicitly absent from NUMERIC_FEATURE_COLS:
-  risk__reorder_urgency      — derived from the same threshold logic as the label
+Silver columns that are not model inputs (absent from NUMERIC_FEATURE_COLS):
+  risk__reorder_urgency      — derived from days_of_supply, which is a model input
   All lineage__* columns     — pipeline metadata with no predictive value
 
 Also home to normal_stockout_prob(): the closed-form P(stockout ≤ horizon)

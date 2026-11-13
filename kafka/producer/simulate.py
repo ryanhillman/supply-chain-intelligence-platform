@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 import time
 from datetime import date, timedelta
 
@@ -125,17 +124,7 @@ def main() -> None:
         BOOTSTRAP_SERVERS, REPLAY_START, REPLAY_DAYS, SEED, TICK_SECONDS or "off",
     )
 
-    p: Producer | None = None
-    for attempt in range(1, 11):
-        try:
-            p = make_producer()
-            break
-        except Exception as exc:
-            logger.warning("Producer connection attempt %d failed: %s — retrying in 5s", attempt, exc)
-            time.sleep(5)
-    if p is None:
-        logger.error("Could not connect to Kafka after 10 attempts — exiting")
-        sys.exit(1)
+    p = make_producer()
 
     world = World(REPLAY_START, seed=SEED)
     total = replay(p, world, REPLAY_DAYS)

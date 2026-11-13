@@ -8,6 +8,7 @@ dashboard and the training code).
   RAW_FEATURE_COLS      the 15 stored features the model takes, in model order
   RAW_FEATURE_CELLS     (family, qualifier) -> feature, for RAW_FEATURE_COLS
   RAW_FEATURE_FAMILIES  the families that hold RAW_FEATURE_COLS
+  ROW_KEY_SEPARATOR     the separator in the row key, {warehouse_id}#{sku_id}
   encode_cell, decode_double   the cell encoding
 
 It also holds HORIZON_DAYS, the label horizon that the Spark training-set job
@@ -105,6 +106,9 @@ RAW_FEATURE_CELLS: dict[tuple[str, str], str] = {
     if feature in RAW_FEATURE_COLS
 }
 RAW_FEATURE_FAMILIES: frozenset[str] = frozenset(family for family, _ in RAW_FEATURE_CELLS)
+
+# Separator in the Bigtable row key, "{warehouse_id}#{sku_id}".
+ROW_KEY_SEPARATOR: str = "#"
 
 # The stockout label looks this many days ahead of the feature snapshot.
 HORIZON_DAYS: int = 7

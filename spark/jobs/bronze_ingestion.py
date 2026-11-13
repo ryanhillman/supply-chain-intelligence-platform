@@ -74,7 +74,6 @@ def create_spark_session() -> SparkSession:
         .appName("scip-bronze-ingestion")
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.sql.shuffle.partitions", "6")
-        .config("spark.kafka.consumer.cache.enabled", "false")
         # GCS connector settings come from config/spark-gcs.conf (--properties-file).
         .getOrCreate()
     )

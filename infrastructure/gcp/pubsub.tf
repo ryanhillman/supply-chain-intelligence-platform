@@ -105,7 +105,7 @@ resource "google_pubsub_subscription_iam_member" "pubsub_agent_dlq_subscriber" {
 ###############################################################################
 # Service Account — scip-prediction-writer-sa
 #
-# Used by prediction_writer.py (Cloud Run job) exclusively.
+# Used by prediction_writer.py exclusively.
 # Subscribes to prediction-results and writes the predictions column family
 # to Bigtable. Separate from scip-vertex-sa to enforce least privilege:
 # the writer does not need aiplatform.user or storage access.

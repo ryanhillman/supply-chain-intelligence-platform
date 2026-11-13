@@ -26,21 +26,6 @@ Pub/Sub message schema (one per entity)
   "model_version":       "v20260620_180918",
   "prediction_timestamp": "2026-06-20T18:09:21Z"
 }
-
-Logging emitted
----------------
-- rows_scanned       : total FeatureRow objects returned by scan_all()
-- rows_stale         : rows skipped because their Silver write was too old or missing
-- rows_scored        : entities that passed vocab filter and were sent to endpoint
-- batches_sent       : number of endpoint.predict() calls
-- endpoint_latency_ms: per-batch and overall mean latency
-- predictions_published: total Pub/Sub messages published successfully
-- prediction variance  : std dev of shortage_prob_7d (collapse < 0.01 flagged)
-
-Required packages:
-    google-cloud-aiplatform>=1.38.0
-    google-cloud-pubsub>=2.20.0
-    numpy>=1.26.0
 """
 from __future__ import annotations
 
@@ -60,9 +45,9 @@ from model_serving.pipeline.request_builder import RequestBuilder, ScoringReques
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BATCH_SIZE = 32
-_DEFAULT_TOPIC_ID   = "prediction-results"
-_DEFAULT_MAX_FEATURE_AGE_HOURS = 48.0
+DEFAULT_BATCH_SIZE = 32
+DEFAULT_TOPIC_ID   = "prediction-results"
+DEFAULT_MAX_FEATURE_AGE_HOURS = 48.0
 
 
 @dataclass
@@ -117,7 +102,7 @@ class BatchScorer:
         request_builder: RequestBuilder,
         *,
         endpoint_resource_name: str,
-        topic_id: str = _DEFAULT_TOPIC_ID,
+        topic_id: str = DEFAULT_TOPIC_ID,
         credentials_path: str | None = None,
     ) -> None:
         self.project_id             = project_id
@@ -145,9 +130,9 @@ class BatchScorer:
 
     def run(
         self,
-        batch_size: int = _DEFAULT_BATCH_SIZE,
+        batch_size: int = DEFAULT_BATCH_SIZE,
         model_version: str = "unknown",
-        max_feature_age_hours: float | None = _DEFAULT_MAX_FEATURE_AGE_HOURS,
+        max_feature_age_hours: float | None = DEFAULT_MAX_FEATURE_AGE_HOURS,
     ) -> ScoringStats:
         """
         Execute the full batch scoring pipeline.
@@ -156,7 +141,7 @@ class BatchScorer:
         ----------
         batch_size:
             Number of instances per endpoint.predict() call. Default 32.
-            Vertex AI Online Prediction supports up to 10 MB per request;
+            Vertex AI online prediction accepts requests up to 1.5 MB;
             32 × 21 float32 features is well within that limit.
         model_version:
             Version string embedded in each Pub/Sub message so PredictionWriter

@@ -72,6 +72,6 @@ output "vertex_sa_email" {
 }
 
 output "prediction_writer_sa_email" {
-  description = "Service account email for the prediction writer Cloud Run job."
+  description = "Service account email for the prediction writer."
   value       = google_service_account.prediction_writer_sa.email
 }

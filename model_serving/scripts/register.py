@@ -20,6 +20,7 @@ Environment variables (alternatives to CLI flags):
     GCS_BUCKET_NAME              -- --bucket
     GCP_PROJECT_ID               -- --project
     GCP_REGION                   -- --region
+    SERVING_IMAGE_URI            -- --image-uri
     ARTIFACT_REGISTRY_URL        -- base URL; image URI = {URL}/shortage-predictor-serving:{image-tag}
     GOOGLE_APPLICATION_CREDENTIALS -- --sa-key
 

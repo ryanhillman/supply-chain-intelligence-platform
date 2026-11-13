@@ -38,18 +38,6 @@ Error handling
 - Persistent failures: un-acknowledged messages are redelivered by Pub/Sub
   up to max_delivery_attempts=5 before landing on the DLQ.
 
-Logging emitted
----------------
-- messages_pulled       : total messages received per pull call
-- bigtable_rows_written : Bigtable rows written successfully per batch
-- bigtable_rows_failed  : rows that failed Bigtable write
-- messages_acknowledged : Pub/Sub ACKs sent
-- messages_nacked       : messages left un-acknowledged (will be redelivered)
-
-Required packages:
-    google-cloud-bigtable>=2.22.0
-    google-cloud-pubsub>=2.20.0
-
 CLI usage
 ---------
     python model_serving/pipeline/prediction_writer.py \\
@@ -75,13 +63,14 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from feature_registry import ROW_KEY_SEPARATOR
 from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
 _PREDICTIONS_FAMILY    = "predictions"
 _PULL_TIMEOUT_SECONDS  = 30
-_DEFAULT_MAX_MESSAGES  = 100
+DEFAULT_MAX_MESSAGES   = 100
 _BIGTABLE_MAX_RETRIES        = 3
 _BIGTABLE_RETRY_BASE_SECONDS = 2
 
@@ -163,8 +152,7 @@ class PredictionWriter:
 
     def run_batch(
         self,
-        max_messages: int = _DEFAULT_MAX_MESSAGES,
-        max_batches: int | None = None,
+        max_messages: int = DEFAULT_MAX_MESSAGES,
     ) -> WriterStats:
         """
         Pull messages in batches until the subscription is empty, then return.
@@ -176,9 +164,6 @@ class PredictionWriter:
         ----------
         max_messages:
             Maximum messages per pull RPC call. Default 100.
-        max_batches:
-            Stop after this many pull calls (None = unlimited).
-            Useful for testing with a bounded number of iterations.
 
         Returns
         -------
@@ -187,17 +172,10 @@ class PredictionWriter:
         stats   = WriterStats()
         t_start = time.perf_counter()
 
-        logger.info(
-            "Starting batch writer: max_messages=%d  max_batches=%s",
-            max_messages, max_batches,
-        )
+        logger.info("Starting batch writer: max_messages=%d", max_messages)
 
         batch_count = 0
         while True:
-            if max_batches is not None and batch_count >= max_batches:
-                logger.info("max_batches=%d reached — stopping", max_batches)
-                break
-
             try:
                 response = self._subscriber.pull(
                     request={
@@ -285,7 +263,7 @@ class PredictionWriter:
 
         for attempt in range(_BIGTABLE_MAX_RETRIES):
             try:
-                failed_statuses = self._table.mutate_rows(rows)
+                statuses = self._table.mutate_rows(rows)
                 break
             except Exception as exc:
                 if attempt == _BIGTABLE_MAX_RETRIES - 1:
@@ -303,14 +281,14 @@ class PredictionWriter:
                 time.sleep(wait)
 
         # mutate_rows() returns a list of statuses positionally aligned with
-        # `rows` — one entry per input row, in order. There is no .index field
-        # (see spark/utils/bigtable_writer.py._flush_batch for the same API
-        # handled correctly via enumerate()).
+        # `rows` — one entry per input row, in order — and no .index field, so
+        # each status is matched to its message by position
+        # (spark/utils/bigtable_writer.py._flush_batch reads the same API).
         n_written = 0
         n_failed  = 0
         successful_ack_ids: list[str] = []
 
-        for i, (p, status) in enumerate(zip(parsed, failed_statuses, strict=True)):
+        for i, (p, status) in enumerate(zip(parsed, statuses, strict=True)):
             if status.code != 0:
                 n_failed += 1
                 logger.warning(
@@ -384,14 +362,15 @@ class PredictionWriter:
         missing = required - set(payload.keys())
         if missing:
             logger.error(
-                "Message missing fields %s (ack_id=%.20s...) — discarding",
+                "Message missing fields %s (ack_id=%.20s...) — left un-acked; "
+                "redelivered until the dead-letter policy takes it",
                 missing, ack_id,
             )
             return None
 
         warehouse_id = payload["warehouse_id"]
         sku_id       = payload["sku_id"]
-        row_key      = f"{warehouse_id}#{sku_id}"
+        row_key      = f"{warehouse_id}{ROW_KEY_SEPARATOR}{sku_id}"
 
         try:
             return _ParsedMessage(
@@ -409,8 +388,6 @@ class PredictionWriter:
                 "Failed to parse message fields (ack_id=%.20s...): %s", ack_id, exc
             )
             return None
-
-    # ── Logging ────────────────────────────────────────────────────────────────
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -433,8 +410,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--max-messages",
         type=int,
-        default=_DEFAULT_MAX_MESSAGES,
-        help=f"Max messages per Pub/Sub pull call (default: {_DEFAULT_MAX_MESSAGES})",
+        default=DEFAULT_MAX_MESSAGES,
+        help=f"Max messages per Pub/Sub pull call (default: {DEFAULT_MAX_MESSAGES})",
     )
     p.add_argument(
         "--verbose",

@@ -22,16 +22,8 @@ Flow
    {challenger: 100%, champion: 0%}.
 8. If any criterion fails: exit non-zero. The champion remains live.
 
-The traffic-split update uses the Vertex AI v1 gapic client (not the high-level
-SDK) because aiplatform.Endpoint does not expose a direct update_traffic_split()
-method in all SDK versions. The gapic PATCH call is the canonical approach.
-
-Required packages:
-    google-cloud-aiplatform>=1.38.0
-    google-cloud-storage>=2.16.0
-    protobuf>=4.21.0
-    onnxruntime>=1.17.0      (local rescoring)
-    pandas, numpy, scikit-learn (via ml_training.evaluation.metrics)
+The traffic-split update is a Vertex AI v1 gapic update_endpoint call with a
+field mask on traffic_split, so no other endpoint setting is changed.
 """
 from __future__ import annotations
 
@@ -158,7 +150,6 @@ class ModelPromoter:
             return True
 
         self._apply_traffic_split(
-            champion_id=champion.deployed_model_id,
             challenger_id=challenger.deployed_model_id,
         )
 
@@ -295,7 +286,6 @@ class ModelPromoter:
 
     def _apply_traffic_split(
         self,
-        champion_id: str,
         challenger_id: str,
     ) -> None:
         """

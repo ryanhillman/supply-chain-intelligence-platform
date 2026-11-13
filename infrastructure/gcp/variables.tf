@@ -8,7 +8,7 @@ variable "project_id" {
 # ── Regional ──────────────────────────────────────────────────────────────────
 
 variable "region" {
-  description = "GCP region for the GCS bucket and Bigtable cluster."
+  description = "GCP region for the GCS bucket, the Vertex AI endpoint and Artifact Registry."
   type        = string
   default     = "us-central1"
 }

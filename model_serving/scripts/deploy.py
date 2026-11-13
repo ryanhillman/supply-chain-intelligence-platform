@@ -73,7 +73,12 @@ import os
 import sys
 
 from model_serving import cli
-from model_serving.registry.deploy_endpoint import EndpointDeployer
+from model_serving.registry.deploy_endpoint import (
+    DEFAULT_MACHINE_TYPE,
+    DEFAULT_MAX_REPLICAS,
+    DEFAULT_MIN_REPLICAS,
+    EndpointDeployer,
+)
 from model_serving.registry.promote_model   import ModelPromoter
 from model_serving.serving.smoke_test       import SmokeTest
 
@@ -115,18 +120,18 @@ def parse_args() -> argparse.Namespace:
     )
     deploy_p.add_argument(
         "--machine-type",
-        default="n1-standard-2",
+        default=DEFAULT_MACHINE_TYPE,
         help="Vertex AI machine type (default: n1-standard-2)",
     )
     deploy_p.add_argument(
         "--min-replicas",
         type=int,
-        default=1,
+        default=DEFAULT_MIN_REPLICAS,
     )
     deploy_p.add_argument(
         "--max-replicas",
         type=int,
-        default=1,
+        default=DEFAULT_MAX_REPLICAS,
     )
     deploy_p.add_argument(
         "--service-account",

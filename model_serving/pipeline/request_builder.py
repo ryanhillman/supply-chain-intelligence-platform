@@ -16,10 +16,6 @@ Pipeline per entity
 
 The 15 raw feature names are feature_registry.RAW_FEATURE_COLS; their defaults
 are in ml_training/datasets/feature_engineer.fill_defaults().
-
-Required packages:
-    numpy>=1.26.0
-    pandas>=2.1.0
 """
 from __future__ import annotations
 
@@ -31,6 +27,11 @@ import numpy as np
 import pandas as pd
 
 from feature_registry import RAW_FEATURE_COLS
+from ml_training.datasets.feature_engineer import (
+    NUMERIC_FEATURE_COLS,
+    engineer_features,
+    normal_stockout_prob,
+)
 from model_serving import cli
 from model_serving.pipeline.feature_client import FeatureRow
 
@@ -89,20 +90,11 @@ class RequestBuilder:
         self._wh_vocab:  dict[str, int] = self._metadata["warehouse_vocab"]
         self._sku_vocab: dict[str, int] = self._metadata["sku_vocab"]
 
-        # Import from ml_training — sys.path must include the repo root.
-        from ml_training.datasets.feature_engineer import (
-            NUMERIC_FEATURE_COLS,
-            engineer_features,
-            normal_stockout_prob,
-        )
-        self._NUMERIC_FEATURE_COLS  = NUMERIC_FEATURE_COLS
-        self._engineer_features     = engineer_features
-        self._normal_stockout_prob  = normal_stockout_prob
         self._horizon_days: int     = int(self._metadata["horizon_days"])
 
         logger.info(
             "RequestBuilder ready: %d numeric features, %d warehouses, %d SKUs",
-            len(self._NUMERIC_FEATURE_COLS),
+            len(NUMERIC_FEATURE_COLS),
             len(self._wh_vocab),
             len(self._sku_vocab),
         )
@@ -171,14 +163,14 @@ class RequestBuilder:
         # engineer_features replaces NaN (a raw feature absent from Bigtable)
         # with its domain default, e.g. velocity_trend=1.0, then computes the
         # 6 derived features (days_of_supply, effective_supply, etc.).
-        df = self._engineer_features(df)
+        df = engineer_features(df)
 
         # Raw numeric features in NUMERIC_FEATURE_COLS order. No scaling here:
         # the ONNX graph carries the training mean/scale.
-        x_raw = df[self._NUMERIC_FEATURE_COLS].values.astype(np.float32)
+        x_raw = df[NUMERIC_FEATURE_COLS].values.astype(np.float32)
 
         # Closed-form risk score from the raw features.
-        risk_scores = self._normal_stockout_prob(
+        risk_scores = normal_stockout_prob(
             df["current_qty"].values,
             df["avg_daily_sales_7d"].values,
             df["stddev_daily_7d"].values,

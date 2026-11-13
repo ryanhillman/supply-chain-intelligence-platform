@@ -17,9 +17,6 @@ Usage
     # Challenger deployment (champion already live): keep at 0, then promote
     python model_serving/scripts/deploy.py deploy --traffic 0
     python model_serving/scripts/deploy.py promote   # after smoke test passes
-
-Required packages:
-    google-cloud-aiplatform>=1.38.0
 """
 from __future__ import annotations
 
@@ -35,9 +32,9 @@ from model_serving import cli
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MACHINE_TYPE = "n1-standard-2"
-_DEFAULT_MIN_REPLICAS = 1
-_DEFAULT_MAX_REPLICAS = 1
+DEFAULT_MACHINE_TYPE = "n1-standard-2"
+DEFAULT_MIN_REPLICAS = 1
+DEFAULT_MAX_REPLICAS = 1
 _LOCAL_DEPLOYMENT_INFO = Path("model_serving/artifacts/deployment_info.json")
 _LOCAL_REGISTRATION_INFO = Path("model_serving/artifacts/registration_info.json")
 
@@ -76,9 +73,9 @@ class EndpointDeployer:
         self,
         model_resource_name: str | None = None,
         traffic_pct: int = 0,
-        machine_type: str = _DEFAULT_MACHINE_TYPE,
-        min_replicas: int = _DEFAULT_MIN_REPLICAS,
-        max_replicas: int = _DEFAULT_MAX_REPLICAS,
+        machine_type: str = DEFAULT_MACHINE_TYPE,
+        min_replicas: int = DEFAULT_MIN_REPLICAS,
+        max_replicas: int = DEFAULT_MAX_REPLICAS,
         service_account: str | None = None,
     ) -> dict:
         """
@@ -146,8 +143,7 @@ class EndpointDeployer:
         split_after = set(endpoint_after.traffic_split.keys())
         new_ids     = split_after - split_before
         if not new_ids:
-            # Fallback: the ID with value == traffic_pct that wasn't there before.
-            # This case can occur when traffic_pct matches an existing entry's value.
+            # No new ID in the traffic split: the ID is recorded as "unknown".
             logger.warning(
                 "Could not identify new deployed model ID by diff. "
                 "Check endpoint.traffic_split manually."

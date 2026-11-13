@@ -122,7 +122,7 @@ def load_warehouse_ranges(path: str | Path) -> dict[str, dict[str, tuple[float, 
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if "warehouse_ranges" not in data:
         raise ValueError(
-            f"{path} predates the per-warehouse range check; retrain to regenerate it"
+            f"{path} has no warehouse_ranges; retrain to regenerate it"
         )
     return {
         name: {wh: (float(lo), float(hi)) for wh, (lo, hi) in spec["by_warehouse"].items()}

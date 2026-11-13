@@ -1,5 +1,5 @@
 """
-build_dataset.py — CLI entry point for Step 4.1.
+build_dataset.py — CLI entry point for DatasetBuilder.
 
 Reads the Spark training set (spark/jobs/training_set.py) -> derives features
 -> splits 70/15/15 by time -> writes train/val/test Parquet + metadata.
@@ -11,9 +11,9 @@ Usage
         --sa-key infrastructure/gcp/keys/scip-spark-sa.json \\
         --output-dir ml_training/artifacts/dataset
 
-Environment variables (alternative to flags):
-    GCS_BUCKET_NAME                 overrides --bucket
-    GOOGLE_APPLICATION_CREDENTIALS  overrides --sa-key
+Environment variables (defaults; the flags override them):
+    GCS_BUCKET_NAME                 default for --bucket
+    GOOGLE_APPLICATION_CREDENTIALS  default for --sa-key
 """
 from __future__ import annotations
 

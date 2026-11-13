@@ -82,8 +82,8 @@ resource "google_vertex_ai_endpoint" "shortage_predictor" {
 #     covers both the upload (register_model.py) and download (serving
 #     container) paths without granting any access to the Bronze/Silver raw
 #     data elsewhere in the same bucket.
-#   bigtable.user         — feature read + prediction write (row-level, not DDL)
-#   pubsub.publisher      — publish to prediction-results only
+#   bigtable.user         — feature reads (project-level binding; data access, not DDL)
+#   pubsub.publisher      — publish to prediction-results (project-level binding)
 #   aiplatform.user       — invoke endpoint.predict()
 #   monitoring.metricWriter — emit PSI and scoring metrics
 #   logging.logWriter     — structured log output

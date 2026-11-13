@@ -50,10 +50,10 @@ resource "google_project_service" "iam" {
 #   silver/    — feature aggregates, permanent
 #   checkpoints/ — Spark streaming checkpoints. No lifecycle rule: Spark bounds
 #                its own checkpoint growth (minBatchesToRetain, log compaction),
-#                and an age rule deleted the live offsets after a pause, so the
-#                Bronze query restarted from "latest" and silently skipped the
-#                Kafka data produced in between. Remove abandoned checkpoint
-#                directories by hand.
+#                and an age rule would delete the live offsets of a paused
+#                query, which would then restart from its starting offsets
+#                instead of resuming. Remove abandoned checkpoint directories
+#                by hand.
 #   dlq/       — dead-letter queue (newline-delimited JSON envelopes)
 ###############################################################################
 
@@ -63,7 +63,7 @@ resource "google_storage_bucket" "data_lake" {
   location = upper(var.region)
 
   uniform_bucket_level_access = true
-  force_destroy               = var.environment == "dev" ? true : false
+  force_destroy               = var.environment == "dev"
 
   versioning {
     enabled = false # Parquet files are immutable; versioning adds cost with no benefit
@@ -97,7 +97,7 @@ resource "google_bigtable_instance" "feature_store" {
   project             = var.project_id
   name                = "scip-feature-store"
   display_name        = "SCIP Feature Store"
-  deletion_protection = var.environment == "prod" ? true : false
+  deletion_protection = var.environment == "prod"
 
   cluster {
     cluster_id   = "scip-feature-store-c1"
@@ -156,7 +156,6 @@ resource "google_bigtable_table" "inventory_features" {
   # ML prediction outputs, kept separate from feature families.
   # Columns: shortage_prob_7d, stockout_risk_score, model_version,
   #          prediction_timestamp.
-  # GC policy: max 3 versions (current + 2 prior rounds for rollback inspection).
   column_family {
     family = "predictions"
   }
@@ -207,7 +206,7 @@ resource "google_bigtable_gc_policy" "family" {
 
 ###############################################################################
 # Service Account
-# Used by Spark jobs (running in Docker or GKE) to authenticate to GCS/Bigtable.
+# Used by Spark jobs (running in Docker) to authenticate to GCS/Bigtable.
 # Key created manually via:
 #   gcloud iam service-accounts keys create keys/scip-spark-sa.json \
 #     --iam-account=<SA_EMAIL>

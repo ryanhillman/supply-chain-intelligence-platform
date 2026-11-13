@@ -1,14 +1,12 @@
 """
-Test for model_serving/serving/container/main.py's vocab-range validation.
-Without it, an out-of-range warehouse_id/sku_id (e.g. warehouse_id: 99)
-reaches the ONNX embedding Gather op at inference time and raises there,
-landing in the generic `except Exception -> HTTPException(500)` handler
-instead of being rejected as a 422, as the documented contract (and FastAPI's
-own pydantic validation) implies.
+model_serving/serving/container/main.py's request validation: a warehouse_id
+or sku_id outside the model's vocabulary, or a numeric_features list of the
+wrong width, is rejected with a 422. An out-of-range id would otherwise reach
+the ONNX embedding Gather op and surface as a 500.
 
-predictor.py's own ONNXPredictor.__init__ needs GCS + onnxruntime model
-files, so this test swaps in a fake predictor exposing just the
-n_warehouses/n_skus/predict() surface main.py actually uses.
+ONNXPredictor.__init__ needs GCS and the model files, so the tests swap in a
+fake predictor with the n_warehouses / n_skus / n_numeric_features / predict()
+surface main.py uses.
 """
 import numpy as np
 import pytest
@@ -60,7 +58,7 @@ def test_boundary_sku_id_equal_to_vocab_size_is_rejected(client):
 
 
 def test_negative_warehouse_id_still_rejected_by_pydantic(client):
-    """Pre-existing validation (not part of this fix) must still work."""
+    """A negative id is rejected by the request model's own validator."""
     response = client.post("/predict", json=_instance(warehouse_id=-1, sku_id=0))
     assert response.status_code == 422
 

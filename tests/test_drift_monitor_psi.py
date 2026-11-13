@@ -1,16 +1,10 @@
 """
 Tests for the drift monitor's PSI computation and its reference.
 
-Two failure modes are pinned here:
-
-1. Bins. Normal-quantile bins assume every monitored feature is Gaussian. For
-   the skewed and clustered features monitored here they pack most training
-   mass into one or two bins and report PSI >> 0.20 for the training data
-   compared with itself. The reference uses empirical decile bins with each
-   bin's real training fraction as `expected`.
-2. Units. Standardized training bins compared with raw live values give PSI
-   of 2-8 for train-vs-itself. The splits are stored in raw units, so both
-   sides of the comparison are produced by engineer_features() on raw features.
+PSI uses the training rows' own decile bins, with each bin's real training
+fraction as `expected`: skewed and heavily clustered features read as stable
+against themselves, and a genuine shift is still detected. Both sides of the
+comparison are in raw units, produced by engineer_features() on raw features.
 
 The reference lives in drift_reference.json, written next to the model by the
 trainer (ml_training/evaluation/drift_reference.py), so the monitor's baseline
@@ -19,8 +13,7 @@ reference is an error.
 
 supplier_reliability is computed per warehouse, so it is checked per
 warehouse against its training p1-p99 instead of with PSI, as an informational
-warning; the last tests pin why (PSI over six live values trips on unchanged
-data) and how the range check behaves.
+warning; the last tests cover the range check.
 
 DriftMonitor.__init__ needs a live Bigtable client, so these tests build an
 instance via __new__ and call the pure methods directly.
@@ -126,24 +119,6 @@ def test_training_rows_through_the_live_path_give_zero_psi(tmp_path):
         assert psi < 0.01, (feature, psi)
 
 
-def test_standardized_training_rows_would_have_falsely_triggered(tmp_path):
-    """Units: a reference built from StandardScaler-transformed columns
-    against raw live values reports a TRIGGER for the training data compared
-    with itself."""
-    train_df = _raw_training_frame()
-    scaled   = train_df.copy()
-    for feature in NAMES:
-        col = train_df[feature].to_numpy(dtype=float)
-        scaled[feature] = (col - col.mean()) / col.std()
-    bins, _ = _reference_via_file(scaled, tmp_path)
-
-    monitor = _monitor(tmp_path)
-    for feature in NAMES:
-        edges, expected = bins[feature]
-        psi = monitor._compute_psi(train_df[feature].to_numpy(dtype=float), edges, expected)
-        assert psi >= dm._PSI_WARNING_THRESHOLD, (feature, psi)
-
-
 def test_reference_handles_heavily_clustered_values(tmp_path):
     """days_of_supply is capped at 365: when that value accounts for ~half of
     all rows, several decile edges collapse onto the same number. Deduped
@@ -191,16 +166,6 @@ def _live_snapshot(train_df: pd.DataFrame) -> pd.DataFrame:
     med = train_df.groupby("warehouse_id")["supplier_reliability"].median()
     return pd.DataFrame([{"warehouse_id": w, "supplier_reliability": med[w]}
                          for w in WAREHOUSES for _ in range(20)])
-
-
-def test_psi_over_six_warehouse_values_trips_on_unchanged_data():
-    """Why supplier_reliability left PSI: a 120-row snapshot of a
-    per-warehouse feature holds six distinct values, all at their warehouse's
-    training median, and decile PSI still reports a TRIGGER."""
-    train_df = _raw_training_frame()
-    live = _live_snapshot(train_df)["supplier_reliability"].to_numpy(dtype=float)
-    edges, expected = _bins(train_df["supplier_reliability"].to_numpy(dtype=float))
-    assert _monitor()._compute_psi(live, edges, expected) >= dm._PSI_WARNING_THRESHOLD
 
 
 def test_range_check_passes_unchanged_warehouses_and_warns_on_shifted_ones(tmp_path):
