@@ -261,7 +261,7 @@ class ModelPromoter:
         if not blob.exists():
             raise FileNotFoundError(
                 f"evaluation_test.json not found at {artifact_uri}. "
-                "Re-register the model with register_model.py to include it."
+                "Re-register the model with register.py to include it."
             )
 
         return parse_evaluation(json.loads(blob.download_as_text()), artifact_uri)

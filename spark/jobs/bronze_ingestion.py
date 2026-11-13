@@ -90,7 +90,8 @@ def prepare_bronze_df(validated_df: DataFrame, topic: str) -> DataFrame:
          so all Bronze topics partition on the same column name.
       2. Extract year/month/day partition columns from timestamp.
       3. Drop internal validation columns (_is_valid, _error_*, _corrupt_record).
-      4. Retain kafka_* metadata columns for lineage and DLQ replay.
+      4. Keep the kafka_* metadata columns and raw_value (the original payload
+         bytes) for lineage and replay.
     """
     df = validated_df
 
@@ -107,7 +108,8 @@ def prepare_bronze_df(validated_df: DataFrame, topic: str) -> DataFrame:
         .withColumn("day",   F.dayofmonth(ts_col))
     )
 
-    # Drop validation internals — Bronze stores clean parsed records only
+    # Drop the validation columns; Bronze keeps the parsed fields, the Kafka
+    # metadata and raw_value.
     drop_cols = ["_is_valid", "_error_reason", "_error_detail", "_corrupt_record"]
     existing_drop = [c for c in drop_cols if c in df.columns]
     return df.drop(*existing_drop)

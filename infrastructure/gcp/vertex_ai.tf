@@ -85,7 +85,7 @@ resource "google_vertex_ai_endpoint" "shortage_predictor" {
 #   bigtable.user         — feature reads (project-level binding; data access, not DDL)
 #   pubsub.publisher      — publish to prediction-results (project-level binding)
 #   aiplatform.user       — invoke endpoint.predict()
-#   monitoring.metricWriter — emit PSI and scoring metrics
+#   monitoring.metricWriter — emit drift metrics (monitor.py --emit-cloud-monitoring)
 #   logging.logWriter     — structured log output
 ###############################################################################
 
@@ -172,9 +172,9 @@ resource "google_service_account_iam_member" "vertex_sa_self_act_as" {
   member             = "serviceAccount:${google_service_account.vertex_sa.email}"
 }
 
-# Optional: grant a human deployer (e.g. the CI runner or dev user who runs
-# deploy.py locally) permission to act as scip-vertex-sa. Set
-# vertex_deployer_email in terraform.tfvars; leave empty to skip.
+# Optional: grant the person who runs deploy.py permission to act as
+# scip-vertex-sa. Set vertex_deployer_email in terraform.tfvars; leave empty
+# to skip.
 resource "google_service_account_iam_member" "vertex_sa_deployer" {
   count = var.vertex_deployer_email != "" ? 1 : 0
 

@@ -132,7 +132,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
     # -- Overall summary -----------------------------------------------------
     _section("OVERALL SUMMARY")
     variance_status = (
-        "COLLAPSED - retrain model (see drift_monitor.py)"
+        "COLLAPSED - retrain model (see monitor.py)"
         if collapsed else
         "OK - meaningful variation detected  [PASS]"
     )

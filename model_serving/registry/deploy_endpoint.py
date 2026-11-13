@@ -104,9 +104,8 @@ class EndpointDeployer:
                         endpoint_resource_name, traffic_pct, deployed_at
         """
         model_resource_name = model_resource_name or self._load_model_resource_name()
-        # Only required to resolve model_resource_name when it isn't passed
-        # explicitly; registration_info.json also isn't needed in that case
-        # (only used below for display labels and the GCS audit copy).
+        # registration_info.json is optional when the model is named explicitly:
+        # it only supplies the display label and the GCS copy of deployment_info.json.
         reg_info = (
             self._load_registration_info()
             if _LOCAL_REGISTRATION_INFO.exists()
@@ -175,7 +174,7 @@ class EndpointDeployer:
         if traffic_pct == 0:
             logger.info(
                 "Challenger deployed at 0% traffic. "
-                "Run smoke_test.py, then promote_model.py to go live."
+                "Run deploy.py smoke-test, then deploy.py promote to go live."
             )
 
         return info

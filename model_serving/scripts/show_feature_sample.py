@@ -58,9 +58,9 @@ def parse_args() -> argparse.Namespace:
         choices=["risk", "warehouse", "all"],
         default="risk",
         help=(
-            "risk     - top-N by shortage_prob_7d (default, requires predictions)\n"
-            "warehouse - alphabetical by warehouse / SKU\n"
-            "all       - show top-4 highest + top-3 lowest risk (requires predictions)"
+            "risk: top-N by shortage_prob_7d (default); warehouse: alphabetical by "
+            "warehouse / SKU; all: the highest- and lowest-risk entities. "
+            "risk and all need predictions."
         ),
     )
     return p.parse_args()
@@ -180,7 +180,9 @@ def _risk_tag(rec: dict) -> str:
     return "  [LOW RISK]"
 
 
-def render(records: list[dict], n_total: int, features_only: bool = False) -> None:
+def render(
+    records: list[dict], n_total: int, features_only: bool = False, sort: str = "risk"
+) -> None:
     has_preds = _has_predictions(records)
 
     print()
@@ -190,10 +192,12 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
         print(f"  Feature Sample -- Input Data Only  ({len(records)} of {n_total} entities)")
     else:
         print(f"  Feature Sample  ({len(records)} of {n_total} entities)")
-        if has_preds:
-            sort_note = "sorted by shortage_prob_7d desc"
-        else:
+        if not has_preds:
             sort_note = "no predictions yet -- run score.py first"
+        elif sort == "warehouse":
+            sort_note = "sorted by warehouse / SKU"
+        else:
+            sort_note = "sorted by shortage_prob_7d desc"
         print(f"  [{sort_note}]")
     print("  " + "=" * 62)
 
@@ -278,7 +282,7 @@ def main() -> None:
         sys.exit(1)
 
     sample = select_sample(records, args.n, args.sort)
-    render(sample, n_total=len(records), features_only=args.features_only)
+    render(sample, n_total=len(records), features_only=args.features_only, sort=args.sort)
 
 
 if __name__ == "__main__":

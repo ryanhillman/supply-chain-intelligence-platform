@@ -24,7 +24,7 @@ Usage
         --model-version v20260620_180918 \\
         --sa-key infrastructure/gcp/keys/scip-vertex-sa.json
 
-    # Score + write in one process (uses scorer SA key for both):
+    # Score + write in one process (the writer uses its own key):
     python model_serving/scripts/score.py ... --write \\
         --subscription prediction-writer \\
         --writer-sa-key infrastructure/gcp/keys/scip-prediction-writer-sa.json
