@@ -229,8 +229,6 @@ resource "google_service_account" "spark_sa" {
 #                          (bronze, silver, checkpoints, dlq); granted on the
 #                          bucket, not the project, like the Vertex SA
 #   bigtable.user        — read/write Bigtable rows (not admin/DDL)
-#   monitoring.metricWriter — emit custom metrics from Spark
-#   logging.logWriter    — write structured logs to Cloud Logging
 ###############################################################################
 
 resource "google_storage_bucket_iam_member" "spark_gcs" {
@@ -242,17 +240,5 @@ resource "google_storage_bucket_iam_member" "spark_gcs" {
 resource "google_project_iam_member" "spark_bigtable" {
   project = var.project_id
   role    = "roles/bigtable.user"
-  member  = "serviceAccount:${google_service_account.spark_sa.email}"
-}
-
-resource "google_project_iam_member" "spark_monitoring" {
-  project = var.project_id
-  role    = "roles/monitoring.metricWriter"
-  member  = "serviceAccount:${google_service_account.spark_sa.email}"
-}
-
-resource "google_project_iam_member" "spark_logging" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.spark_sa.email}"
 }

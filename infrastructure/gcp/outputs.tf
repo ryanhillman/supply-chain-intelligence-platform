@@ -1,5 +1,5 @@
 ###############################################################################
-# Outputs — values needed by Spark jobs and CI/CD
+# Outputs — values for spark/.env and the model_serving scripts
 ###############################################################################
 
 output "gcs_bucket_name" {

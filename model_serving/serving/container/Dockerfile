@@ -21,7 +21,7 @@
 
 FROM python:3.11-slim
 
-# libgomp1 is required by onnxruntime-cpu for OpenMP thread parallelism.
+# libgomp1 is required by onnxruntime for OpenMP thread parallelism.
 # Without it, onnxruntime raises "libgomp.so.1: cannot open shared object file".
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
@@ -41,8 +41,8 @@ COPY main.py predictor.py ./
 # Switch to non-root before CMD.
 USER appuser
 
-# Vertex AI default prediction port is 8080.
-# Override with --port at deploy time if needed.
+# Vertex AI's default prediction port; register_model.py declares the same
+# port in Model.upload(serving_container_ports=[8080]).
 EXPOSE 8080
 
 # workers=1: onnxruntime InferenceSession is not fork-safe.

@@ -233,10 +233,8 @@ class BatchScorer:
         """
         Call endpoint.predict() for a single batch.
 
-        Returns (shortage_probs, latency_ms). model_version is
-        not needed here — the endpoint already routes to whichever model
-        version currently has traffic; it's only needed by _publish_batch()
-        to stamp the published record for lineage.
+        Returns (shortage_probs, latency_ms). The endpoint routes the request
+        to whichever deployed model has traffic.
         """
         instances = [req.instance for req in batch]
 

@@ -21,7 +21,8 @@ TRIGGER_INTERVAL: str = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
 GCP_PROJECT_ID: str = os.environ.get("GCP_PROJECT_ID", "")
 
 # ── Storage paths ─────────────────────────────────────────────────────────────
-# gs:// URIs, set in .env (see .env.example).
+# gs:// URIs in .env (see .env.example). The local defaults only let this module
+# import without one, as the tests do.
 BRONZE_BASE_PATH: str = os.environ.get("BRONZE_BASE_PATH", "data/bronze")
 SILVER_BASE_PATH: str = os.environ.get("SILVER_BASE_PATH", "data/silver")
 CHECKPOINT_BASE_PATH: str = os.environ.get(

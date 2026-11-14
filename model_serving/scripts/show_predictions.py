@@ -85,10 +85,7 @@ def _bar(value: float, scale: float = 0.40, width: int = 4) -> str:
     each block represents 0.10 of risk — matching the dashboard's printed
     "bar scale: 1 block ~ 0.10 risk" caption.
     """
-    if scale <= 0:
-        n = width if value > 0 else 0
-    else:
-        n = max(0, min(width, round(value / scale * width)))
+    n = max(0, min(width, round(value / scale * width)))
     return "#" * n + " " * (width - n)
 
 
@@ -132,7 +129,7 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
     # -- Overall summary -----------------------------------------------------
     _section("OVERALL SUMMARY")
     variance_status = (
-        "COLLAPSED - retrain model (see drift_monitor.py)"
+        "COLLAPSED - retrain model (see monitor.py)"
         if collapsed else
         "OK - meaningful variation detected  [PASS]"
     )
@@ -146,7 +143,8 @@ def render_dashboard(records: list[dict], top_n: int) -> None:
 
     # -- By warehouse ---------------------------------------------------------
     _section("RISK BY WAREHOUSE")
-    print(f"    {'Warehouse':<10}  {'Entities':>8}  {'Mean Risk':>9}  {'Max Risk':>8}  {'High-Risk (>0.50)':>17}")
+    high_risk = f"High-Risk (>{HIGH_RISK_THRESHOLD:.2f})"
+    print(f"    {'Warehouse':<10}  {'Entities':>8}  {'Mean Risk':>9}  {'Max Risk':>8}  {high_risk:>17}")
     print("    " + "-" * 58)
     wh_groups: dict[str, list[dict]] = {}
     for r in records:

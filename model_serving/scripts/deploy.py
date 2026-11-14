@@ -121,7 +121,7 @@ def parse_args() -> argparse.Namespace:
     deploy_p.add_argument(
         "--machine-type",
         default=DEFAULT_MACHINE_TYPE,
-        help="Vertex AI machine type (default: n1-standard-2)",
+        help=f"Vertex AI machine type (default: {DEFAULT_MACHINE_TYPE})",
     )
     deploy_p.add_argument(
         "--min-replicas",
@@ -199,7 +199,7 @@ def main() -> None:
     cli.require(args, "endpoint", "VERTEX_AI_ENDPOINT_RESOURCE_NAME")
 
     if args.command == "deploy":
-        if not getattr(args, "service_account", None):
+        if not args.service_account:
             logger.warning(
                 "No --service-account specified. The default Vertex AI compute SA "
                 "lacks GCS bucket read access and the container will fail to start. "

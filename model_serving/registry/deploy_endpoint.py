@@ -36,7 +36,6 @@ DEFAULT_MACHINE_TYPE = "n1-standard-2"
 DEFAULT_MIN_REPLICAS = 1
 DEFAULT_MAX_REPLICAS = 1
 _LOCAL_DEPLOYMENT_INFO = Path("model_serving/artifacts/deployment_info.json")
-_LOCAL_REGISTRATION_INFO = Path("model_serving/artifacts/registration_info.json")
 
 
 class EndpointDeployer:
@@ -104,12 +103,11 @@ class EndpointDeployer:
                         endpoint_resource_name, traffic_pct, deployed_at
         """
         model_resource_name = model_resource_name or self._load_model_resource_name()
-        # Only required to resolve model_resource_name when it isn't passed
-        # explicitly; registration_info.json also isn't needed in that case
-        # (only used below for display labels and the GCS audit copy).
+        # registration_info.json is optional when the model is named explicitly:
+        # it only supplies the display label and the GCS copy of deployment_info.json.
         reg_info = (
             self._load_registration_info()
-            if _LOCAL_REGISTRATION_INFO.exists()
+            if cli.REGISTRATION_INFO_PATH.exists()
             else {}
         )
 
@@ -174,8 +172,8 @@ class EndpointDeployer:
         )
         if traffic_pct == 0:
             logger.info(
-                "Challenger deployed at 0%% traffic. "
-                "Run smoke_test.py, then promote_model.py to go live."
+                "Challenger deployed at 0% traffic. "
+                "Run deploy.py smoke-test, then deploy.py promote to go live."
             )
 
         return info
@@ -209,7 +207,7 @@ class EndpointDeployer:
 
     def _load_registration_info(self) -> dict:
         return cli.read_json(
-            _LOCAL_REGISTRATION_INFO, "Run model_serving/scripts/register.py first."
+            cli.REGISTRATION_INFO_PATH, "Run model_serving/scripts/register.py first."
         )
 
     def _load_model_resource_name(self) -> str:
@@ -232,9 +230,8 @@ class EndpointDeployer:
         # Also persist to GCS alongside the model artifacts for auditability.
         gcs_uri = reg_info.get("gcs_artifact_uri", "")
         if gcs_uri:
-            path_without_scheme = gcs_uri.removeprefix("gs://")
-            bucket_name, _, prefix = path_without_scheme.partition("/")
+            bucket_name, prefix = cli.split_gcs_uri(gcs_uri)
             bucket = self._storage_client.bucket(bucket_name)
-            blob   = bucket.blob(f"{prefix.rstrip('/')}/deployment_info.json")
+            blob   = bucket.blob(f"{prefix}/deployment_info.json")
             blob.upload_from_string(payload, content_type="application/json")
             logger.info("Deployment info saved to %s/deployment_info.json", gcs_uri)

@@ -2,11 +2,11 @@
 #
 # Pin to exact versions for container reproducibility.
 #
-# onnxruntime-cpu: CPU-only wheel, ~25 MB vs ~600 MB for the CUDA variant.
+# onnxruntime is the CPU-only wheel (about 13 MB; onnxruntime-gpu is about 226 MB).
 # The exported model.onnx uses opset 17 (TorchScript exporter pinned in
 # ml_training/inference/onnx_export.py); onnxruntime >= 1.16.0 supports it.
 #
-# libgomp1 (system package) is required by onnxruntime-cpu on debian-slim.
+# libgomp1 (system package) is required by onnxruntime on debian-slim.
 # It is installed in the Dockerfile RUN layer, not here.
 
 fastapi==0.115.5

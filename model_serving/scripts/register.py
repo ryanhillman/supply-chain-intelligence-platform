@@ -24,8 +24,8 @@ Environment variables (alternatives to CLI flags):
     ARTIFACT_REGISTRY_URL        -- base URL; image URI = {URL}/shortage-predictor-serving:{image-tag}
     GOOGLE_APPLICATION_CREDENTIALS -- --sa-key
 
-After successful registration, model_serving/artifacts/registration_info.json is written.
-Pass that path to model_serving/scripts/deploy.py (or use the defaults).
+After successful registration, model_serving/artifacts/registration_info.json is written;
+model_serving/scripts/deploy.py reads it by default.
 """
 from __future__ import annotations
 

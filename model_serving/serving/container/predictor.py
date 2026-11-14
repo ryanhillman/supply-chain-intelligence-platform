@@ -18,9 +18,8 @@ Output returned to caller:
 Environment variables:
   MODEL_GCS_PATH            — GCS URI to the versioned model directory,
                               e.g. gs://bucket/models/shortage-predictor/v20260620_180918
-  MODEL_VERSION             — optional version label for /health and the
-                              prediction records; defaults to the last segment
-                              of MODEL_GCS_PATH
+  MODEL_VERSION             — optional version label for /health; defaults to
+                              the last segment of MODEL_GCS_PATH
   GOOGLE_APPLICATION_CREDENTIALS — SA key JSON for MODEL_GCS_PATH outside
                               Vertex AI (on Vertex AI the container SA is injected)
 """

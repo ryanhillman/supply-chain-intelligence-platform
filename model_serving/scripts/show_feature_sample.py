@@ -30,6 +30,9 @@ from model_serving import cli
 from model_serving.pipeline.constants import HIGH_RISK_THRESHOLD
 from model_serving.pipeline.feature_client import FeatureClient
 
+# shortage_prob_7d above this is tagged ELEVATED; above HIGH_RISK_THRESHOLD, HIGH RISK.
+_ELEVATED_RISK_THRESHOLD = 0.15
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -58,9 +61,9 @@ def parse_args() -> argparse.Namespace:
         choices=["risk", "warehouse", "all"],
         default="risk",
         help=(
-            "risk     - top-N by shortage_prob_7d (default, requires predictions)\n"
-            "warehouse - alphabetical by warehouse / SKU\n"
-            "all       - show top-4 highest + top-3 lowest risk (requires predictions)"
+            "risk: top-N by shortage_prob_7d (default); warehouse: alphabetical by "
+            "warehouse / SKU; all: the highest- and lowest-risk entities. "
+            "risk and all need predictions."
         ),
     )
     return p.parse_args()
@@ -115,12 +118,13 @@ def select_sample(records: list[dict], n: int, sort: str) -> list[dict]:
         ordered = sorted(records, key=lambda r: (r["warehouse_id"], r["sku_id"]))
         return ordered[:n]
 
-    if sort == "all" and _has_predictions(records):
-        scored   = sorted(
-            (r for r in records if "shortage_prob_7d" in r),
-            key=lambda r: r["shortage_prob_7d"],
-            reverse=True,
-        )
+    scored = sorted(
+        (r for r in records if "shortage_prob_7d" in r),
+        key=lambda r: r["shortage_prob_7d"],
+        reverse=True,
+    )
+
+    if sort == "all" and scored:
         top_high = n // 2 + (n % 2)
         top_low  = n // 2
         selected = scored[:top_high] + scored[-top_low:]
@@ -135,12 +139,7 @@ def select_sample(records: list[dict], n: int, sort: str) -> list[dict]:
         return unique[:n]
 
     # default: "risk" (or fallback if no predictions)
-    if _has_predictions(records):
-        scored = sorted(
-            (r for r in records if "shortage_prob_7d" in r),
-            key=lambda r: r["shortage_prob_7d"],
-            reverse=True,
-        )
+    if scored:
         return scored[:n]
 
     # no predictions: spread across warehouses
@@ -173,14 +172,16 @@ def _risk_tag(rec: dict) -> str:
     prob = rec.get("shortage_prob_7d")
     if prob is None:
         return ""
-    if prob >= HIGH_RISK_THRESHOLD:
+    if prob > HIGH_RISK_THRESHOLD:
         return "  [HIGH RISK]"
-    if prob >= 0.15:
+    if prob > _ELEVATED_RISK_THRESHOLD:
         return "  [ELEVATED]"
     return "  [LOW RISK]"
 
 
-def render(records: list[dict], n_total: int, features_only: bool = False) -> None:
+def render(
+    records: list[dict], n_total: int, features_only: bool = False, sort: str = "risk"
+) -> None:
     has_preds = _has_predictions(records)
 
     print()
@@ -190,10 +191,12 @@ def render(records: list[dict], n_total: int, features_only: bool = False) -> No
         print(f"  Feature Sample -- Input Data Only  ({len(records)} of {n_total} entities)")
     else:
         print(f"  Feature Sample  ({len(records)} of {n_total} entities)")
-        if has_preds:
-            sort_note = "sorted by shortage_prob_7d desc"
-        else:
+        if not has_preds:
             sort_note = "no predictions yet -- run score.py first"
+        elif sort == "warehouse":
+            sort_note = "sorted by warehouse / SKU"
+        else:
+            sort_note = "sorted by shortage_prob_7d desc"
         print(f"  [{sort_note}]")
     print("  " + "=" * 62)
 
@@ -278,7 +281,7 @@ def main() -> None:
         sys.exit(1)
 
     sample = select_sample(records, args.n, args.sort)
-    render(sample, n_total=len(records), features_only=args.features_only)
+    render(sample, n_total=len(records), features_only=args.features_only, sort=args.sort)
 
 
 if __name__ == "__main__":

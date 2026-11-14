@@ -20,13 +20,9 @@ import onnx
 import onnxruntime as ort
 import torch
 
-from ml_training.datasets.feature_engineer import NUMERIC_FEATURE_COLS
-from ml_training.training.config import TrainingConfig
 from ml_training.training.model import ShortagePredictor
 
 logger = logging.getLogger(__name__)
-
-N_NUMERIC = len(NUMERIC_FEATURE_COLS)
 
 
 class _WithSigmoid(torch.nn.Module):
@@ -95,13 +91,8 @@ def export_to_onnx(
     artifacts_dir = Path(artifacts_dir)
     output_path   = Path(output_path) if output_path else artifacts_dir / "model.onnx"
 
-    metadata = _load_json(artifacts_dir / "feature_metadata.json")
-    ckpt   = torch.load(artifacts_dir / "model.pt", map_location="cpu", weights_only=True)
-    config = TrainingConfig(**ckpt["config"])
-
-    model = ShortagePredictor.from_metadata(metadata, config)
-    model.load_state_dict(ckpt["model_state"])
-    model.eval()
+    metadata = json.loads((artifacts_dir / "feature_metadata.json").read_text())
+    model    = ShortagePredictor.from_checkpoint(artifacts_dir / "model.pt", metadata)
 
     # Dummy input for tracing (batch_size=2 to exercise batch dimension).
     # Rows are deliberately distinct (not both zero) so validation below can
@@ -162,8 +153,3 @@ def export_to_onnx(
     logger.info("ONNX validation passed — outputs match PyTorch within 1e-5")
 
     return output_path
-
-
-def _load_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)

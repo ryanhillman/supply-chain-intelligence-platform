@@ -1,6 +1,7 @@
 """
 Shared pieces of the model_serving command-line tools: the arguments they have
-in common, logging setup, service-account credentials and JSON files.
+in common, logging setup, service-account credentials, JSON files, the path of
+registration_info.json and the split of a gs:// URI into bucket and prefix.
 
 Standard library only at import time, so every module in the package can use it.
 """
@@ -14,6 +15,9 @@ import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Written by register.py; deploy.py and score.py read it.
+REGISTRATION_INFO_PATH = Path("model_serving/artifacts/registration_info.json")
 
 _SA_KEY_HELP = (
     "Path to service account JSON key (GOOGLE_APPLICATION_CREDENTIALS env var). "
@@ -79,7 +83,7 @@ def require(args: argparse.Namespace, flag: str, env_var: str, exit_code: int = 
         sys.exit(exit_code)
 
 
-# ── Logging, credentials, JSON ────────────────────────────────────────────────
+# ── Logging, credentials, JSON, GCS URIs ──────────────────────────────────────
 
 def setup_logging(verbose: bool = False) -> None:
     logging.basicConfig(
@@ -106,3 +110,9 @@ def read_json(path: str | Path, missing_hint: str = "") -> dict:
         raise FileNotFoundError(f"{path} not found. {missing_hint}".rstrip())
     with open(path) as f:
         return json.load(f)
+
+
+def split_gcs_uri(uri: str) -> tuple[str, str]:
+    """'gs://bucket/some/prefix/' -> ('bucket', 'some/prefix')."""
+    bucket_name, _, prefix = uri.removeprefix("gs://").partition("/")
+    return bucket_name, prefix.rstrip("/")
