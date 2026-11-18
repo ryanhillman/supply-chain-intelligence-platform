@@ -5,29 +5,19 @@
   <img alt="GCP" src="https://img.shields.io/badge/GCP-4285F4?logo=googlecloud&logoColor=white">
 </p>
 
----
-
-[Status: Work in Progress]
-
 This project demonstrates an end-to-end machine learning platform to predict the risk of an inventory shortage. 
 
 The historical training data is simulated to create realistic warehouse, inventory, supplier, and demand behavior. 
 
----
-
 ## [Demo](https://www.youtube.com/watch?v=fpe3sHeRTNs)
 
 The video was recorded from the code tagged [`demo-2026-06`](https://github.com/ryanhillman/supply-chain-intelligence-platform/releases/tag/demo-2026-06).
-
----
 
 ## Business Problem
 
 Inventory shortages and excess stock are two of the most expensive operational failures in large-scale supply chains.
 
 Inventory shortages create lost revenue while excess inventory increases carrying costs.
-
----
 
 ## Architecture Diagram
 
@@ -83,7 +73,6 @@ flowchart TD
     BT --> DM
     PR --> DM
 ```
----
 
 ## Architecture Walkthrough
 
@@ -106,8 +95,6 @@ A prediction writer consumes Pub/Sub messages and stores shortage-risk predictio
 A drift monitor compares live feature distributions with the training data and reports potential model degradation.
 
 GCS, Bigtable, Vertex AI, Artifact Registry, Pub/Sub, and all IAM bindings were provisioned with Terraform.
-
----
 
 ## Machine Learning Pipeline
 
@@ -167,8 +154,6 @@ MLP and LightGBM rows are the mean of five training runs with different random s
 
 The model was built in PyTorch for hands-on experience.
 
----
-
 ## Model Serving Pipeline
 
 1. Feature snapshots are read from Bigtable; rows whose last Silver write is older than 48 hours are skipped rather than scored on stale features.
@@ -176,8 +161,6 @@ The model was built in PyTorch for hands-on experience.
 3. The serving container performs inference using ONNX Runtime.
 4. Prediction results are published to Pub/Sub.
 5. The prediction writer stores predictions back into Bigtable.
-
----
 
 ## Serving API
 
@@ -195,13 +178,9 @@ POST /predict  {"instances": [{"numeric_features": [<21 floats>], "warehouse_id"
 
 Features are raw values in training order; the IDs are integer indices from `feature_metadata.json`, not `W-001`/`SKU-001` strings.
 
----
-
 ## Model Promotion
 
 Promotion goes through two commands of `model_serving/scripts/deploy.py`. `deploy` puts a newly registered model on the endpoint as a challenger, at 0% traffic by default. `promote` compares it with the champion, the model receiving traffic, and moves all traffic to the challenger only if it is better on all three test metrics: AUPRC, AUC-ROC and Brier score. If the two models were evaluated on different test splits, both are first rescored on the challenger's split.
-
----
 
 ## Drift Monitoring
 
